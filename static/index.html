@@ -1651,7 +1651,9 @@
   <div class="toast" id="toast"></div>
 
 <script>
-  const API = window.location.origin;
+  const API = (window.location.protocol === 'file:' || window.location.origin === 'null')
+    ? 'http://127.0.0.1:8000'
+    : window.location.origin;
   let isLoading = false;
   let conversationHistory = [];
 

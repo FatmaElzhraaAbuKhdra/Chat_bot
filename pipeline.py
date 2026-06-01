@@ -603,9 +603,6 @@ async def _execute_template(
         # Render SQL from template
         sql = render_template(template, entities)
 
-        # Smart filter injection — context-aware multi-tenant isolation
-        if company_code:
-            sql = inject_company_filter(sql, company_code, fiscal_year, question)
         log.info(f"[PIPELINE] Template={template.name} SQL={sql[:80]}...")
 
         # Safety check
@@ -754,8 +751,8 @@ async def _execute_llm_controlled(
         sql_raw = generate_sql(
             schema_context=schema_ctx,
             question=question,
-            company_code=company_code,
-            fiscal_year=fiscal_year,
+            company_code="",
+            fiscal_year="",
             history=history,
             extra_context=extra_context,
         )

@@ -204,7 +204,7 @@ def generate_sql(schema_context: str, question: str, company_code: str,
 2. ممنوع bind variables مثل :variable — اكتب القيم مباشرة
 3. ممنوع SELECT * — اختر الأعمدة بالاسم
 4. أضف دائماً: FETCH FIRST 200 ROWS ONLY
-5. لا تستخدم COMPANY_CODE أو FISCAL_YEAR في WHERE — البيانات مشتركة
+5. ⛔ ممنوع تماماً استخدام COMPANY_CODE أو FISCAL_YEAR في أي مكان في الـ SQL — لا في WHERE ولا في JOIN ولا في أي مكان آخر
 6. استخدم الـ JOINs الموجودة في FK فقط — لا تخترع علاقات غير موجودة
 7. إذا كان العمود فيه قيم رقمية لها معاني (مثل 0=ميزانية) استخدم DECODE لعرض النص
 8. عند البحث بالاسم قسّم الكلمات واستخدم LIKE لكل كلمة
