@@ -2103,25 +2103,26 @@
       }
 
       // After stream completes, render final UI (suggestions, chart, meta)
-      if (meta.suggestions && meta.suggestions.length > 0) {
-        const chipHtml = renderSuggestionChips(meta.suggestions);
-        contentEl.insertAdjacentHTML('afterend', chipHtml);
+      try {
+        if (meta.suggestions && meta.suggestions.length > 0) {
+          const chipHtml = renderSuggestionChips(meta.suggestions);
+          contentEl.insertAdjacentHTML('afterend', chipHtml);
+        }
+        if (meta.chart && contentEl.parentElement) {
+          const chartContainer = document.createElement('div');
+          chartContainer.className = 'chart-container';
+          contentEl.parentElement.appendChild(chartContainer);
+          renderChart(meta.chart, chartContainer);
+        }
+        if (meta.sql) {
+          const sqlHtml = '<details class="sql-detail"><summary>SQL</summary><pre>' + escHtml(meta.sql) + '</pre></details>';
+          contentEl.insertAdjacentHTML('afterend', sqlHtml);
+        }
+        conversationHistory.push({ role: 'user', content: question });
+        conversationHistory.push({ role: 'assistant', content: fullText });
+      } catch (postErr) {
+        console.error('[SSE] post-stream render error:', postErr);
       }
-      if (meta.chart) {
-        // Render chart after content
-        const chartContainer = document.createElement('div');
-        chartContainer.className = 'chart-container';
-        contentEl.parentElement.appendChild(chartContainer);
-        renderChart(meta.chart, chartContainer);
-      }
-      // Add SQL toggle if SQL exists
-      if (meta.sql) {
-        const sqlHtml = '<details class="sql-detail"><summary>SQL</summary><pre>' + escHtml(meta.sql) + '</pre></details>';
-        contentEl.insertAdjacentHTML('afterend', sqlHtml);
-      }
-      // Track conversation
-      conversationHistory.push({ role: 'user', content: question });
-      conversationHistory.push({ role: 'assistant', content: fullText });
 
     } catch (err) {
       // SSE Resilience: Immediate fallback to non-streaming /chat/ endpoint
