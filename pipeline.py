@@ -771,10 +771,6 @@ async def _execute_llm_controlled(
 
         sql = safety.sql
 
-        # Smart filter injection — context-aware multi-tenant isolation
-        if company_code:
-            sql = inject_company_filter(sql, company_code, fiscal_year, question)
-
         # Execute
         data, err = await _try_execute(sql)
 
@@ -790,8 +786,8 @@ async def _execute_llm_controlled(
             sql_raw = generate_sql(
                 schema_context=schema_ctx,
                 question=fix_question,
-                company_code=company_code,
-                fiscal_year=fiscal_year,
+                company_code="",
+                fiscal_year="",
                 history=history,
             )
             safety = validate_sql(sql_raw)
