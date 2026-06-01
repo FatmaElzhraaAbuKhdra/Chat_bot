@@ -2,6 +2,7 @@
 pipeline.py — ERP Intelligence Router Pipeline
 The central engine that orchestrates:
   Intent Classification -> Template Matching -> Safe SQL -> Execution -> Formatting
+  + Action Engine -> Workflow -> Export -> APEX Navigation -> Executive Reports
 """
 import re
 import logging
@@ -32,6 +33,19 @@ from cache import (
     make_sql_key, make_dash_key, make_schema_key,
 )
 from company_manager import inject_company_filter, validate_company_access
+from copilot import (
+    generate_suggestions, generate_insights, auto_generate_chart,
+    COPILOT_GREETING, COPILOT_HELP, GREETING_SUGGESTIONS,
+)
+
+# ERP Operator imports
+from erp_actions.planner import detect_action_intent, is_confirmation, is_rejection, plan_action
+from erp_actions.executor import confirm_and_execute, reject_action
+from erp_actions.store import get_user_pending, save_action
+from erp_actions.workflows import is_workflow_query, get_pending_approvals, get_request_status, get_approval_summary
+from erp_actions.apex_nav import detect_navigation_intent, find_pages
+from export_engine import detect_export_intent, ExportRequest, generate_export, ExportFormat
+from executive_reports import detect_report_intent, generate_executive_report, format_report_for_chat
 
 
 @dataclass
@@ -41,32 +55,76 @@ class PipelineResult:
     row_count: int = 0
     intent: Optional[Intent] = None
     template_used: str = ""
-    method: str = ""           # template | llm_controlled | greeting | help | error | dashboard
+    method: str = ""           # template | llm_controlled | greeting | help | error | dashboard | action | workflow | export | navigation | report
     execution_time_ms: int = 0
     safety_warnings: list[str] = field(default_factory=list)
     chart_data: Optional[dict] = None   # {type, labels, datasets} for Chart.js
     widgets: Optional[list] = None      # multi-widget response (KPIs + charts + tables in chat)
+    suggestions: list = field(default_factory=list)   # copilot follow-up suggestions
+    insights: list = field(default_factory=list)      # copilot business insights
+    # ERP Operator fields
+    action_card: Optional[dict] = None        # Action confirmation card
+    action_id: Optional[str] = None           # Pending action ID
+    navigation_links: Optional[list] = None   # APEX page links
+    export_available: Optional[dict] = None   # Export metadata
+    report_data: Optional[dict] = None        # Executive report data
 
 
 # ── Greeting responses ────────────────────────────────────────────
-_GREETING_RESPONSES = [
-    "اهلاً! انا المساعد الذكي لنظام JustClick. اسألني عن بيانات الحسابات، الفواتير، المخزون، العملاء، أو الموظفين.",
-]
+_GREETING_RESPONSES = [COPILOT_GREETING]
 
-_HELP_RESPONSE = """يمكنني مساعدتك في الاستفسار عن:
+_HELP_RESPONSE = COPILOT_HELP
 
-**الحسابات**: رصيد حساب، كشف حساب، ميزان المراجعة، شجرة الحسابات
-**الفواتير**: تفاصيل فاتورة، إجمالي المبيعات، أكثر العملاء شراءً
-**المخزون**: رصيد المخزون، بيانات الأصناف، حركات المخزن
-**العملاء**: قائمة العملاء، بيانات عميل، المديونيات
-**الموظفين**: عدد الموظفين، قائمة الموظفين
+# ── Intent-to-label mapping for Phase 7 predictions ─────────────
+_INTENT_LABELS = {
+    "sales_today": "مبيعات اليوم",
+    "sales_summary": "ملخص المبيعات",
+    "purchase_summary": "ملخص المشتريات",
+    "top_customers": "أعلى العملاء",
+    "top_items": "أعلى الأصناف مبيعاً",
+    "stock_balance": "رصيد المخزون",
+    "account_balance": "رصيد الحساب",
+    "account_statement": "كشف حساب",
+    "customer_balance": "رصيد العميل",
+    "outstanding": "المديونيات",
+    "employee_count": "عدد الموظفين",
+    "trial_balance": "ميزان المراجعة",
+    "revenue_expenses": "الإيرادات والمصروفات",
+    "item_info": "بيانات الأصناف",
+    "invoice_detail": "تفاصيل الفاتورة",
+    "salary_info": "الرواتب",
+    "attendance": "الحضور والانصراف",
+}
 
-أمثلة:
-- رصيد حساب 1101
-- تفاصيل فاتورة 1000016
-- إجمالي المبيعات اليوم
-- أكثر 5 عملاء شراءً
-- عدد الموظفين النشطين"""
+_INTENT_QUERIES = {
+    "sales_today": "إجمالي المبيعات اليوم",
+    "sales_summary": "ملخص المبيعات هذا الشهر",
+    "purchase_summary": "إجمالي المشتريات هذا الشهر",
+    "top_customers": "أعلى 5 عملاء في المبيعات",
+    "top_items": "أعلى 10 أصناف مبيعاً",
+    "stock_balance": "رصيد المخازن",
+    "account_balance": "أرصدة الحسابات الرئيسية",
+    "account_statement": "كشف حساب",
+    "customer_balance": "أرصدة العملاء المستحقة",
+    "outstanding": "المديونيات المتأخرة",
+    "employee_count": "كم عدد الموظفين",
+    "trial_balance": "ميزان المراجعة",
+    "revenue_expenses": "الإيرادات والمصروفات خلال آخر 3 شهور",
+    "item_info": "اعرض الأصناف",
+    "invoice_detail": "آخر 10 فواتير",
+    "salary_info": "رواتب الموظفين",
+    "attendance": "الحضور والانصراف اليوم",
+}
+
+
+def _intent_to_label(intent_name: str) -> str:
+    """Convert intent name to Arabic label for suggestion chips."""
+    return _INTENT_LABELS.get(intent_name, intent_name.replace("_", " "))
+
+
+def _intent_to_query(intent_name: str) -> str:
+    """Convert intent name to a clickable query string."""
+    return _INTENT_QUERIES.get(intent_name, _intent_to_label(intent_name))
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -88,6 +146,44 @@ async def process_question(
     if not question:
         return PipelineResult(answer="يرجى كتابة سؤال.", method="error")
 
+    # ── Prompt injection detection ──
+    from sql_safety import detect_prompt_injection
+    injection = detect_prompt_injection(question)
+    if injection:
+        log.warning(f"[PIPELINE] Prompt injection detected from user={user_id}")
+        return PipelineResult(
+            answer="عذراً، لا يمكن معالجة هذا الطلب.",
+            method="error",
+            safety_warnings=["prompt_injection_detected"],
+        )
+
+    # ── RBAC: Domain access check (after intent detection, applied later) ──
+    # Pre-load user permissions for row-limit and export enforcement
+    try:
+        from rbac import get_user_permissions, get_max_rows
+        _user_perms = get_user_permissions(user_id)
+    except Exception:
+        _user_perms = None
+
+    # ── Response cache check (skip for action/workflow questions) ──
+    try:
+        import response_cache
+        cached = response_cache.get(question, company_code, fiscal_year)
+        if cached:
+            return PipelineResult(
+                answer=cached.answer,
+                sql=cached.sql,
+                row_count=cached.row_count,
+                method=f"{cached.method}+cached",
+                template_used=cached.template_used,
+                chart_data=cached.chart_data,
+                suggestions=cached.suggestions,
+                insights=cached.insights,
+                execution_time_ms=1,
+            )
+    except Exception:
+        pass
+
     # ── Step 0: Company access validation ──
     if company_code:
         has_access = await validate_company_access(user_id, company_code)
@@ -97,14 +193,161 @@ async def process_question(
                 method="error",
             )
 
+    # ══════════════════════════════════════════════════════════════
+    # ERP OPERATOR LAYER (pre-classification fast-path)
+    # Handles: confirmations, rejections, actions, workflows,
+    #          exports, navigation, executive reports
+    # ══════════════════════════════════════════════════════════════
+
+    # ── Operator: Confirmation/Rejection of pending action ──
+    pending_action = get_user_pending(user_id)
+    if pending_action:
+        if is_confirmation(question):
+            log.info(f"[PIPELINE] User confirmed action {pending_action.id}")
+            executed = await confirm_and_execute(pending_action.id, user_id)
+            if executed:
+                return PipelineResult(
+                    answer=executed.result_message or "✅ تم تنفيذ الإجراء بنجاح.",
+                    method="action",
+                    action_card=executed.result_card(),
+                    action_id=executed.id,
+                    execution_time_ms=int((time.time() - start) * 1000),
+                )
+            else:
+                return PipelineResult(
+                    answer="❌ فشل تنفيذ الإجراء. يرجى المحاولة مرة أخرى.",
+                    method="action",
+                    action_id=pending_action.id,
+                    execution_time_ms=int((time.time() - start) * 1000),
+                )
+        elif is_rejection(question):
+            log.info(f"[PIPELINE] User rejected action {pending_action.id}")
+            await reject_action(pending_action.id, user_id, "رفض المستخدم")
+            return PipelineResult(
+                answer="تم إلغاء الإجراء.",
+                method="action",
+                action_id=pending_action.id,
+                execution_time_ms=int((time.time() - start) * 1000),
+            )
+
+    # ── Operator: Action Intent Detection ──
+    action_intent = detect_action_intent(question)
+    if action_intent:
+        action_type, params = action_intent
+        log.info(f"[PIPELINE] Action detected: {action_type} params={params}")
+        try:
+            plan = plan_action(
+                action_type=action_type,
+                params=params,
+                user_id=user_id,
+                company_code=company_code,
+                fiscal_year=fiscal_year,
+            )
+            if plan:
+                save_action(plan)
+                card = plan.confirmation_card()
+                return PipelineResult(
+                    answer=card.get("message", "هل تريد تنفيذ هذا الإجراء؟"),
+                    method="action",
+                    action_card=card,
+                    action_id=plan.id,
+                    execution_time_ms=int((time.time() - start) * 1000),
+                    suggestions=[
+                        {"label": "نعم، نفّذ", "query": "نعم", "icon": "new", "source": "workflow"},
+                        {"label": "لا، إلغاء", "query": "لا", "icon": "alert", "source": "workflow"},
+                    ],
+                )
+        except Exception as e:
+            log.warning(f"[PIPELINE] Action planning failed: {e}")
+            # Fall through to standard pipeline — don't silently fail
+
+    # ── Operator: Workflow Queries ──
+    workflow_type = is_workflow_query(question)
+    if workflow_type:
+        log.info(f"[PIPELINE] Workflow query: {workflow_type}")
+        result = await _handle_workflow_query(
+            workflow_type=workflow_type,
+            user_id=user_id,
+            company_code=company_code,
+        )
+        if result:
+            result.execution_time_ms = int((time.time() - start) * 1000)
+            add_user_turn(user_id, question, {}, "workflow")
+            add_assistant_turn(user_id, result.answer, "", 0, {})
+            return result
+
+    # ── Operator: Executive Report Detection ──
+    report_type = detect_report_intent(question)
+    if report_type:
+        log.info(f"[PIPELINE] Executive report: {report_type}")
+        result = await _handle_executive_report(
+            report_type=report_type,
+            company_code=company_code,
+            fiscal_year=fiscal_year,
+        )
+        if result:
+            result.execution_time_ms = int((time.time() - start) * 1000)
+            add_user_turn(user_id, question, {}, "report")
+            add_assistant_turn(user_id, result.answer, "", 0, {})
+            return result
+
+    # ── Operator: Export Detection ──
+    export_format = detect_export_intent(question)
+    if export_format:
+        log.info(f"[PIPELINE] Export detected: {export_format}")
+        # Export needs data context — set flag for post-processing
+        # The actual export will be triggered from the frontend when data is available
+
+    # ── Operator: APEX Navigation Detection ──
+    nav_pages = detect_navigation_intent(question)
+    if nav_pages:
+        log.info(f"[PIPELINE] Navigation: {len(nav_pages)} pages matched")
+        result = _handle_navigation(nav_pages)
+        if result:
+            result.execution_time_ms = int((time.time() - start) * 1000)
+            add_user_turn(user_id, question, {}, "navigation")
+            add_assistant_turn(user_id, result.answer, "", 0, {})
+            return result
+
+    # ══════════════════════════════════════════════════════════════
+    # STANDARD PIPELINE (analysis path)
+    # ══════════════════════════════════════════════════════════════
+
     # ── Step 1: Get conversation context ──
     session_history = get_history_messages(user_id)
     context_entities = get_context_entities(user_id)
+
+    # ── Step 1.5: Check if this is a follow-up (Conversational BI) ──
+    followup_context_str = ""
+    try:
+        from learning.engine import check_followup
+        followup_info = check_followup(question, user_id)
+        if followup_info and followup_info.get("is_followup"):
+            from learning.conversation_bi import build_followup_context
+            followup_context_str = build_followup_context(user_id)
+            log.info(f"[PIPELINE] Follow-up detected: modifier={followup_info.get('modifier')}")
+    except Exception as e:
+        log.debug(f"[PIPELINE] Follow-up check skipped: {e}")
 
     # ── Step 2: Classify intent ──
     intent = classify_intent(question, session_history)
     log.info(f"[PIPELINE] intent={intent.category} domain={intent.domain} "
              f"sub={intent.sub_intent} entities_keys={list(intent.entities.keys())}")
+
+    # ── Step 2.5: Enhance intent via Learning Engine ──
+    if intent.confidence < 0.90 and intent.category not in ("greeting", "help"):
+        try:
+            from learning.engine import enhance_intent
+            enhanced_sub, enhanced_conf = enhance_intent(
+                question, intent.sub_intent, intent.confidence
+            )
+            if enhanced_conf > intent.confidence:
+                log.info(f"[PIPELINE] Intent enhanced: {intent.sub_intent}->{enhanced_sub} "
+                         f"conf={intent.confidence:.2f}->{enhanced_conf:.2f}")
+                intent.sub_intent = enhanced_sub
+                intent.confidence = enhanced_conf
+        except Exception as e:
+            log.debug(f"[PIPELINE] enhance_intent skipped: {e}")
 
     # Merge context entities with newly extracted ones
     merged_entities = {**context_entities, **intent.entities}
@@ -117,10 +360,30 @@ async def process_question(
     result: PipelineResult
 
     if intent.category == "greeting":
+        greeting_text = _GREETING_RESPONSES[0]
+        # Inject proactive operational summary into greeting
+        try:
+            from proactive.alerts import alert_store as _pstore
+            unack = _pstore.get_unacknowledged()
+            if unack:
+                critical = [a for a in unack if a.severity == "critical"]
+                warnings = [a for a in unack if a.severity == "warning"]
+                parts = []
+                if critical:
+                    parts.append(f"{len(critical)} تنبيه حرج")
+                if warnings:
+                    parts.append(f"{len(warnings)} تحذير")
+                if parts:
+                    alert_line = " و ".join(parts)
+                    greeting_text += f"\n\n⚡ **لديك {alert_line} يحتاج اهتمامك** — اطلع على التنبيهات من أيقونة الجرس."
+        except Exception:
+            pass
+
         result = PipelineResult(
-            answer=_GREETING_RESPONSES[0],
+            answer=greeting_text,
             intent=intent,
             method="greeting",
+            suggestions=GREETING_SUGGESTIONS[:4],
         )
 
     elif intent.category == "help":
@@ -128,14 +391,14 @@ async def process_question(
             answer=_HELP_RESPONSE,
             intent=intent,
             method="help",
+            suggestions=GREETING_SUGGESTIONS[:4],
         )
 
     elif _wants_dashboard(question):
         log.debug(f"[PIPELINE] Dashboard matched for: {question}")
         result = await _handle_dashboard(question, session_history)
         if not result:
-            # No dashboard matched — fall through to data query with history
-            log.info("[PIPELINE] Dashboard detected but no match — using LLM data query path")
+            log.info("[PIPELINE] Dashboard detected but no match -> LLM data query path")
             result = await _handle_data_query(
                 question=question,
                 intent=intent,
@@ -143,11 +406,11 @@ async def process_question(
                 company_code=company_code,
                 fiscal_year=fiscal_year,
                 history=history or session_history,
+                followup_context=followup_context_str,
             )
 
     else:
         log.debug(f"[PIPELINE] Data query path for: {question}")
-        # Data query path (data_query, aggregation, comparison, detail_lookup)
         result = await _handle_data_query(
             question=question,
             intent=intent,
@@ -155,6 +418,7 @@ async def process_question(
             company_code=company_code,
             fiscal_year=fiscal_year,
             history=history or session_history,
+            followup_context=followup_context_str,
         )
 
     # Record assistant turn
@@ -163,6 +427,95 @@ async def process_question(
     )
 
     result.execution_time_ms = int((time.time() - start) * 1000)
+
+    # ── Export availability flag ──
+    # If export was detected earlier but data came from a query, flag it
+    if export_format and result.row_count > 0:
+        result.export_available = {
+            "format": export_format,
+            "row_count": result.row_count,
+            "message": f"يمكن تصدير النتائج ({result.row_count} سجل) بصيغة {export_format.upper()}",
+        }
+
+    # ── Learning Engine hook (Phase 6: pass session_id) ──
+    try:
+        from learning.engine import on_query_complete
+        on_query_complete(
+            question=question,
+            sub_intent=intent.sub_intent,
+            domain=intent.domain,
+            template_used=result.template_used,
+            sql=result.sql,
+            row_count=result.row_count,
+            exec_ms=result.execution_time_ms,
+            success=result.method not in ("error",),
+            user_id=user_id,
+            method=result.method,
+            session_id=user_id,
+        )
+    except Exception:
+        pass  # learning is non-critical
+
+    # ── Phase 7: Predict next intent — merge with existing suggestions ──
+    if result.method not in ("error", "greeting", "help") and intent.sub_intent:
+        try:
+            from learning.analytics_tracker import predict_next_intent
+            session = get_session(user_id)
+            recent_intents = [t.intent for t in session.turns[-6:] if t.intent]
+            if recent_intents:
+                predictions = predict_next_intent(recent_intents, top_k=3)
+                if predictions:
+                    # Convert predictions to unified suggestion format
+                    predicted_suggestions = []
+                    for p in predictions[:3]:
+                        intent_name = p["intent"]
+                        predicted_suggestions.append({
+                            "label": _intent_to_label(intent_name),
+                            "query": _intent_to_query(intent_name),
+                            "icon": "predict",
+                            "source": "prediction",
+                        })
+                    existing = result.suggestions or []
+                    # Tag existing suggestions with source if not tagged
+                    for s in existing:
+                        if isinstance(s, dict) and "source" not in s:
+                            s["source"] = "copilot"
+                    # Merge: existing first, then predicted (deduplicated by query)
+                    seen_queries = set()
+                    merged = []
+                    for s in existing + predicted_suggestions:
+                        if isinstance(s, dict):
+                            q = s.get("query", "")
+                        else:
+                            q = str(s)
+                            s = {"label": q, "query": q, "icon": "suggest", "source": "copilot"}
+                        if q and q not in seen_queries:
+                            seen_queries.add(q)
+                            merged.append(s)
+                    result.suggestions = merged[:6]
+        except Exception:
+            pass
+
+    # ── Store in response cache (for repeated questions) ──
+    if result.method not in ("error", "greeting", "help", "action"):
+        try:
+            import response_cache
+            response_cache.put(
+                question=question,
+                company_code=company_code,
+                fiscal_year=fiscal_year,
+                answer=result.answer,
+                sql=result.sql,
+                row_count=result.row_count,
+                method=result.method,
+                chart_data=result.chart_data,
+                suggestions=result.suggestions,
+                insights=result.insights,
+                template_used=result.template_used,
+            )
+        except Exception:
+            pass
+
     return result
 
 
@@ -173,6 +526,7 @@ async def _handle_data_query(
     company_code: str,
     fiscal_year: str,
     history: list,
+    followup_context: str = "",
 ) -> PipelineResult:
     """Handle data query: template match first, then LLM fallback."""
 
@@ -182,10 +536,21 @@ async def _handle_data_query(
         # skip template and go to LLM-controlled which uses conversation history
         if _needs_history_context(intent, history):
             log.info(f"[PIPELINE] Contextual question (confidence={intent.confidence:.2f}), "
-                     f"skipping template → LLM with history")
+                     f"skipping template -> LLM with history")
         else:
             template = find_template(intent.sub_intent, intent.entities)
             log.info(f"[PIPELINE] sub_intent={intent.sub_intent} template={'FOUND:'+template.name if template else 'NONE'}")
+
+            # Phase 2: Check template trust score from learning engine
+            if template:
+                try:
+                    from learning.engine import should_use_template
+                    if not should_use_template(template.name):
+                        log.info(f"[PIPELINE] Template {template.name} low trust score -> LLM fallback")
+                        template = None
+                except Exception:
+                    pass
+
             if template:
                 result = await _execute_template(
                     template=template,
@@ -211,6 +576,7 @@ async def _handle_data_query(
         company_code=company_code,
         fiscal_year=fiscal_year,
         history=history,
+        followup_context=followup_context,
     )
     result.intent = intent
     return result
@@ -237,8 +603,9 @@ async def _execute_template(
         # Render SQL from template
         sql = render_template(template, entities)
 
-        # Inject company/fiscal filters
-        sql = inject_company_filter(sql, company_code, fiscal_year)
+        # Smart filter injection — context-aware multi-tenant isolation
+        if company_code:
+            sql = inject_company_filter(sql, company_code, fiscal_year, question)
         log.info(f"[PIPELINE] Template={template.name} SQL={sql[:80]}...")
 
         # Safety check
@@ -283,8 +650,31 @@ async def _execute_template(
 
         log_query(user_id, question, sql, safety, success=True, rows=len(data))
 
-        # Build chart if requested
-        chart = _build_chart_data(data, question) if _wants_chart(question) else None
+        # Build chart: explicit request or auto-generate
+        chart = None
+        if _wants_chart(question):
+            chart = _build_chart_data(data, question)
+        elif len(data) >= 2:
+            chart = auto_generate_chart(data, question, getattr(template, 'domain', ""))
+
+        # Copilot enrichment
+        _domain = getattr(template, 'domain', "")
+        _sub_intent = getattr(template, 'sub_intent', template.name)
+        suggestions = generate_suggestions(
+            question=question,
+            sub_intent=_sub_intent,
+            domain=_domain,
+            data=data,
+            entities=entities,
+            row_count=len(data),
+            has_chart=chart is not None,
+        )
+        insights = generate_insights(
+            data=data,
+            question=question,
+            domain=_domain,
+            row_count=len(data),
+        )
 
         return PipelineResult(
             answer=answer,
@@ -294,6 +684,8 @@ async def _execute_template(
             method="template",
             safety_warnings=safety.warnings,
             chart_data=chart,
+            suggestions=suggestions,
+            insights=insights,
         )
 
     except Exception as e:
@@ -308,6 +700,7 @@ async def _execute_llm_controlled(
     company_code: str,
     fiscal_year: str,
     history: list,
+    followup_context: str = "",
 ) -> PipelineResult:
     """Controlled LLM SQL generation with safety checks."""
     try:
@@ -320,12 +713,51 @@ async def _execute_llm_controlled(
         else:
             log.info("[PIPELINE] Schema context cache HIT")
 
+        # Phase 3: Inject learned LLM context (knowledge + approved examples)
+        learned_context = ""
+        try:
+            from learning.engine import get_llm_context
+            learned_context = get_llm_context(
+                domain=intent.domain,
+                sub_intent=intent.sub_intent,
+            )
+        except Exception:
+            pass
+
+        # Phase 4: Inject ontology JOIN hints for multi-table queries
+        join_hints = ""
+        try:
+            from learning.engine import get_join_hint
+            from schema_loader import _select_tables
+            tables = list(_select_tables(question) - {"COMPANIES", "BRANCHES"})
+            if len(tables) >= 2:
+                hints = []
+                for i in range(min(len(tables) - 1, 4)):
+                    for j in range(i + 1, min(len(tables), 5)):
+                        hint = get_join_hint(tables[i], tables[j])
+                        if hint:
+                            hints.append(f"{tables[i]} -> {tables[j]}: {hint}")
+                if hints:
+                    join_hints = "\n".join(hints)
+        except Exception:
+            pass
+
+        # Build extra context string
+        extra_context = ""
+        if followup_context:
+            extra_context += f"\n{followup_context}\n"
+        if learned_context:
+            extra_context += f"\n{learned_context}\n"
+        if join_hints:
+            extra_context += f"\n== JOIN Hints ==\n{join_hints}\n"
+
         sql_raw = generate_sql(
             schema_context=schema_ctx,
             question=question,
             company_code=company_code,
             fiscal_year=fiscal_year,
             history=history,
+            extra_context=extra_context,
         )
 
         # Safety validation
@@ -342,8 +774,9 @@ async def _execute_llm_controlled(
 
         sql = safety.sql
 
-        # Inject company/fiscal filters
-        sql = inject_company_filter(sql, company_code, fiscal_year)
+        # Smart filter injection — context-aware multi-tenant isolation
+        if company_code:
+            sql = inject_company_filter(sql, company_code, fiscal_year, question)
 
         # Execute
         data, err = await _try_execute(sql)
@@ -400,8 +833,30 @@ async def _execute_llm_controlled(
 
         log_query(user_id, question, sql, safety, success=True, rows=len(data))
 
-        # Build chart if requested
-        chart = _build_chart_data(data, question) if _wants_chart(question) else None
+        # Build chart: explicit request or auto-generate
+        chart = None
+        if _wants_chart(question):
+            chart = _build_chart_data(data, question)
+        elif len(data) >= 2:
+            chart = auto_generate_chart(data, question, intent.domain)
+
+        # Copilot enrichment
+        suggestions = generate_suggestions(
+            question=question,
+            sub_intent=intent.sub_intent,
+            domain=intent.domain,
+            data=data,
+            entities=intent.entities,
+            row_count=len(data),
+            has_chart=chart is not None,
+        )
+        insights = generate_insights(
+            data=data,
+            question=question,
+            domain=intent.domain,
+            sub_intent=intent.sub_intent,
+            row_count=len(data),
+        )
 
         return PipelineResult(
             answer=answer,
@@ -410,6 +865,8 @@ async def _execute_llm_controlled(
             method="llm_controlled",
             safety_warnings=safety.warnings,
             chart_data=chart,
+            suggestions=suggestions,
+            insights=insights,
         )
 
     except Exception as e:
@@ -436,10 +893,13 @@ def _needs_history_context(intent: Intent, history: list) -> bool:
     """
     if not history or len(history) < 2:
         return False
+    # Strong regex match (confidence >= 0.95) → trust the template, skip history
+    if intent.confidence >= 0.95 and intent.source == "regex":
+        return False
     # Intent classifier v2 detected contextual need
     if intent.needs_history:
         return True
-    # Strong regex match (confidence >= 0.95) → trust the template
+    # Strong match from any source → trust it
     if intent.confidence >= 0.95:
         return False
     # Weak match (LLM or keyword) with no entity anchors → likely contextual
@@ -542,13 +1002,39 @@ async def _try_like_fallback(sql: str, code: str) -> tuple[list[dict], str]:
 
 # Arabic-friendly column name mapping
 _COL_LABELS = {
-    "STORE_NAME": "المخزن", "ITEMNAME": "اسم الصنف", "ITEM_NAME": "اسم الصنف",
+    "STORE_NAME": "المخزن", "STORE_NAME_EN": "المخزن (EN)", "STORE_CODE": "كود المخزن",
+    "ITEMNAME": "اسم الصنف", "ITEM_NAME": "اسم الصنف", "ITEM_NAME_E": "اسم الصنف (EN)",
+    "ITEMID": "كود الصنف", "GROUPNAME": "المجموعة",
     "QTY": "الكمية", "CURRENT_QTY": "الكمية الحالية", "PRICE": "السعر",
-    "TOTAL_QTY": "إجمالي الكمية", "CUST_NAME": "العميل", "CHART_NAME_A": "اسم الحساب",
-    "TRANS_TYPE_NAME": "نوع الحركة", "INVID": "رقم الفاتورة", "INVDATE": "التاريخ",
-    "FINALTOTAL": "الإجمالي", "STORE_CODE": "كود المخزن", "ITEMID": "كود الصنف",
-    "EMP_NAME_AR": "الموظف", "NOTES": "ملاحظات", "DISCOUNT": "الخصم",
-    "TRANS_CODE": "رقم الإذن", "TRANS_DATE": "تاريخ الحركة",
+    "TOTAL_QTY": "إجمالي الكمية", "AVG_COST": "متوسط التكلفة",
+    "SELLPRICE": "سعر البيع", "TOTAL_BUYPRICE": "سعر الشراء",
+    "CUST_NAME": "العميل", "CUST_NAME_E": "العميل (EN)", "CUSTID": "كود العميل",
+    "CUST_TYPE_DESC": "النوع",
+    "CHART_CODE": "كود الحساب", "CHART_NAME_A": "اسم الحساب", "CHART_NAME_E": "الاسم (EN)",
+    "CHART_TYPE": "نوع الحساب", "CHART_NATURE": "طبيعة الحساب",
+    "PARENT_CHART_CODE": "الحساب الأب", "CHART_LEVEL": "المستوى",
+    "CHART_OPEN_LOC": "الرصيد الافتتاحي", "OPENING_BALANCE": "الرصيد الافتتاحي",
+    "TRANS_TYPE_NAME": "نوع الحركة", "TRANS_TYPE": "نوع الحركة",
+    "TRANS_NAME": "اسم الحركة", "TRANS_CODE": "رقم الإذن",
+    "INVID": "رقم الفاتورة", "INVDATE": "التاريخ", "INV_TYPE": "نوع الفاتورة",
+    "RETURN_STATUS": "حالة المرتجع",
+    "FINALTOTAL": "الإجمالي", "INVTOTAL": "المجموع", "TAX": "الضريبة",
+    "SDAD": "المدفوع", "LINE_TOTAL": "إجمالي السطر",
+    "EMP_NAME_AR": "الموظف", "EMP_NAME_EN": "الموظف (EN)", "EMP_ID": "كود الموظف",
+    "HIRE_DATE": "تاريخ التعيين", "END_SERVICE_FLG": "نهاية الخدمة",
+    "NOTES": "ملاحظات", "DISCOUNT": "الخصم",
+    "TRANS_DATE": "تاريخ الحركة",
+    "VOUCHER_CODE": "رقم القيد", "VOUCHER_DATE": "تاريخ القيد", "VOUCHER_DESC": "البيان",
+    "DEBIT": "المدين", "CREDIT": "الدائن", "AMOUNT": "المبلغ",
+    "TOTAL_DEBIT": "إجمالي المدين", "TOTAL_CREDIT": "إجمالي الدائن",
+    "BALANCE": "الرصيد",
+    "INVOICE_COUNT": "عدد الفواتير", "TOTAL_SALES": "إجمالي المبيعات",
+    "TOTAL_PURCHASES": "إجمالي المشتريات", "TOTAL_TAX": "إجمالي الضريبة",
+    "EMPLOYEE_COUNT": "عدد الموظفين", "OUTSTANDING": "المستحق",
+    "OPEN_BALANCE": "الرصيد الافتتاحي", "CREDIT_LIMIT": "حد الائتمان",
+    "TAX_NO": "الرقم الضريبي", "ACTIVE": "الحالة",
+    "UNIT_NAME": "الوحدة", "SALE_DATE": "تاريخ البيع",
+    "MAIN_STORE": "المخزن الرئيسي", "BAR_CODE": "الباركود",
 }
 
 
@@ -583,8 +1069,39 @@ def _format_data_as_table(data: list[dict], question: str = "") -> str:
 
 
 def _safe_format_answer(question, data, sql, history=None, truncated=False):
-    """Format data as markdown table directly — saves LLM tokens."""
+    """Format with executive AI copilot style. Falls back to local on error."""
+    if not data:
+        return _smart_empty_response(question)
+    # Use LLM executive formatting for reasonable data sizes
+    if len(data) <= 50:
+        try:
+            return format_answer(question, data, sql, history, truncated)
+        except Exception as e:
+            log.info(f"[PIPELINE] LLM format fallback to local: {e}")
+    # Fallback: enhanced local formatting
     return _format_data_as_table(data, question)
+
+
+def _smart_empty_response(question: str) -> str:
+    """Generate a contextual, positive empty-state response."""
+    q_lower = question.lower()
+
+    # Time-specific empty states
+    if any(kw in q_lower for kw in ["اليوم", "today"]):
+        return "لا توجد حركات مسجلة اليوم حتى الآن. يمكن الاطلاع على بيانات أمس أو هذا الأسبوع."
+    if any(kw in q_lower for kw in ["هذا الشهر", "this month"]):
+        return "لم تُسجل بيانات لهذا الشهر بعد. جرّب الاطلاع على الشهر الماضي."
+
+    # Positive empty states (no results = good news)
+    if any(kw in q_lower for kw in ["متأخر", "overdue", "مديون"]):
+        return "لا توجد مديونيات متأخرة — وضع التحصيل ممتاز."
+    if any(kw in q_lower for kw in ["مرتجع", "return"]):
+        return "لا توجد مرتجعات في هذه الفترة — مؤشر إيجابي على جودة المبيعات."
+    if any(kw in q_lower for kw in ["منخفض", "نفاد", "أقل من"]):
+        return "جميع الأصناف بمستويات مخزون كافية — لا توجد تنبيهات حالياً."
+
+    # Default with suggestion
+    return "لم أجد بيانات مطابقة. جرّب تعديل الصياغة أو توسيع نطاق البحث."
 
 
 # ── Chart helpers ──────────────────────────────────────────────────
@@ -759,4 +1276,162 @@ async def _handle_dashboard(question: str, history: list = None) -> Optional[Pip
         answer="\n".join(lines),
         method="dashboard",
         widgets=data["widgets"],
+    )
+
+
+# ══════════════════════════════════════════════════════════════════
+# ERP Operator Handlers
+# ══════════════════════════════════════════════════════════════════
+
+async def _handle_workflow_query(
+    workflow_type: str,
+    user_id: str,
+    company_code: str,
+) -> Optional[PipelineResult]:
+    """Handle workflow-related queries (pending approvals, status checks)."""
+    try:
+        if workflow_type == "pending_approvals":
+            approvals = await get_pending_approvals(user_id=user_id, company_code=company_code)
+            if not approvals:
+                return PipelineResult(
+                    answer="لا توجد طلبات معلقة حالياً.",
+                    method="workflow",
+                    suggestions=["اعرض سجل الاعتمادات", "ملخص الطلبات"],
+                )
+            # Format approvals as structured response
+            lines = [f"**الطلبات المعلقة** ({len(approvals)} طلب):\n"]
+            for i, req in enumerate(approvals[:10], 1):
+                req_id = req.get("REQUEST_ID", "")
+                req_type = req.get("REQUEST_TYPE", "")
+                desc = req.get("DESCRIPTION", "")[:80]
+                amount = req.get("AMOUNT", "")
+                amount_str = f" | المبلغ: {float(amount):,.2f}" if amount else ""
+                lines.append(f"{i}. **طلب #{req_id}** — {req_type}{amount_str}")
+                if desc:
+                    lines.append(f"   {desc}")
+            if len(approvals) > 10:
+                lines.append(f"\n... و {len(approvals) - 10} طلبات أخرى")
+            lines.append("\n💡 لاعتماد طلب، قل: *اعتمد الطلب رقم [X]*")
+            return PipelineResult(
+                answer="\n".join(lines),
+                method="workflow",
+                row_count=len(approvals),
+                suggestions=["اعتمد الطلب", "ارفض الطلب", "تفاصيل الطلب"],
+            )
+
+        elif workflow_type.startswith("request_status:"):
+            request_id = workflow_type.split(":")[1]
+            status = await get_request_status(request_id, company_code)
+            if not status:
+                return PipelineResult(
+                    answer=f"لم أجد طلب برقم {request_id}.",
+                    method="workflow",
+                )
+            # Format status
+            lines = [f"**حالة الطلب #{request_id}**\n"]
+            lines.append(f"- النوع: {status.get('REQUEST_TYPE', '-')}")
+            lines.append(f"- الحالة: {status.get('STATUS_LABEL', status.get('STATUS', '-'))}")
+            lines.append(f"- الطالب: {status.get('REQUESTED_BY', '-')}")
+            lines.append(f"- التاريخ: {status.get('REQUESTED_AT', '-')}")
+            if status.get("AMOUNT"):
+                lines.append(f"- المبلغ: {float(status['AMOUNT']):,.2f}")
+            if status.get("APPROVED_BY"):
+                lines.append(f"- المعتمد: {status['APPROVED_BY']}")
+            if status.get("NOTES"):
+                lines.append(f"- ملاحظات: {status['NOTES']}")
+            return PipelineResult(
+                answer="\n".join(lines),
+                method="workflow",
+                suggestions=["اعتمد الطلب", "ارفض الطلب", "اعرض الطلبات المعلقة"],
+            )
+
+        elif workflow_type == "request_status":
+            # General status query without specific ID
+            summary = await get_approval_summary(company_code)
+            lines = ["**ملخص الطلبات:**\n"]
+            lines.append(f"- معلقة: {summary.get('pending', 0)}")
+            lines.append(f"- معتمدة: {summary.get('approved', 0)}")
+            lines.append(f"- مرفوضة: {summary.get('rejected', 0)}")
+            lines.append(f"- الإجمالي: {summary.get('total', 0)}")
+            return PipelineResult(
+                answer="\n".join(lines),
+                method="workflow",
+                suggestions=["اعرض الطلبات المعلقة", "اعرض سجل الاعتمادات"],
+            )
+
+    except Exception as e:
+        log.warning(f"[PIPELINE] Workflow handler error: {e}")
+        return None
+
+    return None
+
+
+async def _handle_executive_report(
+    report_type: str,
+    company_code: str,
+    fiscal_year: str,
+) -> Optional[PipelineResult]:
+    """Handle executive report generation."""
+    try:
+        report = await generate_executive_report(
+            report_type=report_type,
+            company_code=company_code,
+            fiscal_year=fiscal_year,
+        )
+        chat_text = format_report_for_chat(report)
+
+        # Build chart from trends if available
+        chart_data = None
+        if report.trends:
+            trend = report.trends[0]
+            chart_data = {
+                "type": trend.get("type", "line"),
+                "labels": trend.get("labels", []),
+                "datasets": [{
+                    "label": trend.get("label", ""),
+                    "data": trend.get("values", []),
+                    "backgroundColor": "oklch(0.55 0.18 260)",
+                    "borderColor": "oklch(0.55 0.18 260)",
+                }],
+            }
+
+        return PipelineResult(
+            answer=chat_text,
+            method="report",
+            chart_data=chart_data,
+            report_data=report.to_dict(),
+            suggestions=[
+                "صدّر التقرير PDF",
+                "صدّر التقرير Excel",
+                "تفاصيل أكثر",
+                "قارن مع الشهر الماضي",
+            ],
+        )
+    except Exception as e:
+        log.warning(f"[PIPELINE] Executive report error: {e}")
+        return None
+
+
+def _handle_navigation(nav_pages: list[dict]) -> Optional[PipelineResult]:
+    """Handle APEX navigation requests."""
+    if not nav_pages:
+        return None
+
+    lines = ["**الصفحات المتاحة:**\n"]
+    for page in nav_pages[:5]:
+        title = page.get("title_ar", "")
+        url = page.get("url", "")
+        icon = page.get("icon", "")
+        lines.append(f"- 📄 **{title}** — [{url}]({url})")
+
+    if len(nav_pages) == 1:
+        page = nav_pages[0]
+        lines = [f"🔗 **{page.get('title_ar', '')}**"]
+        lines.append(f"\nرابط مباشر: {page.get('url', '')}")
+
+    return PipelineResult(
+        answer="\n".join(lines),
+        method="navigation",
+        navigation_links=nav_pages,
+        suggestions=["افتح الصفحة", "الصفحات ذات الصلة"],
     )

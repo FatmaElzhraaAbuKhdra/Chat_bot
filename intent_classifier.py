@@ -27,6 +27,7 @@ class Intent:
     confidence: float = 1.0
     needs_history: bool = False  # هل السؤال محتاج context من المحادثة السابقة؟
     original_question: str = ""
+    source: str = "none"       # regex | keywords | llm | none
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -103,8 +104,9 @@ SUB_INTENT_PATTERNS = {
     "account_balance":    r"(رصيد\s*(حساب|الحساب)|balance\s*of\s*account|رصيد\s*\d+)",
     "account_statement":  r"(كشف\s*(حساب|الحساب)|حركات?\s*(حساب|الحساب)|statement|حركة)",
     "trial_balance":      r"(ميزان\s*المراجعة|trial\s*balance|ميزان)",
-    "chart_of_accounts":  r"(شجرة\s*الحسابات|دليل\s*الحسابات|chart\s*of\s*accounts|الحسابات\s*(الفرعية|الرئيسية))",
+    "chart_of_accounts":  r"(شجرة\s*الحسابات|دليل\s*الحسابات|chart\s*of\s*accounts|الحسابات\s*(الفرعية|الرئيسية)|حسابات\s*(تبد[اأ]|اللي\s*تبد[اأ]|بتبد[اأ])\s*ب)",
     "account_info":       r"(نوع\s*(الحساب|حساب)|بيانات?\s*(الحساب|حساب)|معلومات?\s*(الحساب|حساب)|تفاصيل?\s*(الحساب|حساب))",
+    "revenue_expenses":   r"(الإيرادات\s*وال?مصروفات|الايرادات\s*وال?مصروفات|إيرادات\s*و?مصروفات|ايرادات\s*و?مصروفات|مصروفات\s*و?إيرادات|مصروفات\s*و?ايرادات|income\s*(and|&)\s*expense|revenue.+expense|قائمة\s*الدخل|income\s*statement)",
     "voucher_details":    r"(تفاصيل?\s*(القيد|قيد)|بيانات?\s*(القيد|قيد)|voucher\s*detail)",
     "journal_entries":    r"(قيود?\s*اليومية|يومية|journal\s*entries)",
 
@@ -112,8 +114,8 @@ SUB_INTENT_PATTERNS = {
     "invoice_detail":     r"(تفاصيل?\s*(الفاتور[ةه]|فاتور[ةه])|بيانات?\s*(الفاتور[ةه]|فاتور[ةه])|invoice\s*detail)",
     "sales_summary":      r"(إجمالي\s*المبيعات|مبيعات\s*(اليوم|الشهر|السنة)|total\s*sales|sales\s*summary|اجمالي\s*المبيعات)",
     "purchase_summary":   r"(إجمالي\s*المشتريات|مشتريات\s*(اليوم|الشهر|السنة)|total\s*purchase|اجمالي\s*المشتريات)",
-    "top_customers":      r"(أكثر|اكثر|أعلى|اعلى|top)\s*(\d+\s*)?(عمي?لاء|عملاء|customer)",
-    "top_items":          r"(أكثر|اكثر|أعلى|اعلى|top)\s*(\d+\s*)?(أصناف|اصناف|صنف|item|منتج|منتجات)",
+    "top_customers":      r"(?:ل)?(أكثر|اكثر|أعلى|اعلى|أعلي|اعلي|top)\s*(\d+\s*)?(عمي?لاء|عملاء|customer)",
+    "top_items":          r"(?:ل)?(أكثر|اكثر|أعلى|اعلى|أعلي|اعلي|top)\s*(\d+\s*)?(أصناف|اصناف|صنف|item|منتج|منتجات)",
     "outstanding":        r"(مستحق|متبقي|مديونية|مديون|outstanding|owing|unpaid|غير\s*مسدد)",
 
     # Inventory
@@ -175,10 +177,13 @@ _KEYWORD_SCORES: dict[str, dict[str, float]] = {
     },
     "top_customers": {
         "أكثر": 2.0, "اكثر": 2.0, "أعلى": 2.0, "اعلى": 2.0,
+        "أعلي": 2.0, "اعلي": 2.0, "لاعلي": 2.0, "لأعلى": 2.0,
         "عملاء": 3.0, "عميل": 2.0, "top": 2.0, "customer": 2.0,
+        "شراء": 1.5, "الشراء": 1.5,
     },
     "top_items": {
         "أكثر": 2.0, "اكثر": 2.0, "أعلى": 2.0, "اعلى": 2.0,
+        "أعلي": 2.0, "اعلي": 2.0, "لاعلي": 2.0, "لأعلى": 2.0,
         "أصناف": 3.0, "اصناف": 3.0, "صنف": 2.0, "منتج": 2.0,
         "مبيعاً": 1.5, "top": 2.0, "item": 2.0,
     },
@@ -196,6 +201,15 @@ _KEYWORD_SCORES: dict[str, dict[str, float]] = {
     },
     "trial_balance": {
         "ميزان": 3.5, "مراجعة": 2.0, "trial": 3.0, "balance": 1.5,
+    },
+    "chart_of_accounts": {
+        "حسابات": 3.0, "الحسابات": 3.0, "شجرة": 3.0, "دليل": 2.0,
+        "تبدا": 2.0, "تبدأ": 2.0, "chart": 3.0, "accounts": 2.0,
+    },
+    "revenue_expenses": {
+        "إيرادات": 3.0, "ايرادات": 3.0, "الإيرادات": 3.0, "الايرادات": 3.0,
+        "مصروفات": 3.0, "المصروفات": 3.0, "مصاريف": 3.0,
+        "قائمة الدخل": 4.0, "income": 3.0, "expense": 3.0, "revenue": 3.0,
     },
 }
 
@@ -233,11 +247,11 @@ def _keyword_score_classify(question: str) -> tuple[str, float]:
 # ══════════════════════════════════════════════════════════════════
 
 ENTITY_PATTERNS = {
-    "account_code":  r"(?:حساب|كود|رقم|account|code)?\s*[#]?(\d{4,10})",
+    "account_code":  r"(?:حساب|حسابات|كود|رقم|account|code|ب)\s*[#]?(\d{1,10})",
     "invoice_id":    r"(?:فاتور[ةه]|رقم|invoice|inv)?\s*[#]?(\d{5,12})",
     "customer_name": r"(?:عميل|اسم|customer)\s+([^\d\s].{2,30})",
     "date_single":   r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
-    "top_n":         r"(?:أكثر|اكثر|أعلى|اعلى|أقل|اقل|top|bottom)\s*(\d+)",
+    "top_n":         r"(?:ل)?(?:أكثر|اكثر|أعلى|اعلى|أعلي|اعلي|أقل|اقل|top|bottom)\s*(\d+)",
     "year":          r"(?:سنة|عام|year)\s*(\d{4})",
     "month":         r"(?:شهر|month)\s*(\d{1,2})",
     "store_name":    r"(?:مخزن|مستودع|store)\s+([^\d\s].{2,30})",
@@ -403,6 +417,7 @@ def classify_intent(question: str, history: list = None) -> Intent:
         confidence=confidence,
         needs_history=needs_history,
         original_question=q,
+        source=source,
     )
 
 
@@ -446,6 +461,7 @@ def _infer_domain_from_sub_intent(sub_intent: str) -> str:
         "chart_":   "accounting",
         "voucher_": "accounting",
         "journal_": "accounting",
+        "revenue_": "accounting",
         "invoice_": "invoicing",
         "sales_":   "invoicing",
         "purchase_": "invoicing",

@@ -31,7 +31,7 @@ TABLE_GROUPS = {
                     "TRANSACTION_TOT", "ITEM_CARD", "INV_CATEGORIES",
                     "STORE_TRANS_TYPE"],
     "invoicing":  ["MAIN_INV", "DETAIL_INV", "MAIN_INV_PAYED", "PAYED",
-                    "SAL_PURCH_TRANS_TYPE", "INST"],
+                    "SAL_PURCH_TRANS_TYPE"],
     "customers":  ["CUST", "PRICE_LIST"],
     "hr":         ["EMPLOYEES", "EMPLOYEE_SALARIES", "ATT_EMP", "EMP_LOANS",
                     "EMP_VACATION", "CHARTS_ELEMENTS", "METHOD_SETUP"],
@@ -182,7 +182,10 @@ def _col_annotation(desc: str) -> str:
 
 
 def _select_tables(question: str) -> set[str]:
-    """Select relevant tables based on question keywords."""
+    """Select relevant tables based on question keywords.
+    Phase 9: When no domain keywords match, use ontology + learned concepts
+    to select minimal relevant tables instead of defaulting to accounting+invoicing.
+    """
     q_lower = question.lower()
     matched_groups = set()
 
@@ -192,7 +195,11 @@ def _select_tables(question: str) -> set[str]:
                 matched_groups.add(group)
                 break
 
-    # Default: if no groups matched, use accounting + invoicing (most common)
+    # Phase 9: If no groups matched, try ontology-based table selection
+    if not matched_groups:
+        matched_groups = _ontology_select_groups(question)
+
+    # Final fallback: if still nothing, use accounting + invoicing (most common)
     if not matched_groups:
         matched_groups = {"accounting", "invoicing"}
 
@@ -215,6 +222,29 @@ def _select_tables(question: str) -> set[str]:
     tables.update(extra)
 
     return tables & all_known
+
+
+def _ontology_select_groups(question: str) -> set[str]:
+    """Phase 9: Use ontology to determine domain groups when keywords fail.
+    Queries ontology nodes for table-domain relationships and learned concepts.
+    """
+    try:
+        from learning.ontology import find_related_tables
+        # find_related_tables returns table names from ontology based on question
+        ontology_tables = find_related_tables(question)
+        if not ontology_tables:
+            return set()
+
+        # Map ontology table names back to domain groups
+        groups = set()
+        for group_name, group_tables in TABLE_GROUPS.items():
+            for tbl_name in ontology_tables:
+                if tbl_name.upper() in [t.upper() for t in group_tables]:
+                    groups.add(group_name)
+                    break
+        return groups
+    except Exception:
+        return set()
 
 
 def _build_tables_context(tables: set[str]) -> str:

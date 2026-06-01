@@ -151,6 +151,30 @@ def validate_sql(sql: str) -> SafetyResult:
     if re.search(r"SELECT\s+\*", cleaned, re.IGNORECASE):
         warnings.append("SELECT * detected; prefer named columns")
 
+    # ── AST-level structural validation ──
+    try:
+        from sql_ast import validate_sql_ast
+        ast_result = validate_sql_ast(cleaned)
+        if not ast_result.is_valid:
+            # AST found critical violations — block the query
+            critical = [v for v in ast_result.violations
+                        if "CRITICAL" in v or "INJECTION" in v or "TABLE_VIOLATION" in v]
+            if critical:
+                return SafetyResult(
+                    is_safe=False,
+                    sql=cleaned,
+                    warnings=[],
+                    blocked_reason=f"AST validation failed: {critical[0]}",
+                )
+            # Non-critical AST violations become warnings
+            warnings.extend(ast_result.violations)
+
+        # Complexity warning
+        if ast_result.complexity_score > 70:
+            warnings.append(f"High complexity score: {ast_result.complexity_score}/100")
+    except Exception:
+        pass  # AST validation failure should not block the query
+
     return SafetyResult(
         is_safe=True,
         sql=cleaned,
@@ -166,6 +190,60 @@ def _clean_sql(sql: str) -> str:
     # Strip bind variables
     sql = re.sub(r':(?!=)([a-zA-Z_]\w*)', 'NULL', sql)
     return sql
+
+
+# ── Prompt injection detection ───────────────────────────────────
+_PROMPT_INJECTION_PATTERNS = [
+    re.compile(r"ignore\s+.{0,20}(instructions?|rules?|prompts?|constraints?)", re.IGNORECASE),
+    re.compile(r"(system\s*prompt|you\s*are\s*now|new\s*instructions?|jailbreak)", re.IGNORECASE),
+    re.compile(r"(forget|disregard|override)\s+.{0,15}(everything|all|instructions|rules)", re.IGNORECASE),
+    re.compile(r"act\s+as\s+(a\s+)?(different|new|admin|root|hacker)", re.IGNORECASE),
+    re.compile(r"(reveal|show|display|output|print)\s+.{0,10}(prompt|instructions|system|password)", re.IGNORECASE),
+    re.compile(r"(do\s+not|don.?t)\s+follow\s+.{0,15}(rules|instructions|guidelines)", re.IGNORECASE),
+]
+
+
+def detect_prompt_injection(question: str) -> str:
+    """Detect prompt injection attempts in user input.
+    Returns empty string if safe, or the detected pattern name.
+    """
+    for pattern in _PROMPT_INJECTION_PATTERNS:
+        if pattern.search(question):
+            return pattern.pattern[:50]
+    return ""
+
+
+# ── Query complexity guard ───────────────────────────────────────
+MAX_JOINS = 6
+MAX_SUBQUERIES = 3
+MAX_SQL_LENGTH = 3000
+
+
+def check_query_complexity(sql: str) -> list[str]:
+    """Check if a query is too complex (potential DoS or runaway query).
+    Returns list of warnings.
+    """
+    warnings = []
+    # Count JOINs
+    join_count = len(re.findall(r'\bJOIN\b', sql, re.IGNORECASE))
+    if join_count > MAX_JOINS:
+        warnings.append(f"Too many JOINs ({join_count} > {MAX_JOINS})")
+
+    # Count subqueries
+    subquery_count = sql.upper().count("SELECT") - 1
+    if subquery_count > MAX_SUBQUERIES:
+        warnings.append(f"Too many subqueries ({subquery_count} > {MAX_SUBQUERIES})")
+
+    # SQL length
+    if len(sql) > MAX_SQL_LENGTH:
+        warnings.append(f"SQL too long ({len(sql)} > {MAX_SQL_LENGTH} chars)")
+
+    # Cartesian product detection (FROM with multiple tables, no JOIN/WHERE)
+    if re.search(r'FROM\s+\w+\s*,\s*\w+', sql, re.IGNORECASE):
+        if not re.search(r'\bWHERE\b', sql, re.IGNORECASE):
+            warnings.append("Possible cartesian product (multiple tables without WHERE)")
+
+    return warnings
 
 
 def _extract_tables(sql: str) -> set[str]:

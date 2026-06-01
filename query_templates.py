@@ -52,8 +52,8 @@ _register(QueryTemplate(
     sql="""
 SELECT c.CHART_CODE,
        c.CHART_NAME_A,
-       DECODE(c.CHART_TYPE, 0, 'ميزانية/Balance Sheet', 1, 'قائمة الدخل/Income Statement') AS CHART_TYPE,
-       DECODE(c.CHART_NATURE, 0, 'عام/Main', 1, 'مساعد/Sub') AS CHART_NATURE,
+       DECODE(c.CHART_TYPE, 0, 'ميزانية', 1, 'قائمة الدخل') AS CHART_TYPE,
+       DECODE(c.CHART_NATURE, 0, 'رئيسي', 1, 'فرعي') AS CHART_NATURE,
        NVL(SUM(CASE WHEN vd.AMOUNT > 0 THEN vd.AMOUNT ELSE 0 END), 0) AS total_debit,
        NVL(SUM(CASE WHEN vd.AMOUNT < 0 THEN ABS(vd.AMOUNT) ELSE 0 END), 0) AS total_credit,
        NVL(SUM(vd.AMOUNT), 0) AS balance
@@ -77,8 +77,8 @@ _register(QueryTemplate(
 SELECT CHART_CODE,
        CHART_NAME_A,
        CHART_NAME_E,
-       DECODE(CHART_TYPE, 0, 'ميزانية/Balance Sheet', 1, 'قائمة الدخل/Income Statement') AS CHART_TYPE,
-       DECODE(CHART_NATURE, 0, 'عام/Main Account', 1, 'مساعد/Sub Account') AS CHART_NATURE,
+       DECODE(CHART_TYPE, 0, 'ميزانية', 1, 'قائمة الدخل') AS CHART_TYPE,
+       DECODE(CHART_NATURE, 0, 'رئيسي', 1, 'فرعي') AS CHART_NATURE,
        PARENT_CHART_CODE,
        CHART_LEVEL,
        CHART_OPEN_LOC AS OPENING_BALANCE
@@ -125,15 +125,18 @@ _register(QueryTemplate(
     sql="""
 SELECT CHART_CODE,
        CHART_NAME_A,
-       DECODE(CHART_TYPE, 0, 'ميزانية/Balance Sheet', 1, 'قائمة الدخل/Income Statement') AS CHART_TYPE,
-       DECODE(CHART_NATURE, 0, 'عام/Main', 1, 'مساعد/Sub') AS CHART_NATURE,
+       DECODE(CHART_TYPE, 0, 'ميزانية', 1, 'قائمة الدخل') AS CHART_TYPE,
+       DECODE(CHART_NATURE, 0, 'رئيسي', 1, 'فرعي') AS CHART_NATURE,
        PARENT_CHART_CODE,
        CHART_LEVEL
   FROM CHARTS
+ WHERE CHART_CODE LIKE '{{account_code}}%'
  ORDER BY CHART_CODE
  FETCH FIRST 200 ROWS ONLY
 """,
     required_params=[],
+    optional_params=["account_code"],
+    param_defaults={"account_code": ""},
     result_type="table",
 ))
 
@@ -192,8 +195,8 @@ _register(QueryTemplate(
     sql="""
 SELECT m.INVID,
        m.INVDATE,
-       DECODE(m.INVTYPE, 0, 'بيع/Sale', 1, 'شراء/Purchase') AS INV_TYPE,
-       DECODE(m.RETURN_FLAG, 0, 'عادية/Normal', 1, 'مرتجع/Return') AS RETURN_STATUS,
+       DECODE(m.INVTYPE, 0, 'بيع', 1, 'شراء') AS INV_TYPE,
+       DECODE(m.RETURN_FLAG, 0, 'عادية', 1, 'مرتجع') AS RETURN_STATUS,
        cu.CUST_NAME,
        i.ITEMNAME,
        d.QTY,
@@ -407,7 +410,7 @@ _register(QueryTemplate(
 SELECT CUSTID,
        CUST_NAME,
        CUST_NAME_E,
-       DECODE(CUST_TYPE, 0, 'عميل/Customer', 1, 'مورد/Supplier', 2, 'وكيل/Dealer') AS CUST_TYPE_DESC,
+       DECODE(CUST_TYPE, 0, 'عميل', 1, 'مورد', 2, 'وكيل') AS CUST_TYPE_DESC,
        OPEN_BALANCE,
        CREDIT_LIMIT,
        TAX_NO
@@ -430,9 +433,9 @@ _register(QueryTemplate(
 SELECT CUSTID,
        CUST_NAME,
        CUST_NAME_E,
-       DECODE(CUST_TYPE, 0, 'عميل/Customer', 1, 'مورد/Supplier', 2, 'وكيل/Dealer') AS CUST_TYPE_DESC,
+       DECODE(CUST_TYPE, 0, 'عميل', 1, 'مورد', 2, 'وكيل') AS CUST_TYPE_DESC,
        OPEN_BALANCE,
-       DECODE(DBCRD, 0, 'مدين/Debit', 1, 'دائن/Credit') AS BALANCE_DIR,
+       DECODE(DBCRD, 0, 'مدين', 1, 'دائن') AS BALANCE_DIR,
        CREDIT_LIMIT,
        TAX_NO,
        CHART_CODE
@@ -552,6 +555,12 @@ def render_template(template: QueryTemplate, entities: dict) -> str:
             value = params.get(param_name, "")
             safe_value = _sanitize_param(value)
             sql = sql.replace(placeholder, safe_value)
+
+    # Clean up empty optional WHERE clauses
+    # e.g. WHERE CHART_CODE LIKE '%' → remove condition (match all)
+    sql = re.sub(r"\bWHERE\s+\w+\s+LIKE\s+'%'\s*\n?", "", sql, flags=re.IGNORECASE)
+    # Clean leading AND after WHERE removal
+    sql = re.sub(r"\bWHERE\s+AND\b", "WHERE", sql, flags=re.IGNORECASE)
 
     return sql.strip()
 

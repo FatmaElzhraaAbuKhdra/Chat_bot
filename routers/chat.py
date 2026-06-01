@@ -64,6 +64,16 @@ class ChatResponse(BaseModel):
     execution_time_ms: int = 0
     chart_data: Optional[dict] = None
     widgets: Optional[list] = None
+    suggestions: Optional[list] = None   # copilot follow-up suggestions
+    insights: Optional[list] = None      # copilot business insights
+    proactive_alerts: Optional[list] = None   # unacknowledged proactive alerts
+    health_scores: Optional[dict] = None      # ERP health score snapshot
+    # ERP Operator fields
+    action_card: Optional[dict] = None         # Action confirmation/result card
+    action_id: Optional[str] = None            # Pending action ID for confirmation flow
+    navigation_links: Optional[list] = None    # APEX deep links
+    export_available: Optional[dict] = None    # Export metadata when data is exportable
+    report_data: Optional[dict] = None         # Executive report structured data
 
 
 @router.post("/", response_model=ChatResponse)
@@ -79,15 +89,68 @@ async def chat(req: ChatRequest):
             history=history,
         )
 
+        # Inject proactive alerts on greeting/first message
+        proactive_alerts = None
+        if result.method in ("greeting", "help"):
+            try:
+                from proactive.alerts import alert_store as _astore
+                unack = _astore.get_unacknowledged()
+                if unack:
+                    proactive_alerts = [a.to_dict() for a in unack[:5]]
+            except Exception:
+                pass
+
+        # Audit log
+        try:
+            from audit_log import log_interaction
+            log_interaction(
+                user_id=req.user_id,
+                question=req.question,
+                intent_category=result.intent.category if result.intent else "",
+                intent_sub=result.intent.sub_intent if result.intent else "",
+                intent_confidence=result.intent.confidence if result.intent else 0,
+                method=result.method,
+                template_used=result.template_used,
+                sql_generated=result.sql,
+                row_count=result.row_count,
+                answer_preview=result.answer[:200],
+                execution_time_ms=result.execution_time_ms,
+                cache_hit="+cached" in result.method,
+            )
+        except Exception:
+            pass
+
+        # RBAC: filter response based on user role
+        sql_for_response = result.sql
+        export_for_response = result.export_available
+        try:
+            from rbac import get_user_permissions
+            perms = get_user_permissions(req.user_id)
+            if not perms.can_view_sql:
+                sql_for_response = ""
+            if not perms.can_export:
+                export_for_response = None
+        except Exception:
+            pass
+
         return ChatResponse(
             answer=result.answer,
-            sql_generated=result.sql,
+            sql_generated=sql_for_response,
             row_count=result.row_count,
             method=result.method,
             template_used=result.template_used,
             execution_time_ms=result.execution_time_ms,
             chart_data=result.chart_data,
             widgets=result.widgets,
+            suggestions=result.suggestions or None,
+            insights=result.insights or None,
+            proactive_alerts=proactive_alerts,
+            # ERP Operator fields
+            action_card=result.action_card,
+            action_id=result.action_id,
+            navigation_links=result.navigation_links,
+            export_available=export_for_response,
+            report_data=result.report_data,
         )
     except Exception as e:
         logging.error(f"[CHAT] Error: {e}\n{traceback.format_exc()}")
