@@ -140,14 +140,14 @@ async def chat_stream(req: StreamRequest):
             })
             await asyncio.sleep(0)
 
-            # Stream the response in chunks (simulate word-by-word for smooth UX)
+            # Stream the response in line-based chunks to preserve markdown structure
             answer = result.answer
-            words = answer.split()
-            chunk_size = max(3, len(words) // 10)  # ~10 chunks
-            for i in range(0, len(words), chunk_size):
-                chunk = " ".join(words[i:i + chunk_size])
+            lines = answer.splitlines(keepends=True)  # preserves \n in each line
+            chunk_size = max(1, len(lines) // 8)  # ~8 chunks for smooth animation
+            for i in range(0, len(lines), chunk_size):
+                chunk = "".join(lines[i:i + chunk_size])
                 yield _sse_event("chunk", {"text": chunk, "index": i // chunk_size})
-                await asyncio.sleep(0.02)  # Small delay for smooth rendering
+                await asyncio.sleep(0.02)
 
             yield _sse_event("stage", {
                 "name": "formatting",

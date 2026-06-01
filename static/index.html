@@ -1571,6 +1571,144 @@
       color: var(--text-mid);
       line-height: 1.5;
     }
+
+    /* ── Markdown: H1 ─────────────────── */
+    .md-h1 {
+      font-size: 18px;
+      font-weight: 800;
+      color: var(--text);
+      margin: 18px 0 10px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--accent);
+      letter-spacing: -0.02em;
+    }
+
+    /* ── Markdown: Code blocks ─────────── */
+    .md-code-block {
+      margin: 12px 0;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .md-code-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 7px 14px;
+      background: oklch(0.22 0.020 260);
+      color: oklch(0.75 0.010 250);
+      font-size: 11px;
+      font-weight: 600;
+      font-family: var(--mono);
+    }
+    .md-code-copy-btn {
+      background: none;
+      border: 1px solid oklch(1 0 0 / 0.15);
+      color: oklch(0.70 0.008 250);
+      padding: 2px 10px;
+      font-size: 11px;
+      border-radius: 5px;
+      cursor: pointer;
+      font-family: var(--font);
+    }
+    .md-code-copy-btn:hover { background: oklch(1 0 0 / 0.08); }
+    .md-code-pre {
+      background: oklch(0.18 0.018 260);
+      color: oklch(0.82 0.010 250);
+      padding: 14px;
+      font-family: var(--mono);
+      font-size: 12.5px;
+      line-height: 1.65;
+      direction: ltr;
+      text-align: left;
+      white-space: pre-wrap;
+      word-break: break-all;
+      margin: 0;
+      overflow-x: auto;
+    }
+    .md-inline-code {
+      font-family: var(--mono);
+      font-size: 12px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      color: var(--accent);
+    }
+
+    /* ── Markdown: Notes card ─────────── */
+    .md-notes-card {
+      background: linear-gradient(135deg, oklch(0.52 0.20 260 / 0.07), oklch(0.52 0.16 310 / 0.04));
+      border: 1px solid oklch(0.52 0.20 260 / 0.18);
+      border-right: 3px solid var(--accent);
+      border-radius: var(--radius);
+      padding: 14px 18px 10px;
+      margin: 12px 0;
+    }
+    .md-notes-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--accent);
+      margin-bottom: 10px;
+    }
+    .md-notes-card .md-list { margin: 4px 0 0; }
+    .md-notes-card .md-list li::before { background: var(--accent); }
+
+    /* ── Markdown: Account tree ────────── */
+    .md-tree {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-right: 3px solid var(--teal);
+      border-radius: var(--radius);
+      padding: 14px 20px;
+      margin: 12px 0;
+      font-family: var(--mono);
+      font-size: 13.5px;
+      line-height: 2;
+      direction: ltr;
+      text-align: left;
+      color: var(--text);
+      overflow-x: auto;
+    }
+    .md-tree-line { white-space: pre; }
+    .tree-node { color: var(--accent); font-weight: 700; }
+
+    /* ── Markdown: KPI cards from text ─── */
+    .md-kpi-row {
+      display: flex;
+      gap: 10px;
+      margin: 12px 0;
+      flex-wrap: wrap;
+    }
+    .md-kpi-card {
+      flex: 1;
+      min-width: 130px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-top: 3px solid var(--border-strong);
+      border-radius: var(--radius-lg);
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      transition: box-shadow 0.2s ease;
+    }
+    .md-kpi-card:hover { box-shadow: var(--shadow); }
+    .md-kpi-card.sales   { border-top-color: var(--green); }
+    .md-kpi-card.cost    { border-top-color: var(--amber); }
+    .md-kpi-card.profit  { border-top-color: var(--accent); }
+    .md-kpi-card.revenue { border-top-color: var(--teal); }
+    .md-kpi-card.expense { border-top-color: var(--red); }
+    .md-kpi-label { font-size: 12px; color: var(--text-dim); font-weight: 600; }
+    .md-kpi-val {
+      font-size: 22px;
+      font-weight: 800;
+      color: var(--text);
+      letter-spacing: -0.03em;
+      font-variant-numeric: tabular-nums;
+      direction: ltr;
+    }
+    .md-analysis-header { color: var(--teal); }
   </style>
 </head>
 <body>
@@ -2073,7 +2211,7 @@
                   renderStage(data);
                   break;
                 case 'chunk':
-                  fullText += (fullText ? ' ' : '') + data.text;
+                  fullText += data.text;
                   contentEl.style.display = '';
                   contentEl.innerHTML = renderMarkdown(fullText);
                   scrollBottom();
@@ -2102,27 +2240,39 @@
         }
       }
 
-      // After stream completes, render final UI (suggestions, chart, meta)
+      // After stream completes: final re-render ensures complete markdown structure
+      contentEl.innerHTML = renderMarkdown(fullText);
+
+      // Render post-stream UI elements (chips, chart, SQL toggle)
       try {
         if (meta.suggestions && meta.suggestions.length > 0) {
-          const chipHtml = renderSuggestionChips(meta.suggestions);
-          contentEl.insertAdjacentHTML('afterend', chipHtml);
+          contentEl.insertAdjacentHTML('afterend', renderSuggestionChips(meta.suggestions));
         }
         if (meta.chart && contentEl.parentElement) {
-          const chartContainer = document.createElement('div');
-          chartContainer.className = 'chart-container';
-          contentEl.parentElement.appendChild(chartContainer);
-          renderChart(meta.chart, chartContainer);
+          const ccId = 'ssecc_' + Date.now();
+          const ccWrap = document.createElement('div');
+          ccWrap.className = 'chat-chart-container';
+          ccWrap.innerHTML = '<canvas id="' + ccId + '"></canvas>';
+          contentEl.parentElement.appendChild(ccWrap);
+          requestAnimationFrame(() => renderChatChart(ccId, meta.chart));
         }
         if (meta.sql) {
-          const sqlHtml = '<details class="sql-detail"><summary>SQL</summary><pre>' + escHtml(meta.sql) + '</pre></details>';
+          const uid = 'ssesql_' + Date.now();
+          const sqlHtml =
+            '<button class="sql-toggle" onclick="toggleSql(\'' + uid + '\', this)" aria-expanded="false">' +
+              '<svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>SQL' +
+            '</button>' +
+            '<div class="sql-block" id="' + uid + '">' +
+              '<div class="sql-header"><span>SQL</span><button class="copy-btn" onclick="copySql(\'' + uid + '\')">نسخ</button></div>' +
+              '<div class="sql-code">' + escHtml(meta.sql) + '</div>' +
+            '</div>';
           contentEl.insertAdjacentHTML('afterend', sqlHtml);
         }
-        conversationHistory.push({ role: 'user', content: question });
-        conversationHistory.push({ role: 'assistant', content: fullText });
       } catch (postErr) {
         console.error('[SSE] post-stream render error:', postErr);
       }
+      conversationHistory.push({ role: 'user', content: question });
+      conversationHistory.push({ role: 'assistant', content: fullText });
 
     } catch (err) {
       // SSE Resilience: Immediate fallback to non-streaming /chat/ endpoint
@@ -2151,10 +2301,12 @@
             contentEl.insertAdjacentHTML('afterend', renderSuggestionChips(fallbackData.suggestions));
           }
           if (fallbackData.chart_data) {
-            const chartDiv = document.createElement('div');
-            chartDiv.className = 'chart-container';
-            contentEl.parentElement.appendChild(chartDiv);
-            renderChart(fallbackData.chart_data, chartDiv);
+            const fbCcId = 'fbcc_' + Date.now();
+            const fbWrap = document.createElement('div');
+            fbWrap.className = 'chat-chart-container';
+            fbWrap.innerHTML = '<canvas id="' + fbCcId + '"></canvas>';
+            contentEl.parentElement.appendChild(fbWrap);
+            requestAnimationFrame(() => renderChatChart(fbCcId, fallbackData.chart_data));
           }
           conversationHistory.push({ role: 'user', content: question });
           conversationHistory.push({ role: 'assistant', content: fullText });
@@ -2413,6 +2565,15 @@
   // ══════════════════════════════════════════════════════════════
   function renderMarkdown(text) {
     if (!text) return '';
+
+    // Pre-process: extract fenced code blocks before line-by-line parsing
+    const _codeBlocks = [];
+    text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, function(match, lang, code) {
+      const ph = '\x01CB' + _codeBlocks.length + '\x01';
+      _codeBlocks.push({ lang: lang.trim(), code: code.trimEnd() });
+      return ph;
+    });
+
     const lines = text.split('\n');
     let html = '';
     let i = 0;
@@ -2424,71 +2585,122 @@
 
       if (!line) { i++; continue; }
 
+      // Fenced code block placeholder
+      if (line.startsWith('\x01CB') && line.endsWith('\x01')) {
+        const idx = parseInt(line.slice(3, -1), 10);
+        const cb = _codeBlocks[idx];
+        if (cb) html += renderCodeBlock(cb.lang, cb.code);
+        i++; afterHr = false; continue;
+      }
+
+      // Horizontal rule
       if (/^[-*_]{3,}$/.test(line)) {
         afterHr = true;
         html += '<hr class="md-hr">';
-        i++;
-        continue;
+        i++; continue;
       }
 
-      if (line.startsWith('### ')) {
-        html += '<h4 class="md-h4">' + inlineFmt(escHtml(line.slice(4))) + '</h4>';
-        i++; afterHr = false; continue;
+      // H3 — checked before H2 to avoid prefix collision
+      if (/^### /.test(line)) {
+        const title = line.slice(4);
+        if (/^(ملاحظات|ملاحظة|تنبيهات|توصيات)/.test(title)) {
+          // Notes card: collect following list items
+          i++;
+          while (i < lines.length && !lines[i].trim()) i++;
+          let preText = '';
+          if (i < lines.length && lines[i].trim() && !/^\s*[-*]\s/.test(lines[i])) {
+            preText = lines[i].trim(); i++;
+            while (i < lines.length && !lines[i].trim()) i++;
+          }
+          const noteItems = [];
+          while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
+            noteItems.push(lines[i].trim().replace(/^[-*]\s+/, '')); i++;
+          }
+          html += renderNotesCard(title, preText, noteItems);
+        } else if (/^(تحليل الهيكل|تحليل|تقييم)/.test(title)) {
+          html += '<h4 class="md-h4 md-analysis-header">🌳 ' + escHtml(title) + '</h4>';
+          i++;
+        } else {
+          html += '<h4 class="md-h4">' + inlineFmt(escHtml(title)) + '</h4>';
+          i++;
+        }
+        afterHr = false; continue;
       }
-      if (line.startsWith('## ')) {
+
+      // H2
+      if (/^## /.test(line)) {
         html += '<h3 class="md-h3">' + inlineFmt(escHtml(line.slice(3))) + '</h3>';
         i++; afterHr = false; continue;
       }
 
+      // H1
+      if (/^# /.test(line)) {
+        html += '<h2 class="md-h1">' + inlineFmt(escHtml(line.slice(2))) + '</h2>';
+        i++; afterHr = false; continue;
+      }
+
+      // Account tree (box-drawing characters)
+      if (/[└├│┌]/.test(line)) {
+        const treeLines = [];
+        while (i < lines.length && lines[i].trim()) {
+          treeLines.push(lines[i]); i++;
+        }
+        html += renderAccountTree(treeLines);
+        afterHr = false; continue;
+      }
+
+      // Markdown table
       if (line.startsWith('|')) {
         const tLines = [];
         while (i < lines.length && lines[i].trim().startsWith('|')) {
-          tLines.push(lines[i].trim());
-          i++;
+          tLines.push(lines[i].trim()); i++;
         }
         html += renderMdTable(tLines);
-        afterHr = false;
-        continue;
+        afterHr = false; continue;
       }
 
+      // Financial KPI cards
+      if (isKpiLine(line)) {
+        const kpiLines = [line]; i++;
+        while (i < lines.length && isKpiLine(lines[i].trim())) {
+          kpiLines.push(lines[i].trim()); i++;
+        }
+        html += renderKpiCards(kpiLines);
+        afterHr = false; continue;
+      }
+
+      // Unordered list
       if (/^[-*]\s+/.test(line)) {
         const items = [];
         while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
-          items.push(lines[i].trim().replace(/^[-*]\s+/, ''));
-          i++;
+          items.push(lines[i].trim().replace(/^[-*]\s+/, '')); i++;
         }
         html += '<ul class="md-list">' + items.map(it => '<li>' + inlineFmt(escHtml(it)) + '</li>').join('') + '</ul>';
-        afterHr = false;
-        continue;
+        afterHr = false; continue;
       }
 
+      // Ordered list
       if (/^\d+[.)]\s+/.test(line)) {
         const items = [];
         while (i < lines.length && /^\s*\d+[.)]\s+/.test(lines[i])) {
-          items.push(lines[i].trim().replace(/^\d+[.)]\s+/, ''));
-          i++;
+          items.push(lines[i].trim().replace(/^\d+[.)]\s+/, '')); i++;
         }
         html += '<ol class="md-olist">' + items.map(it => '<li>' + inlineFmt(escHtml(it)) + '</li>').join('') + '</ol>';
-        afterHr = false;
-        continue;
+        afterHr = false; continue;
       }
 
+      // Key-value card
       if (isKvLine(line)) {
         const kvLines = [];
         while (i < lines.length && lines[i].trim() && isKvLine(lines[i].trim())) {
-          kvLines.push(lines[i].trim());
-          i++;
+          kvLines.push(lines[i].trim()); i++;
         }
-        if (kvLines.length >= 2) {
-          html += renderMdCard(kvLines);
-          afterHr = false;
-          continue;
-        }
+        if (kvLines.length >= 2) { html += renderMdCard(kvLines); afterHr = false; continue; }
         html += wrapParagraph(kvLines[0], afterHr);
-        afterHr = false;
-        continue;
+        afterHr = false; continue;
       }
 
+      // Regular paragraph
       html += wrapParagraph(line, afterHr);
       afterHr = false;
       i++;
@@ -2529,27 +2741,23 @@
 
   function renderMdTable(tLines) {
     if (tLines.length < 2) return tLines.map(l => '<p class="md-p">' + escHtml(l) + '</p>').join('');
-
     const parseCells = row => row.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
     const headers = parseCells(tLines[0]);
-
     let dataStart = 1;
     if (tLines.length > 1 && /^[\s|:-]+$/.test(tLines[1])) dataStart = 2;
-
     const rows = [];
     for (let j = dataStart; j < tLines.length; j++) {
       const cells = parseCells(tLines[j]);
       if (cells.length > 0 && cells.some(c => c)) rows.push(cells);
     }
-
     let h = '<div class="md-table-wrap"><table class="data-table"><thead><tr>';
-    headers.forEach(hdr => { h += '<th>' + escHtml(hdr) + '</th>'; });
+    headers.forEach(hdr => { h += '<th>' + inlineFmt(escHtml(hdr)) + '</th>'; });
     h += '</tr></thead><tbody>';
     rows.forEach(row => {
       h += '<tr>';
-      row.forEach((cell, ci) => {
+      row.forEach(cell => {
         const isNum = /^[\d,.\-٫٬\s]+$/.test(cell) && cell.length > 0;
-        h += '<td class="' + (isNum ? 'num' : '') + '">' + escHtml(cell) + '</td>';
+        h += '<td class="' + (isNum ? 'num' : '') + '">' + inlineFmt(escHtml(cell)) + '</td>';
       });
       h += '</tr>';
     });
@@ -2558,7 +2766,81 @@
   }
 
   function inlineFmt(text) {
-    return text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    return text
+      .replace(/`([^`\n]+)`/g, '<code class="md-inline-code">$1</code>')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  }
+
+  // ── New Markdown component helpers ────────────────────────────
+
+  function renderCodeBlock(lang, code) {
+    const langLabel = (lang || 'CODE').toUpperCase();
+    const uid = 'cb_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+    return '<div class="md-code-block">' +
+      '<div class="md-code-header">' +
+        '<span>' + escHtml(langLabel) + '</span>' +
+        '<button class="md-code-copy-btn" onclick="copyCodeBlock(\'' + uid + '\')">نسخ</button>' +
+      '</div>' +
+      '<pre class="md-code-pre" id="' + uid + '">' + escHtml(code) + '</pre>' +
+    '</div>';
+  }
+
+  function copyCodeBlock(uid) {
+    const el = document.getElementById(uid);
+    if (el) navigator.clipboard.writeText(el.textContent).then(() => showToast('تم النسخ'));
+  }
+
+  function renderNotesCard(title, preText, items) {
+    const ICONS = { 'ملاحظات': '💡', 'ملاحظة': '💡', 'تنبيهات': '⚠️', 'توصيات': '✅' };
+    const icon = Object.keys(ICONS).reduce((acc, k) => title.startsWith(k) ? ICONS[k] : acc, '📌');
+    let h = '<div class="md-notes-card"><div class="md-notes-title">' + icon + ' ' + escHtml(title) + '</div>';
+    if (preText) h += '<p class="md-p" style="margin:0 0 8px">' + inlineFmt(escHtml(preText)) + '</p>';
+    if (items.length > 0) {
+      h += '<ul class="md-list">' + items.map(it => '<li>' + inlineFmt(escHtml(it)) + '</li>').join('') + '</ul>';
+    }
+    h += '</div>';
+    return h;
+  }
+
+  function renderAccountTree(lines) {
+    let h = '<div class="md-tree">';
+    lines.forEach(line => {
+      const escaped = escHtml(line);
+      const highlighted = escaped.replace(/(\b\d{1,10}\b)/g, '<span class="tree-node">$1</span>');
+      h += '<div class="md-tree-line">' + highlighted + '</div>';
+    });
+    h += '</div>';
+    return h;
+  }
+
+  const _KPI_DEFS = [
+    { patterns: ['إجمالي المبيعات', 'مجموع المبيعات'], type: 'sales' },
+    { patterns: ['إجمالي المشتريات', 'تكلفة المبيعات'], type: 'cost' },
+    { patterns: ['صافي الربح', 'الربح الصافي', 'صافي الدخل'], type: 'profit' },
+    { patterns: ['إجمالي الإيرادات', 'الإيرادات الإجمالية'], type: 'revenue' },
+    { patterns: ['إجمالي المصروفات', 'المصروفات الإجمالية'], type: 'expense' },
+  ];
+
+  function isKpiLine(line) {
+    if (!line || !/\*\*[\d,،.٠-٩]+\*\*/.test(line)) return false;
+    return _KPI_DEFS.some(d => d.patterns.some(p => line.includes(p)));
+  }
+
+  function renderKpiCards(lines) {
+    let h = '<div class="md-kpi-row">';
+    lines.forEach(line => {
+      const def = _KPI_DEFS.find(d => d.patterns.some(p => line.includes(p)));
+      const type = def ? def.type : 'sales';
+      const valMatch = line.match(/\*\*([\d,،.٠-٩]+)\*\*/);
+      const val = valMatch ? valMatch[1] : '';
+      const label = line.replace(/\*\*[\d,،.٠-٩]+\*\*[\s\S]*/, '').replace(/[*_]/g, '').replace(/[:—–]/g, '').trim();
+      h += '<div class="md-kpi-card ' + type + '">' +
+        '<div class="md-kpi-label">' + escHtml(label) + '</div>' +
+        '<div class="md-kpi-val">' + escHtml(val) + '</div>' +
+      '</div>';
+    });
+    h += '</div>';
+    return h;
   }
 
   // ══════════════════════════════════════════════════════════════
