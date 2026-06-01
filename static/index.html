@@ -1996,7 +1996,7 @@
 
   // ── SSE Streaming Client ─────────────────────────────────────────
   async function sendMessageSSE(question) {
-    const chatBox = document.getElementById('chat-box');
+    const chatBox = document.getElementById('chat-area');
     // Create streaming response container
     const row = document.createElement('div');
     row.className = 'msg-row bot-row';
@@ -2009,7 +2009,7 @@
         '<div class="sse-meta" id="' + stageId + '_meta"></div>' +
       '</div>';
     chatBox.appendChild(row);
-    chatBox.scrollTop = chatBox.scrollHeight;
+    scrollBottom();
 
     const stageEl = document.getElementById(stageId);
     const contentEl = document.getElementById(contentId);
@@ -2049,6 +2049,7 @@
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      let eventType = '';
 
       while (true) {
         const { done, value } = await reader.read();
@@ -2059,7 +2060,6 @@
         const lines = buffer.split('\n');
         buffer = lines.pop(); // keep incomplete line in buffer
 
-        let eventType = '';
         for (const line of lines) {
           if (line.startsWith('event: ')) {
             eventType = line.slice(7).trim();
@@ -2074,7 +2074,7 @@
                   fullText += (fullText ? ' ' : '') + data.text;
                   contentEl.style.display = '';
                   contentEl.innerHTML = renderMarkdown(fullText);
-                  chatBox.scrollTop = chatBox.scrollHeight;
+                  scrollBottom();
                   break;
                 case 'sql':
                   meta.sql = data.sql;
