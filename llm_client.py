@@ -3,6 +3,7 @@ llm_client.py — JustClick AI Chatbot
 يدعم Gemini و Groq — يختار الـ provider من LLM_PROVIDER في .env
 """
 import os
+import re
 import time
 import logging
 
@@ -281,7 +282,13 @@ SQL: SELECT v.VOUCHER_DATE, v.VOUCHER_CODE, v.VOUCHER_DESC, CASE WHEN vd.AMOUNT 
     except Exception:
         pass
 
-    return result
+    return _strip_tenant_filters(result)
+
+
+def _strip_tenant_filters(sql: str) -> str:
+    """Remove COMPANY_CODE / FISCAL_YEAR conditions the LLM may generate."""
+    pattern = r"\s+AND\s+(?:\w+\.)?(?:COMPANY_CODE|FISCAL_YEAR)\s*=\s*(?:\d+|'[^']*')"
+    return re.sub(pattern, "", sql, flags=re.IGNORECASE)
 
 
 # ══════════════════════════════════════════════════════════════════════
