@@ -748,18 +748,29 @@ async def _execute_llm_controlled(
         if join_hints:
             extra_context += f"\n== JOIN Hints ==\n{join_hints}\n"
 
-        # Phase 5: Inject query→report_name knowledge hints (max 200 tokens)
+        # Phase 5: Inject stored report SQL patterns as reference (max 400 chars)
         try:
+            import json as _json
             from learning.knowledge_base import search_knowledge
             similar = search_knowledge(question)
-            report_hints = []
-            for k in similar[:3]:
+            sql_hints = []
+            for k in similar[:2]:
                 concept = k.get("concept") or k.get("CONCEPT", "")
+                if not concept.startswith("report_"):
+                    continue
                 desc = k.get("description_ar") or k.get("DESCRIPTION_AR", "")
-                if "query_report_map" in concept and desc:
-                    report_hints.append(f"- {desc}")
-            if report_hints:
-                extra_context += "\n== تقارير مشابهة ==\n" + "\n".join(report_hints) + "\n"
+                patterns_raw = k.get("sql_patterns") or k.get("SQL_PATTERNS", [])
+                if isinstance(patterns_raw, str):
+                    try:
+                        patterns_raw = _json.loads(patterns_raw)
+                    except Exception:
+                        patterns_raw = []
+                if patterns_raw:
+                    ref_sql = str(patterns_raw[0])[:300]
+                    sql_hints.append(f"# {desc}\n{ref_sql}")
+            if sql_hints:
+                hint_block = "\n\n".join(sql_hints)[:400]
+                extra_context += f"\n== SQL مرجعي من تقارير مشابهة ==\n{hint_block}\n"
         except Exception:
             pass
 

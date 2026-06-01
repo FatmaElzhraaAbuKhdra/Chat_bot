@@ -273,10 +273,9 @@ async def add_knowledge_entry(req: KnowledgeRequest, _role: str = Depends(requir
 
 
 class TrainFromQueryRequest(BaseModel):
-    question: str
     report_name: str
-    sql_used: str = ""
-    intent: str = "custom"
+    description: str
+    sql: str
     company_code: str = "1"
 
 
@@ -285,15 +284,21 @@ async def train_from_query_endpoint(
     req: TrainFromQueryRequest,
     _role: str = Depends(require_learning_read),
 ):
-    """Train the AI: store question → report_name mapping as ERP knowledge."""
+    """
+    Train the AI from an ERP report's SQL.
+    The AI extracts tables, maps to domains, and uses the SQL as a reference pattern.
+    """
     from learning.knowledge_base import train_from_query
-    if not req.question.strip() or not req.report_name.strip():
-        raise HTTPException(400, "question و report_name مطلوبان")
+    if not req.report_name.strip():
+        raise HTTPException(400, "report_name مطلوب")
+    if not req.sql.strip():
+        raise HTTPException(400, "sql مطلوب")
+    if not req.description.strip():
+        raise HTTPException(400, "description مطلوب")
     return train_from_query(
-        question=req.question.strip(),
         report_name=req.report_name.strip(),
-        intent=req.intent or "custom",
-        sql_used=req.sql_used,
+        description=req.description.strip(),
+        sql=req.sql.strip(),
         company_code=req.company_code,
     )
 

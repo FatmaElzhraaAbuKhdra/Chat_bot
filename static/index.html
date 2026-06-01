@@ -150,40 +150,70 @@
       background: oklch(0.62 0.15 155 / 0.1);
     }
 
-    /* Training Modal */
-    .train-modal-overlay {
+    /* ── Training Modal ─────────────────────────────────────────── */
+    #train-modal-overlay {
       display: none;
       position: fixed;
-      inset: 0;
-      background: oklch(0 0 0 / 0.55);
-      z-index: 1000;
+      top: 0; left: 0; right: 0; bottom: 0;
+      width: 100vw; height: 100vh;
+      background: rgba(0,0,0,0.6);
+      z-index: 9999;
       align-items: center;
       justify-content: center;
     }
-    .train-modal-overlay.open { display: flex; }
+    #train-modal-overlay.open { display: flex; }
     .train-modal {
       background: var(--surface1);
       border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 28px 28px 24px;
-      width: 420px;
+      border-radius: 14px;
+      padding: 24px;
+      width: 460px;
       max-width: calc(100vw - 32px);
-      box-shadow: 0 20px 60px oklch(0 0 0 / 0.4);
+      max-height: 90vh;
+      overflow-y: auto;
+      box-shadow: 0 24px 80px rgba(0,0,0,0.5);
+      position: relative;
+      z-index: 10000;
+      direction: rtl;
     }
-    .train-modal h3 {
+    .train-modal-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 20px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .train-modal-header h3 {
       font-size: 15px;
       font-weight: 700;
       color: var(--text-hi);
-      margin: 0 0 18px;
+      margin: 0;
+      flex: 1;
     }
-    .train-modal label {
+    .train-modal-close {
+      background: none;
+      border: none;
+      color: var(--text-mid);
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 6px;
+      font-size: 18px;
+      line-height: 1;
+      transition: color 0.15s;
+    }
+    .train-modal-close:hover { color: var(--text-hi); }
+    .train-field { margin-bottom: 16px; }
+    .train-field label {
       display: block;
-      font-size: 11.5px;
+      font-size: 12px;
       font-weight: 600;
       color: var(--text-mid);
-      margin-bottom: 5px;
+      margin-bottom: 6px;
     }
-    .train-modal input {
+    .train-field label span { color: oklch(0.65 0.18 25); margin-right: 2px; }
+    .train-field input,
+    .train-field textarea {
       width: 100%;
       box-sizing: border-box;
       background: var(--surface2);
@@ -192,19 +222,31 @@
       color: var(--text-hi);
       font-size: 13px;
       padding: 9px 12px;
-      margin-bottom: 14px;
       outline: none;
       transition: border-color 0.15s;
+      font-family: inherit;
+      resize: vertical;
     }
-    .train-modal input:focus { border-color: oklch(0.62 0.15 155); }
+    .train-field input:focus,
+    .train-field textarea:focus { border-color: oklch(0.62 0.15 155); }
+    .train-field textarea {
+      min-height: 90px;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      direction: ltr;
+      text-align: left;
+    }
     .train-modal-actions {
       display: flex;
       gap: 10px;
       justify-content: flex-end;
-      margin-top: 6px;
+      margin-top: 20px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
     }
     .train-submit-btn {
-      padding: 8px 20px;
+      display: flex; align-items: center; gap: 6px;
+      padding: 9px 20px;
       background: oklch(0.62 0.15 155);
       color: #fff;
       border: none;
@@ -217,15 +259,25 @@
     .train-submit-btn:hover { opacity: 0.88; }
     .train-submit-btn:disabled { opacity: 0.45; cursor: default; }
     .train-cancel-btn {
-      padding: 8px 16px;
+      padding: 9px 16px;
       background: transparent;
       color: var(--text-mid);
       border: 1px solid var(--border);
       border-radius: 8px;
       font-size: 13px;
       cursor: pointer;
+      transition: border-color 0.15s;
     }
     .train-cancel-btn:hover { border-color: var(--text-mid); }
+    .train-spinner {
+      width: 14px; height: 14px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      display: none;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
 
     .status-dot {
       width: 7px; height: 7px;
@@ -1877,16 +1929,30 @@
   <div class="toast" id="toast"></div>
 
   <!-- Training Modal -->
-  <div class="train-modal-overlay" id="train-modal-overlay" onclick="closeTrainModalOutside(event)">
+  <div id="train-modal-overlay" onclick="closeTrainModalOutside(event)">
     <div class="train-modal">
-      <h3>📊 تدريب AI على سؤال وتقرير</h3>
-      <label>السؤال الذي يطرحه المستخدم</label>
-      <input type="text" id="train-question" placeholder="مثال: ايه مبيعات شهر يناير" />
-      <label>اسم التقرير في السيستم</label>
-      <input type="text" id="train-report" placeholder="مثال: تقرير_مبيعات_يناير_2024" />
+      <div class="train-modal-header">
+        <h3>📊 تدريب AI على تقرير</h3>
+        <button class="train-modal-close" onclick="closeTrainModal()" title="إغلاق">✕</button>
+      </div>
+      <div class="train-field">
+        <label>اسم التقرير <span>*</span></label>
+        <input type="text" id="train-report-name" placeholder="مثال: تقرير_مبيعات_يناير_2024" />
+      </div>
+      <div class="train-field">
+        <label>وصف مختصر <span>*</span></label>
+        <input type="text" id="train-description" placeholder="مثال: تقرير مبيعات شهري مفصل بالعملاء والأصناف" />
+      </div>
+      <div class="train-field">
+        <label>SQL Query <span>*</span></label>
+        <textarea id="train-sql" rows="4" placeholder="SELECT ... FROM MAIN_INV JOIN ..."></textarea>
+      </div>
       <div class="train-modal-actions">
         <button class="train-cancel-btn" onclick="closeTrainModal()">إلغاء</button>
-        <button class="train-submit-btn" id="train-submit-btn" onclick="submitTraining()">حفظ وتدريب</button>
+        <button class="train-submit-btn" id="train-submit-btn" onclick="submitTraining()">
+          <div class="train-spinner" id="train-spinner"></div>
+          <span id="train-submit-label">حفظ وتدريب ✓</span>
+        </button>
       </div>
     </div>
   </div>
@@ -3150,13 +3216,14 @@
   // ── Training Modal ────────────────────────────────────────────
   function openTrainModal() {
     document.getElementById('train-modal-overlay').classList.add('open');
-    setTimeout(() => document.getElementById('train-question').focus(), 80);
+    setTimeout(() => document.getElementById('train-report-name').focus(), 80);
   }
 
   function closeTrainModal() {
     document.getElementById('train-modal-overlay').classList.remove('open');
-    document.getElementById('train-question').value = '';
-    document.getElementById('train-report').value = '';
+    document.getElementById('train-report-name').value = '';
+    document.getElementById('train-description').value = '';
+    document.getElementById('train-sql').value = '';
   }
 
   function closeTrainModalOutside(e) {
@@ -3164,27 +3231,44 @@
   }
 
   async function submitTraining() {
-    const question = document.getElementById('train-question').value.trim();
-    const report   = document.getElementById('train-report').value.trim();
-    if (!question || !report) { showToast('يرجى ملء الحقلين'); return; }
+    const reportName  = document.getElementById('train-report-name').value.trim();
+    const description = document.getElementById('train-description').value.trim();
+    const sql         = document.getElementById('train-sql').value.trim();
 
-    const btn = document.getElementById('train-submit-btn');
+    if (!reportName || !description || !sql) {
+      showToast('يرجى ملء الحقول الثلاثة كاملة');
+      return;
+    }
+
+    const btn     = document.getElementById('train-submit-btn');
+    const spinner = document.getElementById('train-spinner');
+    const label   = document.getElementById('train-submit-label');
+
     btn.disabled = true;
-    btn.textContent = 'جاري الحفظ...';
+    spinner.style.display = 'block';
+    label.textContent = 'جاري الحفظ...';
+
     try {
       const res = await fetch(`${API}/learning/train-from-query`, {
         method: 'POST',
         headers: apiHeaders(),
-        body: JSON.stringify({ question, report_name: report }),
+        body: JSON.stringify({ report_name: reportName, description, sql }),
       });
       const data = await res.json();
-      closeTrainModal();
-      showToast(res.ok ? `✅ ${data.message || 'تم التدريب'}` : `❌ ${data.detail || 'فشل الحفظ'}`);
+      if (res.ok && data.status === 'learned') {
+        closeTrainModal();
+        showToast(data.message || '✅ تم تدريب الـ AI على التقرير');
+      } else if (data.status === 'rejected') {
+        showToast(`❌ ${data.message}`);
+      } else {
+        showToast(`❌ ${data.detail || data.message || 'فشل الحفظ'}`);
+      }
     } catch (err) {
       showToast('❌ خطأ في الاتصال بالسيرفر');
     } finally {
       btn.disabled = false;
-      btn.textContent = 'حفظ وتدريب';
+      spinner.style.display = 'none';
+      label.textContent = 'حفظ وتدريب ✓';
     }
   }
 

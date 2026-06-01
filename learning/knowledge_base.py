@@ -5,6 +5,7 @@ Oracle-first with SQLite fallback.
 """
 import json
 import logging
+import re
 from typing import Optional
 from .store import get_conn, tbl, is_oracle
 
@@ -294,29 +295,82 @@ def search_knowledge(query: str) -> list[dict]:
         return results
 
 
+def _extract_tables_from_sql(sql: str) -> list[str]:
+    """Extract table names referenced in a SQL statement."""
+    # Match tokens after FROM / JOIN keywords (ignores subqueries and aliases)
+    pattern = re.compile(
+        r'\b(?:FROM|JOIN)\s+([A-Z_][A-Z0-9_]*)',
+        re.IGNORECASE,
+    )
+    tables = []
+    for m in pattern.finditer(sql):
+        t = m.group(1).upper()
+        if t not in ("SELECT", "WHERE", "ON", "SET", "INTO", "UPDATE", "VALUES"):
+            tables.append(t)
+    return list(dict.fromkeys(tables))  # deduplicate, preserve order
+
+
+def _detect_domain_from_tables(tables: list[str]) -> str:
+    """Map a list of table names to the most relevant domain."""
+    try:
+        from schema_loader import TABLE_GROUPS
+    except ImportError:
+        return "custom"
+    scores: dict[str, int] = {}
+    for domain, domain_tables in TABLE_GROUPS.items():
+        hits = sum(1 for t in tables if t in domain_tables)
+        if hits:
+            scores[domain] = hits
+    if not scores:
+        return "custom"
+    return max(scores, key=lambda d: scores[d])
+
+
 def train_from_query(
-    question: str,
     report_name: str,
-    intent: str = "custom",
-    sql_used: str = "",
+    description: str,
+    sql: str,
     company_code: str = "1",
 ) -> dict:
-    """Store a question→report_name mapping as ERP knowledge for future LLM hints."""
-    concept = f"query_report_map_{intent}_{abs(hash(question)) % 100000}"
-    description_ar = f"السؤال: {question} → التقرير: {report_name}"
+    """
+    Store an ERP report's SQL as reference knowledge.
+    The AI uses stored SQL patterns when answering similar questions.
+    """
+    import re as _re
+    # Validate SQL safety before storing
+    try:
+        from sql_safety import validate_sql
+        safety = validate_sql(sql)
+        if not safety.is_safe:
+            return {
+                "status": "rejected",
+                "knowledge_id": "",
+                "message": f"SQL غير آمن: {safety.blocked_reason}",
+            }
+        clean_sql = safety.sql
+    except Exception:
+        clean_sql = sql  # proceed without safety check if module unavailable
+
+    tables = _extract_tables_from_sql(clean_sql)
+    domain = _detect_domain_from_tables(tables)
+    concept = f"report_{_re.sub(r'[^a-zA-Z0-9_؀-ۿ]', '_', report_name)}"
+
     ok = add_knowledge(
         concept=concept,
-        description_ar=description_ar,
-        description_en=f"Query: {question} → Report: {report_name}",
-        domain=intent,
-        sql_patterns=[sql_used] if sql_used else [],
+        description_ar=description,
+        description_en=f"ERP report: {report_name}",
+        domain=domain,
+        tables=tables,
+        sql_patterns=[clean_sql],
         source="trained",
-        confidence=0.9,
+        confidence=0.95,
     )
     return {
         "status": "learned" if ok else "failed",
         "knowledge_id": concept,
-        "message": "تم التدريب على السؤال" if ok else "فشل الحفظ",
+        "tables_found": tables,
+        "domain": domain,
+        "message": "✅ تم تدريب الـ AI على التقرير — سيستخدمه في الإجابات القادمة" if ok else "فشل الحفظ",
     }
 
 
