@@ -149,9 +149,11 @@ _cors_origins = (
     ["*"] if _cors_origins_raw == "*"
     else [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
 )
+_cors_final = _cors_origins if _cors_origins != ["*"] else ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_cors_origins,
+    allow_origins=_cors_final,
+    allow_origin_regex=r"null|file://.*|http://127\.0\.0\.1:\d+|http://localhost:\d+",
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["X-API-Key", "X-Learning-Key", "Content-Type", "Authorization"],
 )

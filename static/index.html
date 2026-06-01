@@ -2006,7 +2006,7 @@
     const contentId = 'sse_content_' + Date.now();
     row.innerHTML =
       '<div class="msg-bot">' +
-        '<div class="sse-stages" id="' + stageId + '"></div>' +
+        '<div class="sse-stages" id="' + stageId + '"><div class="sse-stage-item running"><span class="stage-icon">⟳</span> جاري المعالجة...</div></div>' +
         '<div class="msg-bot-content" id="' + contentId + '" style="display:none;"></div>' +
         '<div class="sse-meta" id="' + stageId + '_meta"></div>' +
       '</div>';
