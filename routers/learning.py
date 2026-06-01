@@ -272,6 +272,32 @@ async def add_knowledge_entry(req: KnowledgeRequest, _role: str = Depends(requir
     return {"status": "added" if ok else "failed"}
 
 
+class TrainFromQueryRequest(BaseModel):
+    question: str
+    report_name: str
+    sql_used: str = ""
+    intent: str = "custom"
+    company_code: str = "1"
+
+
+@router.post("/train-from-query")
+async def train_from_query_endpoint(
+    req: TrainFromQueryRequest,
+    _role: str = Depends(require_learning_read),
+):
+    """Train the AI: store question → report_name mapping as ERP knowledge."""
+    from learning.knowledge_base import train_from_query
+    if not req.question.strip() or not req.report_name.strip():
+        raise HTTPException(400, "question و report_name مطلوبان")
+    return train_from_query(
+        question=req.question.strip(),
+        report_name=req.report_name.strip(),
+        intent=req.intent or "custom",
+        sql_used=req.sql_used,
+        company_code=req.company_code,
+    )
+
+
 @router.get("/knowledge")
 async def list_knowledge(domain: str = "", _role: str = Depends(require_learning_read)):
     return get_knowledge(domain)

@@ -143,6 +143,90 @@
       background: var(--red-soft);
     }
 
+    .train-btn { cursor: pointer; }
+    .train-btn:hover {
+      border-color: oklch(0.62 0.15 155);
+      color: oklch(0.62 0.15 155);
+      background: oklch(0.62 0.15 155 / 0.1);
+    }
+
+    /* Training Modal */
+    .train-modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: oklch(0 0 0 / 0.55);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }
+    .train-modal-overlay.open { display: flex; }
+    .train-modal {
+      background: var(--surface1);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 28px 28px 24px;
+      width: 420px;
+      max-width: calc(100vw - 32px);
+      box-shadow: 0 20px 60px oklch(0 0 0 / 0.4);
+    }
+    .train-modal h3 {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text-hi);
+      margin: 0 0 18px;
+    }
+    .train-modal label {
+      display: block;
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--text-mid);
+      margin-bottom: 5px;
+    }
+    .train-modal input {
+      width: 100%;
+      box-sizing: border-box;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-hi);
+      font-size: 13px;
+      padding: 9px 12px;
+      margin-bottom: 14px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .train-modal input:focus { border-color: oklch(0.62 0.15 155); }
+    .train-modal-actions {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      margin-top: 6px;
+    }
+    .train-submit-btn {
+      padding: 8px 20px;
+      background: oklch(0.62 0.15 155);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .train-submit-btn:hover { opacity: 0.88; }
+    .train-submit-btn:disabled { opacity: 0.45; cursor: default; }
+    .train-cancel-btn {
+      padding: 8px 16px;
+      background: transparent;
+      color: var(--text-mid);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .train-cancel-btn:hover { border-color: var(--text-mid); }
+
     .status-dot {
       width: 7px; height: 7px;
       border-radius: 50%;
@@ -1744,6 +1828,10 @@
             </div>
           </div>
         </div>
+        <button class="header-chip train-btn" onclick="openTrainModal()" title="تدريب AI على سؤال وتقرير">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+          <span>تدريب من تقرير</span>
+        </button>
         <button class="header-chip clear-memory-btn" onclick="clearMemory()" title="مسح الذاكرة">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 105.64-11.36L1 10"/></svg>
           <span>محادثة جديدة</span>
@@ -1787,6 +1875,21 @@
   </div>
 
   <div class="toast" id="toast"></div>
+
+  <!-- Training Modal -->
+  <div class="train-modal-overlay" id="train-modal-overlay" onclick="closeTrainModalOutside(event)">
+    <div class="train-modal">
+      <h3>📊 تدريب AI على سؤال وتقرير</h3>
+      <label>السؤال الذي يطرحه المستخدم</label>
+      <input type="text" id="train-question" placeholder="مثال: ايه مبيعات شهر يناير" />
+      <label>اسم التقرير في السيستم</label>
+      <input type="text" id="train-report" placeholder="مثال: تقرير_مبيعات_يناير_2024" />
+      <div class="train-modal-actions">
+        <button class="train-cancel-btn" onclick="closeTrainModal()">إلغاء</button>
+        <button class="train-submit-btn" id="train-submit-btn" onclick="submitTraining()">حفظ وتدريب</button>
+      </div>
+    </div>
+  </div>
 
 <script>
   const API = (window.location.protocol === 'file:' || window.location.origin === 'null')
@@ -3042,6 +3145,47 @@
     t.textContent = msg;
     t.classList.add('show');
     setTimeout(() => t.classList.remove('show'), 2500);
+  }
+
+  // ── Training Modal ────────────────────────────────────────────
+  function openTrainModal() {
+    document.getElementById('train-modal-overlay').classList.add('open');
+    setTimeout(() => document.getElementById('train-question').focus(), 80);
+  }
+
+  function closeTrainModal() {
+    document.getElementById('train-modal-overlay').classList.remove('open');
+    document.getElementById('train-question').value = '';
+    document.getElementById('train-report').value = '';
+  }
+
+  function closeTrainModalOutside(e) {
+    if (e.target === document.getElementById('train-modal-overlay')) closeTrainModal();
+  }
+
+  async function submitTraining() {
+    const question = document.getElementById('train-question').value.trim();
+    const report   = document.getElementById('train-report').value.trim();
+    if (!question || !report) { showToast('يرجى ملء الحقلين'); return; }
+
+    const btn = document.getElementById('train-submit-btn');
+    btn.disabled = true;
+    btn.textContent = 'جاري الحفظ...';
+    try {
+      const res = await fetch(`${API}/learning/train-from-query`, {
+        method: 'POST',
+        headers: apiHeaders(),
+        body: JSON.stringify({ question, report_name: report }),
+      });
+      const data = await res.json();
+      closeTrainModal();
+      showToast(res.ok ? `✅ ${data.message || 'تم التدريب'}` : `❌ ${data.detail || 'فشل الحفظ'}`);
+    } catch (err) {
+      showToast('❌ خطأ في الاتصال بالسيرفر');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'حفظ وتدريب';
+    }
   }
 
   function handleKey(e) {

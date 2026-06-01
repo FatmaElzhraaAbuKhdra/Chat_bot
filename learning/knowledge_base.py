@@ -294,6 +294,32 @@ def search_knowledge(query: str) -> list[dict]:
         return results
 
 
+def train_from_query(
+    question: str,
+    report_name: str,
+    intent: str = "custom",
+    sql_used: str = "",
+    company_code: str = "1",
+) -> dict:
+    """Store a question→report_name mapping as ERP knowledge for future LLM hints."""
+    concept = f"query_report_map_{intent}_{abs(hash(question)) % 100000}"
+    description_ar = f"السؤال: {question} → التقرير: {report_name}"
+    ok = add_knowledge(
+        concept=concept,
+        description_ar=description_ar,
+        description_en=f"Query: {question} → Report: {report_name}",
+        domain=intent,
+        sql_patterns=[sql_used] if sql_used else [],
+        source="trained",
+        confidence=0.9,
+    )
+    return {
+        "status": "learned" if ok else "failed",
+        "knowledge_id": concept,
+        "message": "تم التدريب على السؤال" if ok else "فشل الحفظ",
+    }
+
+
 def get_knowledge_for_llm(domain: str) -> str:
     """Build a compact knowledge context string for LLM prompts."""
     entries = get_knowledge(domain)

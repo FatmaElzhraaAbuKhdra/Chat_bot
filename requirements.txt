@@ -7,3 +7,5 @@ google-generativeai
 httpx
 pyyaml
 python-multipart
+sentence-transformers
+pydantic

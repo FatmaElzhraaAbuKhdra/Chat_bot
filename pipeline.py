@@ -453,8 +453,8 @@ async def process_question(
             method=result.method,
             session_id=user_id,
         )
-    except Exception:
-        pass  # learning is non-critical
+    except Exception as e:
+        log.warning(f"[LEARNING] on_query_complete failed: {e}")
 
     # ── Phase 7: Predict next intent — merge with existing suggestions ──
     if result.method not in ("error", "greeting", "help") and intent.sub_intent:
@@ -747,6 +747,21 @@ async def _execute_llm_controlled(
             extra_context += f"\n{learned_context}\n"
         if join_hints:
             extra_context += f"\n== JOIN Hints ==\n{join_hints}\n"
+
+        # Phase 5: Inject query→report_name knowledge hints (max 200 tokens)
+        try:
+            from learning.knowledge_base import search_knowledge
+            similar = search_knowledge(question)
+            report_hints = []
+            for k in similar[:3]:
+                concept = k.get("concept") or k.get("CONCEPT", "")
+                desc = k.get("description_ar") or k.get("DESCRIPTION_AR", "")
+                if "query_report_map" in concept and desc:
+                    report_hints.append(f"- {desc}")
+            if report_hints:
+                extra_context += "\n== تقارير مشابهة ==\n" + "\n".join(report_hints) + "\n"
+        except Exception:
+            pass
 
         sql_raw = generate_sql(
             schema_context=schema_ctx,
