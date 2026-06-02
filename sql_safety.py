@@ -235,6 +235,27 @@ def validate_sql_for_storage(sql: str) -> SafetyResult:
 
     # Must be a SELECT (allow leading WITH for CTEs)
     first_kw = re.match(r'\s*(SELECT|WITH)\b', cleaned, re.IGNORECASE)
+
+    # APEX pattern: (SELECT ...) ORDER BY col1, col2
+    # The whole SELECT is wrapped in parens with ORDER BY appended outside.
+    # Find the matching ) for the leading ( and check if inner starts with SELECT.
+    if not first_kw and cleaned.startswith('('):
+        depth, close_idx = 0, -1
+        for i, ch in enumerate(cleaned):
+            if ch == '(':
+                depth += 1
+            elif ch == ')':
+                depth -= 1
+                if depth == 0:
+                    close_idx = i
+                    break
+        if close_idx > 0:
+            inner = cleaned[1:close_idx].strip()
+            suffix = cleaned[close_idx + 1:].strip()
+            if re.match(r'(SELECT|WITH)\b', inner, re.IGNORECASE):
+                cleaned = inner + ('\n' + suffix if suffix else '')
+                first_kw = re.match(r'\s*(SELECT|WITH)\b', cleaned, re.IGNORECASE)
+
     if not first_kw:
         return SafetyResult(
             is_safe=False, sql=cleaned, warnings=[],

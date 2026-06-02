@@ -230,7 +230,7 @@ def add_knowledge(
         except Exception as e:
             import traceback as _tb
             log.error(f"[LEARNING] Knowledge add failed: {type(e).__name__}: {e}\n{_tb.format_exc()}")
-            return False
+            raise  # re-raise so callers get the real error (not silent False)
 
 
 def get_knowledge(domain: str = "") -> list[dict]:

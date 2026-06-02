@@ -258,18 +258,22 @@ async def add_knowledge_entry(req: KnowledgeRequest, _role: str = Depends(requir
     if not safe:
         raise HTTPException(400, reason)
 
-    ok = add_knowledge(
-        concept=req.concept,
-        description_ar=req.description_ar,
-        description_en=req.description_en,
-        domain=req.domain,
-        tables=req.tables,
-        terms_ar=req.terms_ar,
-        terms_en=req.terms_en,
-        sql_patterns=req.sql_patterns,
-        source="manual",
-    )
-    return {"status": "added" if ok else "failed"}
+    try:
+        add_knowledge(
+            concept=req.concept,
+            description_ar=req.description_ar,
+            description_en=req.description_en,
+            domain=req.domain,
+            tables=req.tables,
+            terms_ar=req.terms_ar,
+            terms_en=req.terms_en,
+            sql_patterns=req.sql_patterns,
+            source="manual",
+        )
+        return {"status": "added"}
+    except Exception as e:
+        log.error(f"[KNOWLEDGE] add_knowledge_entry error: {e}")
+        raise HTTPException(500, f"فشل الحفظ: {type(e).__name__}: {str(e)[:300]}")
 
 
 class TrainFromQueryRequest(BaseModel):
