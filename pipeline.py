@@ -710,6 +710,29 @@ async def _execute_llm_controlled(
         else:
             log.info("[PIPELINE] Schema context cache HIT")
 
+        # Phase 2.5: Business Reasoning Plan — decompose query before any injection
+        _reasoning_plan = None
+        _reasoning_ctx  = ""
+        try:
+            from learning.reasoning import decompose_query, plan_to_context_string
+            _reasoning_plan = decompose_query(
+                question   = question,
+                intent     = intent.sub_intent or intent.category,
+                domain     = intent.domain,
+                sub_intent = intent.sub_intent,
+            )
+            _reasoning_ctx = plan_to_context_string(_reasoning_plan)
+            if _reasoning_plan and _reasoning_plan.confidence > 0.5:
+                log.info(
+                    f"[REASONING] Plan: metric={_reasoning_plan.metric} "
+                    f"agg={_reasoning_plan.aggregation} "
+                    f"dim={_reasoning_plan.dimension_label} "
+                    f"tables={_reasoning_plan.required_tables} "
+                    f"conf={_reasoning_plan.confidence}"
+                )
+        except Exception as _re:
+            log.debug(f"[REASONING] Plan skipped: {_re}")
+
         # Phase 3: Inject learned LLM context (knowledge + approved examples)
         learned_context = ""
         try:
@@ -739,8 +762,10 @@ async def _execute_llm_controlled(
         except Exception:
             pass
 
-        # Build extra context string
+        # Build extra context string — Reasoning Plan first (highest priority)
         extra_context = ""
+        if _reasoning_ctx:
+            extra_context += f"\n{_reasoning_ctx}\n"
         if followup_context:
             extra_context += f"\n{followup_context}\n"
         if learned_context:
@@ -908,6 +933,17 @@ async def _execute_llm_controlled(
             answer += "\n\n---\n⚠️ النتائج مقتصرة على أول 500 سجل — يمكن تضييق نطاق البحث للحصول على نتائج أكثر دقة."
 
         log_query(user_id, question, sql, safety, success=True, rows=len(data))
+
+        # Reasoning: validate SQL against plan (non-blocking) + record for adaptive learning
+        if _reasoning_plan:
+            try:
+                from learning.reasoning import validate_sql_against_plan, record_successful_plan
+                _r_warns = validate_sql_against_plan(sql, _reasoning_plan)
+                if _r_warns:
+                    log.info(f"[REASONING] SQL warnings: {_r_warns}")
+                record_successful_plan(question, _reasoning_plan, sql, success=True)
+            except Exception:
+                pass
 
         # Build chart: explicit request or auto-generate
         chart = None
