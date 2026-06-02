@@ -1027,41 +1027,56 @@ def train_from_query(
     terms_ar, terms_en = _extract_business_terms(report_name, description, tables)
     domain  = _detect_domain_from_tables(tables)
 
-    # ── Layer 2: Semantic extraction ─────────────────────────────────
-    relationships = _classify_relationships(tables, joins)
-    roles         = _detect_table_roles(tables)
-    intent        = _classify_business_intent(report_name, description, tables, domain)
-    kpis          = _extract_kpis_from_sql(clean_sql)
-    entity_flow   = _build_entity_flow(tables, relationships)
+    # ── Layer 2: Semantic extraction (non-blocking — graceful fallback) ──
+    relationships: list[dict] = []
+    roles: dict[str, str] = {}
+    intent: dict = {'intent': '', 'label_ar': '', 'label_en': '', 'confidence': 0.0}
+    kpis: list[dict] = []
+    entity_flow: list[str] = []
+    _semantic_entry = ""
+    try:
+        relationships = _classify_relationships(tables, joins)
+        roles         = _detect_table_roles(tables)
+        intent        = _classify_business_intent(report_name, description, tables, domain)
+        kpis          = _extract_kpis_from_sql(clean_sql)
+        entity_flow   = _build_entity_flow(tables, relationships)
+        _semantic_entry = _pack_semantic_metadata(intent, roles, relationships, kpis, entity_flow)
+    except Exception as _sem_err:
+        log.warning(f"[LEARNING] Semantic extraction skipped: {_sem_err}")
 
     # ── Build enriched sql_patterns ──────────────────────────────────
     # [0] full SQL (reference)
     # [1] JOIN conditions  (if any)
     # [2] Columns used     (if any)
-    # [-1] SEMANTIC metadata (always last — backward compatible)
+    # [-1] SEMANTIC metadata (if extraction succeeded — backward compatible)
     sql_patterns: list[str] = [clean_sql]
     if joins:
         sql_patterns.append("# JOINs: " + " | ".join(joins[:4]))
     if columns:
         sql_patterns.append("# Columns: " + ", ".join(columns[:15]))
-    sql_patterns.append(
-        _pack_semantic_metadata(intent, roles, relationships, kpis, entity_flow)
-    )
+    if _semantic_entry:
+        sql_patterns.append(_semantic_entry)
 
     concept = f"report_{re.sub(r'[^a-zA-Z0-9_؀-ۿ]', '_', report_name)}"
 
-    ok = add_knowledge(
-        concept=concept,
-        description_ar=description,
-        description_en=f"ERP report: {report_name}",
-        domain=domain,
-        tables=tables,
-        terms_ar=terms_ar,
-        terms_en=terms_en,
-        sql_patterns=sql_patterns,
-        source="trained",
-        confidence=0.95,
-    )
+    _save_error = ""
+    try:
+        ok = add_knowledge(
+            concept=concept,
+            description_ar=description,
+            description_en=f"ERP report: {report_name}",
+            domain=domain,
+            tables=tables,
+            terms_ar=terms_ar,
+            terms_en=terms_en,
+            sql_patterns=sql_patterns,
+            source="trained",
+            confidence=0.95,
+        )
+    except Exception as _save_exc:
+        log.error(f"[LEARNING] train_from_query add_knowledge exception: {_save_exc}")
+        _save_error = str(_save_exc)[:200]
+        ok = False
 
     # ── Layer 3: Update ontology with discovered JOINs ────────────────
     onto_count = 0
@@ -1101,7 +1116,7 @@ def train_from_query(
         "ontology_updated":   onto_count,
         "message": (
             "✅ تم تدريب الـ AI — استُخرجت العلاقات والمفاهيم ومقاييس الأعمال وحُدّث الـ Ontology"
-            if ok else "فشل الحفظ"
+            if ok else (f"فشل الحفظ: {_save_error}" if _save_error else "فشل الحفظ — تأكد من الاتصال بقاعدة البيانات")
         ),
     }
 

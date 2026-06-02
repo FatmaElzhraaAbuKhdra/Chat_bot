@@ -190,6 +190,28 @@ def validate_sql_for_storage(sql: str) -> SafetyResult:
     """
     cleaned = sql.strip().rstrip(";").strip()
 
+    # Strip outer parentheses — APEX reports are sometimes wrapped in (SELECT ...)
+    # Unwrap only if the outermost parens enclose the full SQL
+    _unwrap_attempts = 0
+    while cleaned.startswith("(") and cleaned.endswith(")") and _unwrap_attempts < 3:
+        inner = cleaned[1:-1].strip()
+        # Verify parens are balanced inside so we don't strip subquery fragments
+        depth = 0
+        balanced = True
+        for ch in inner:
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                if depth == 0:
+                    balanced = False
+                    break
+                depth -= 1
+        if balanced and depth == 0:
+            cleaned = inner
+            _unwrap_attempts += 1
+        else:
+            break
+
     # Block DDL / DML
     dml_match = _DML_KEYWORDS.search(cleaned)
     if dml_match:
