@@ -558,6 +558,442 @@ def _update_ontology_from_joins(
     return count
 
 
+# ═══════════════════════════════════════════════════════════════════
+# Semantic Intelligence Layer
+# Relationship Classification · Table Roles · Business Intent
+# KPI Extraction · Entity Flow · Semantic Storage · Embedding Index
+# ═══════════════════════════════════════════════════════════════════
+
+# ── Known JOIN relationship types ──────────────────────────────────
+_KNOWN_RELATIONSHIPS: dict[frozenset, dict] = {
+    frozenset({'MAIN_INV', 'DETAIL_INV'}):       {'type': 'MasterDetail', 'direction': ('MAIN_INV', 'DETAIL_INV'),          'label_ar': 'رأس فاتورة ← بنود'},
+    frozenset({'VOUCHERS', 'VOUCHERS_DET'}):      {'type': 'MasterDetail', 'direction': ('VOUCHERS', 'VOUCHERS_DET'),        'label_ar': 'رأس قيد ← بنود'},
+    frozenset({'EMPLOYEES', 'EMPLOYEE_SALARIES'}):{'type': 'MasterDetail', 'direction': ('EMPLOYEES', 'EMPLOYEE_SALARIES'),  'label_ar': 'موظف ← راتب'},
+    frozenset({'EMPLOYEES', 'ATT_EMP'}):          {'type': 'MasterDetail', 'direction': ('EMPLOYEES', 'ATT_EMP'),            'label_ar': 'موظف ← حضور'},
+    frozenset({'EMPLOYEES', 'EMP_VACATION'}):     {'type': 'MasterDetail', 'direction': ('EMPLOYEES', 'EMP_VACATION'),       'label_ar': 'موظف ← إجازة'},
+    frozenset({'EMPLOYEES', 'EMP_LOANS'}):        {'type': 'MasterDetail', 'direction': ('EMPLOYEES', 'EMP_LOANS'),          'label_ar': 'موظف ← سلفة'},
+    frozenset({'MAIN_INV', 'MAIN_INV_PAYED'}):   {'type': 'Bridge',       'direction': ('MAIN_INV', 'MAIN_INV_PAYED'),     'label_ar': 'فاتورة ← ربط سداد'},
+    frozenset({'MAIN_INV', 'CUST'}):             {'type': 'Lookup',       'direction': ('MAIN_INV', 'CUST'),               'label_ar': 'فاتورة ← عميل'},
+    frozenset({'DETAIL_INV', 'ITEMS'}):          {'type': 'Lookup',       'direction': ('DETAIL_INV', 'ITEMS'),            'label_ar': 'بنود ← صنف'},
+    frozenset({'VOUCHERS_DET', 'CHARTS'}):       {'type': 'Lookup',       'direction': ('VOUCHERS_DET', 'CHARTS'),         'label_ar': 'بنود قيد ← حساب'},
+    frozenset({'TRANSACTION', 'ITEMS'}):         {'type': 'Lookup',       'direction': ('TRANSACTION', 'ITEMS'),          'label_ar': 'حركة ← صنف'},
+    frozenset({'TRANSACTION', 'STORE'}):         {'type': 'Lookup',       'direction': ('TRANSACTION', 'STORE'),          'label_ar': 'حركة ← مخزن'},
+    frozenset({'TRANSACTION_TOT', 'ITEMS'}):     {'type': 'Lookup',       'direction': ('TRANSACTION_TOT', 'ITEMS'),      'label_ar': 'رصيد ← صنف'},
+    frozenset({'TRANSACTION_TOT', 'STORE'}):     {'type': 'Lookup',       'direction': ('TRANSACTION_TOT', 'STORE'),      'label_ar': 'رصيد ← مخزن'},
+    frozenset({'ITEMS', 'ITEMGROUP'}):           {'type': 'Lookup',       'direction': ('ITEMS', 'ITEMGROUP'),            'label_ar': 'صنف ← مجموعة'},
+    frozenset({'VOUCHERS_DET', 'COST_CENTERS'}): {'type': 'Lookup',       'direction': ('VOUCHERS_DET', 'COST_CENTERS'),  'label_ar': 'بنود ← مركز تكلفة'},
+}
+
+# ── Table roles ─────────────────────────────────────────────────────
+_TABLE_ROLES: dict[str, str] = {
+    'MAIN_INV':          'Header',
+    'VOUCHERS':          'Header',
+    'DETAIL_INV':        'Detail',
+    'VOUCHERS_DET':      'Detail',
+    'EMPLOYEE_SALARIES': 'Detail',
+    'ATT_EMP':           'Detail',
+    'EMP_VACATION':      'Detail',
+    'EMP_LOANS':         'Detail',
+    'MAIN_INV_PAYED':    'Bridge',
+    'TRANSACTION':       'Transaction',
+    'PAYED':             'Transaction',
+    'TRANSACTION_TOT':   'Fact',
+    'CUST':              'Dimension',
+    'ITEMS':             'Dimension',
+    'STORE':             'Dimension',
+    'CHARTS':            'Dimension',
+    'COST_CENTERS':      'Dimension',
+    'ITEMGROUP':         'Dimension',
+    'UNITS':             'Dimension',
+    'EMPLOYEES':         'Dimension',
+    'COMPANIES':         'Dimension',
+    'BRANCHES':          'Dimension',
+    'PRICE_LIST':        'Dimension',
+}
+
+# ── Business intent rules ───────────────────────────────────────────
+_INTENT_RULES: list[dict] = [
+    {
+        'intent': 'sales_analysis',
+        'label_ar': 'تحليل المبيعات', 'label_en': 'Sales Analysis',
+        'keywords_ar': ['مبيعات', 'بيع', 'مبيع', 'إيراد', 'إيرادات'],
+        'keywords_en': ['sale', 'invoice', 'revenue', 'selling'],
+        'tables': ['MAIN_INV', 'DETAIL_INV'],
+        'domains': ['invoicing'],
+    },
+    {
+        'intent': 'customer_performance',
+        'label_ar': 'أداء العملاء', 'label_en': 'Customer Performance',
+        'keywords_ar': ['عميل', 'عملاء', 'زبون', 'زبائن'],
+        'keywords_en': ['customer', 'client'],
+        'tables': ['CUST'],
+        'domains': ['customers', 'invoicing'],
+    },
+    {
+        'intent': 'purchasing_analysis',
+        'label_ar': 'تحليل المشتريات', 'label_en': 'Purchasing Analysis',
+        'keywords_ar': ['مشتريات', 'شراء', 'مورد', 'موردين', 'توريد'],
+        'keywords_en': ['purchase', 'buying', 'supplier', 'vendor'],
+        'tables': ['PURCHASE_INV', 'CUST'],
+        'domains': ['invoicing'],
+    },
+    {
+        'intent': 'inventory_movement',
+        'label_ar': 'حركة المخزن', 'label_en': 'Inventory Movement',
+        'keywords_ar': ['مخزن', 'حركة', 'صرف', 'إضافة', 'مخزون', 'وارد', 'صادر'],
+        'keywords_en': ['inventory', 'stock', 'movement', 'issue', 'receipt', 'warehouse'],
+        'tables': ['TRANSACTION', 'TRANSACTION_TOT'],
+        'domains': ['inventory'],
+    },
+    {
+        'intent': 'accounting_summary',
+        'label_ar': 'ملخص محاسبي', 'label_en': 'Accounting Summary',
+        'keywords_ar': ['قيد', 'حساب', 'مدين', 'دائن', 'يومية', 'ميزانية', 'حسابات'],
+        'keywords_en': ['voucher', 'account', 'debit', 'credit', 'journal', 'ledger'],
+        'tables': ['VOUCHERS', 'CHARTS'],
+        'domains': ['accounting'],
+    },
+    {
+        'intent': 'hr_payroll',
+        'label_ar': 'رواتب وموارد بشرية', 'label_en': 'HR & Payroll',
+        'keywords_ar': ['موظف', 'راتب', 'رواتب', 'حضور', 'إجازة', 'سلفة'],
+        'keywords_en': ['employee', 'salary', 'payroll', 'attendance', 'leave'],
+        'tables': ['EMPLOYEES', 'EMPLOYEE_SALARIES'],
+        'domains': ['hr'],
+    },
+    {
+        'intent': 'payment_collection',
+        'label_ar': 'السداد والتحصيل', 'label_en': 'Payment & Collection',
+        'keywords_ar': ['سداد', 'تحصيل', 'دفع', 'قسط', 'مديونية'],
+        'keywords_en': ['payment', 'receipt', 'collection', 'installment'],
+        'tables': ['PAYED', 'MAIN_INV_PAYED'],
+        'domains': ['invoicing'],
+    },
+    {
+        'intent': 'item_analysis',
+        'label_ar': 'تحليل الأصناف', 'label_en': 'Item Analysis',
+        'keywords_ar': ['صنف', 'أصناف', 'منتج', 'سلعة', 'بضاعة'],
+        'keywords_en': ['item', 'product', 'goods', 'material'],
+        'tables': ['ITEMS', 'DETAIL_INV'],
+        'domains': ['inventory', 'invoicing'],
+    },
+]
+
+# ── KPI label lookup ────────────────────────────────────────────────
+_KPI_LABELS: dict[str, tuple[str, str]] = {
+    'TOTAL_SALES':      ('إجمالي المبيعات',      'Total Sales'),
+    'NET_SALES':        ('صافي المبيعات',         'Net Sales'),
+    'INVOICE_COUNT':    ('عدد الفواتير',          'Invoice Count'),
+    'TOTAL_QTY':        ('إجمالي الكمية',         'Total Quantity'),
+    'TOTAL_AMOUNT':     ('إجمالي المبلغ',         'Total Amount'),
+    'TOTAL_PURCHASES':  ('إجمالي المشتريات',      'Total Purchases'),
+    'TOTAL_PAYMENTS':   ('إجمالي المدفوعات',      'Total Payments'),
+    'NET_REVENUE':      ('صافي الإيرادات',        'Net Revenue'),
+    'PROFIT':           ('الربح',                 'Profit'),
+    'BALANCE':          ('الرصيد',               'Balance'),
+    'DEBIT':            ('المدين',               'Debit'),
+    'CREDIT':           ('الدائن',               'Credit'),
+    'STOCK_QTY':        ('كمية المخزن',           'Stock Quantity'),
+    'STOCK_VALUE':      ('قيمة المخزن',           'Stock Value'),
+    'SALARY_TOTAL':     ('إجمالي الرواتب',        'Total Salaries'),
+    'EMPLOYEE_COUNT':   ('عدد الموظفين',          'Employee Count'),
+    'CUSTOMER_COUNT':   ('عدد العملاء',           'Customer Count'),
+    'ITEM_COUNT':       ('عدد الأصناف',           'Item Count'),
+    'AVG_SALE':         ('متوسط المبيعات',        'Average Sale'),
+    'TOTAL_DISCOUNT':   ('إجمالي الخصومات',       'Total Discount'),
+    'TOTAL_TAX':        ('إجمالي الضريبة',        'Total Tax'),
+}
+
+# ── Table → business entity name ────────────────────────────────────
+_TABLE_ENTITY_MAP: dict[str, tuple[str, str]] = {
+    'CUST':              ('Customer',        'عميل/مورد'),
+    'MAIN_INV':          ('Invoice',         'فاتورة'),
+    'DETAIL_INV':        ('Invoice Lines',   'بنود الفاتورة'),
+    'ITEMS':             ('Product',         'صنف'),
+    'EMPLOYEES':         ('Employee',        'موظف'),
+    'EMPLOYEE_SALARIES': ('Salary',          'راتب'),
+    'ATT_EMP':           ('Attendance',      'حضور'),
+    'VOUCHERS':          ('Journal Entry',   'قيد محاسبي'),
+    'VOUCHERS_DET':      ('Journal Lines',   'بنود القيد'),
+    'CHARTS':            ('Account',         'حساب'),
+    'TRANSACTION':       ('Inv. Movement',   'حركة مخزن'),
+    'TRANSACTION_TOT':   ('Stock Balance',   'رصيد مخزن'),
+    'STORE':             ('Warehouse',       'مخزن'),
+    'PAYED':             ('Payment',         'سداد'),
+    'COST_CENTERS':      ('Cost Center',     'مركز تكلفة'),
+    'ITEMGROUP':         ('Item Group',      'مجموعة أصناف'),
+    'MAIN_INV_PAYED':    ('Pay Bridge',      'ربط السداد'),
+}
+
+# ── Known entity flows ───────────────────────────────────────────────
+_KNOWN_FLOWS: dict[frozenset, list[str]] = {
+    frozenset({'MAIN_INV', 'CUST', 'DETAIL_INV'}):
+        ['عميل/مورد (CUST)', 'فاتورة (MAIN_INV)', 'بنود الفاتورة (DETAIL_INV)'],
+    frozenset({'MAIN_INV', 'CUST'}):
+        ['عميل/مورد (CUST)', 'فاتورة (MAIN_INV)'],
+    frozenset({'MAIN_INV', 'DETAIL_INV'}):
+        ['فاتورة (MAIN_INV)', 'بنود الفاتورة (DETAIL_INV)'],
+    frozenset({'VOUCHERS', 'VOUCHERS_DET', 'CHARTS'}):
+        ['قيد محاسبي (VOUCHERS)', 'بنود القيد (VOUCHERS_DET)', 'حساب (CHARTS)'],
+    frozenset({'VOUCHERS', 'VOUCHERS_DET'}):
+        ['قيد محاسبي (VOUCHERS)', 'بنود القيد (VOUCHERS_DET)'],
+    frozenset({'EMPLOYEES', 'EMPLOYEE_SALARIES'}):
+        ['موظف (EMPLOYEES)', 'راتب (EMPLOYEE_SALARIES)'],
+    frozenset({'TRANSACTION', 'ITEMS', 'STORE'}):
+        ['مخزن (STORE)', 'صنف (ITEMS)', 'حركة مخزن (TRANSACTION)'],
+    frozenset({'TRANSACTION_TOT', 'ITEMS'}):
+        ['صنف (ITEMS)', 'رصيد مخزن (TRANSACTION_TOT)'],
+    frozenset({'MAIN_INV', 'CUST', 'DETAIL_INV', 'ITEMS'}):
+        ['عميل/مورد (CUST)', 'فاتورة (MAIN_INV)', 'بنود الفاتورة (DETAIL_INV)', 'صنف (ITEMS)'],
+    frozenset({'MAIN_INV', 'PAYED'}):
+        ['فاتورة (MAIN_INV)', 'سداد (PAYED)'],
+}
+
+
+def _classify_relationships(tables: list[str], joins: list[str]) -> list[dict]:
+    """
+    Classify each JOIN relationship as MasterDetail / Lookup / Bridge / Associated.
+    Returns structured relationship list.
+    """
+    table_set = set(tables)
+    results: list[dict] = []
+
+    for join_str in joins:
+        eq_pairs = re.findall(
+            r'([A-Z_][A-Z0-9_]*)\.([A-Z_][A-Z0-9_]*)\s*=\s*([A-Z_][A-Z0-9_]*)\.([A-Z_][A-Z0-9_]*)',
+            join_str, re.IGNORECASE,
+        )
+        seen_pairs: set[frozenset] = set()
+        for t1, _c1, t2, _c2 in eq_pairs:
+            t1u, t2u = t1.upper(), t2.upper()
+            pair = frozenset({t1u, t2u})
+            if t1u == t2u or pair in seen_pairs:
+                continue
+            if not (t1u in table_set and t2u in table_set):
+                continue
+            seen_pairs.add(pair)
+
+            rel_info = _KNOWN_RELATIONSHIPS.get(pair)
+            if rel_info:
+                rel_type  = rel_info['type']
+                direction = rel_info['direction']
+                label_ar  = rel_info['label_ar']
+            else:
+                # Infer from table roles
+                role1 = _TABLE_ROLES.get(t1u, 'Unknown')
+                role2 = _TABLE_ROLES.get(t2u, 'Unknown')
+                if role1 == 'Header' and role2 == 'Detail':
+                    rel_type, direction, label_ar = 'MasterDetail', (t1u, t2u), 'رأس-بنود'
+                elif role2 == 'Header' and role1 == 'Detail':
+                    rel_type, direction, label_ar = 'MasterDetail', (t2u, t1u), 'رأس-بنود'
+                elif role1 == 'Dimension' or role2 == 'Dimension':
+                    master = t1u if role2 == 'Dimension' else t2u
+                    lookup = t2u if role2 == 'Dimension' else t1u
+                    rel_type, direction, label_ar = 'Lookup', (master, lookup), 'بحث'
+                else:
+                    rel_type, direction, label_ar = 'Associated', (t1u, t2u), 'مرتبط'
+
+            results.append({
+                'from': direction[0],
+                'to':   direction[1],
+                'type': rel_type,
+                'label_ar': label_ar,
+            })
+
+    return results
+
+
+def _detect_table_roles(tables: list[str]) -> dict[str, str]:
+    """Assign a structural role to each table in the query."""
+    return {t: _TABLE_ROLES.get(t, 'Unknown') for t in tables}
+
+
+def _classify_business_intent(
+    name: str,
+    description: str,
+    tables: list[str],
+    domain: str,
+) -> dict:
+    """
+    Classify the business intent of a report (or query).
+    Returns intent dict with intent key, Arabic + English labels, confidence.
+    """
+    combined = f"{name} {description}".lower()
+    table_set = set(tables)
+
+    best: dict | None = None
+    best_score = 0.0
+
+    for rule in _INTENT_RULES:
+        score = 0.0
+        for kw in rule['keywords_ar']:
+            if kw in combined:
+                score += 2.0
+        for kw in rule['keywords_en']:
+            if kw in combined:
+                score += 1.5
+        for t in rule.get('tables', []):
+            if t in table_set:
+                score += 3.0
+        if domain in rule.get('domains', []):
+            score += 1.0
+        if score > best_score:
+            best_score = score
+            best = rule
+
+    if best:
+        return {
+            'intent':     best['intent'],
+            'label_ar':   best['label_ar'],
+            'label_en':   best['label_en'],
+            'confidence': round(min(best_score / 10.0, 1.0), 2),
+        }
+
+    _DOMAIN_FALLBACKS = {
+        'invoicing':  ('تحليل الفواتير',   'Invoice Analysis'),
+        'accounting': ('ملخص محاسبي',      'Accounting Summary'),
+        'inventory':  ('تحليل المخزن',     'Inventory Analysis'),
+        'hr':         ('تقارير الموارد البشرية', 'HR Reports'),
+        'customers':  ('تحليل العملاء',    'Customer Analysis'),
+    }
+    label_ar, label_en = _DOMAIN_FALLBACKS.get(domain, ('تقرير مخصص', 'Custom Report'))
+    return {'intent': f'{domain}_general', 'label_ar': label_ar,
+            'label_en': label_en, 'confidence': 0.4}
+
+
+def _extract_kpis_from_sql(sql: str) -> list[dict]:
+    """Extract KPI definitions from SQL aggregate expressions (SUM/COUNT/AVG/MAX/MIN AS alias)."""
+    pattern = re.compile(
+        r'\b(SUM|COUNT|AVG|MAX|MIN)\s*\([^)]+\)\s+(?:AS\s+)?([A-Z_][A-Z0-9_]*)',
+        re.IGNORECASE,
+    )
+    seen: set[str] = set()
+    kpis: list[dict] = []
+    for m in pattern.finditer(sql):
+        func  = m.group(1).upper()
+        alias = m.group(2).upper()
+        if alias in seen or alias in _COL_SKIP:
+            continue
+        seen.add(alias)
+        label_ar, label_en = _KPI_LABELS.get(alias, (alias, alias))
+        kpis.append({
+            'name':     alias,
+            'function': func,
+            'label_ar': label_ar,
+            'label_en': label_en,
+        })
+    return kpis
+
+
+def _build_entity_flow(tables: list[str], relationships: list[dict]) -> list[str]:
+    """
+    Build a human-readable business entity flow:
+    e.g. عميل/مورد (CUST) → فاتورة (MAIN_INV) → بنود الفاتورة (DETAIL_INV)
+    """
+    table_set = frozenset(tables)
+
+    # Try exact or superset match in known flows first
+    for known_set, flow in _KNOWN_FLOWS.items():
+        if known_set == table_set or known_set.issubset(table_set):
+            return flow
+
+    # Build dynamically: sort by structural role priority
+    _role_order = {'Header': 0, 'Transaction': 1, 'Fact': 2,
+                   'Detail': 3, 'Bridge': 4, 'Dimension': 5, 'Unknown': 6}
+    roles = _detect_table_roles(tables)
+    sorted_tbls = sorted(tables, key=lambda t: _role_order.get(roles.get(t, 'Unknown'), 6))
+
+    flow = []
+    for t in sorted_tbls[:5]:
+        _, entity_ar = _TABLE_ENTITY_MAP.get(t, (t, t))
+        flow.append(f"{entity_ar} ({t})")
+    return flow
+
+
+def _pack_semantic_metadata(
+    intent:        dict,
+    roles:         dict[str, str],
+    relationships: list[dict],
+    kpis:          list[dict],
+    entity_flow:   list[str],
+) -> str:
+    """
+    Pack all semantic data as a JSON string with '# SEMANTIC: ' prefix.
+    Stored as the LAST entry in sql_patterns for backward compatibility.
+    """
+    meta = {
+        'intent':       intent.get('intent', ''),
+        'intent_ar':    intent.get('label_ar', ''),
+        'intent_en':    intent.get('label_en', ''),
+        'confidence':   intent.get('confidence', 0.0),
+        'entity_flow':  entity_flow,
+        'kpis': [
+            {'name': k['name'], 'label_ar': k['label_ar'],
+             'label_en': k['label_en'], 'func': k['function']}
+            for k in kpis
+        ],
+        'relationships': [
+            {'from': r['from'], 'to': r['to'],
+             'type': r['type'], 'label_ar': r['label_ar']}
+            for r in relationships
+        ],
+        'table_roles': roles,
+    }
+    return "# SEMANTIC: " + json.dumps(meta, ensure_ascii=False)
+
+
+def _parse_semantic_from_entry(entry: dict) -> dict:
+    """
+    Extract the SEMANTIC metadata dict from a knowledge entry.
+    Returns empty dict if not present (e.g. old entries without semantic layer).
+    """
+    patterns = entry.get('sql_patterns') or entry.get('SQL_PATTERNS', [])
+    if isinstance(patterns, str):
+        try:
+            patterns = json.loads(patterns)
+        except Exception:
+            return {}
+    if not isinstance(patterns, list):
+        return {}
+    for p in patterns:
+        if isinstance(p, str) and p.startswith('# SEMANTIC: '):
+            try:
+                return json.loads(p[len('# SEMANTIC: '):])
+            except Exception:
+                pass
+    return {}
+
+
+def _try_index_report_embedding(
+    concept:     str,
+    name:        str,
+    description: str,
+    intent:      dict,
+    tables:      list[str],
+    kpis:        list[dict],
+    domain:      str = "",
+) -> None:
+    """
+    Index the report for semantic similarity search via Gemini embeddings.
+    Silently skipped when GEMINI_API_KEY is absent.
+    """
+    try:
+        from .embeddings import index_question
+        kpi_str   = " ".join(k['label_ar'] for k in kpis[:3])
+        table_str = " ".join(tables[:5])
+        embed_text = (
+            f"{name} {description} "
+            f"{intent.get('label_ar', '')} {intent.get('label_en', '')} "
+            f"{table_str} {kpi_str}"
+        ).strip()
+        ok = index_question(embed_text, sub_intent=concept,
+                            domain=domain, template="report_trained")
+        if ok:
+            log.info(f"[LEARNING] Report embedding indexed: {concept}")
+    except Exception as e:
+        log.debug(f"[LEARNING] Report embedding skipped ({e})")
+
+
 def train_from_query(
     report_name: str,
     description: str,
@@ -584,22 +1020,33 @@ def train_from_query(
     except Exception:
         clean_sql = sql.strip().rstrip(";")
 
-    # ── Structural extraction ──
+    # ── Layer 1: Structural extraction ──────────────────────────────
     tables  = _extract_tables_from_sql(clean_sql)
     joins   = _extract_joins_from_sql(clean_sql)
     columns = _extract_columns_from_sql(clean_sql)
     terms_ar, terms_en = _extract_business_terms(report_name, description, tables)
     domain  = _detect_domain_from_tables(tables)
 
-    # ── Build enriched sql_patterns ──
+    # ── Layer 2: Semantic extraction ─────────────────────────────────
+    relationships = _classify_relationships(tables, joins)
+    roles         = _detect_table_roles(tables)
+    intent        = _classify_business_intent(report_name, description, tables, domain)
+    kpis          = _extract_kpis_from_sql(clean_sql)
+    entity_flow   = _build_entity_flow(tables, relationships)
+
+    # ── Build enriched sql_patterns ──────────────────────────────────
     # [0] full SQL (reference)
     # [1] JOIN conditions  (if any)
     # [2] Columns used     (if any)
-    sql_patterns = [clean_sql]
+    # [-1] SEMANTIC metadata (always last — backward compatible)
+    sql_patterns: list[str] = [clean_sql]
     if joins:
         sql_patterns.append("# JOINs: " + " | ".join(joins[:4]))
     if columns:
         sql_patterns.append("# Columns: " + ", ".join(columns[:15]))
+    sql_patterns.append(
+        _pack_semantic_metadata(intent, roles, relationships, kpis, entity_flow)
+    )
 
     concept = f"report_{re.sub(r'[^a-zA-Z0-9_؀-ۿ]', '_', report_name)}"
 
@@ -616,30 +1063,44 @@ def train_from_query(
         confidence=0.95,
     )
 
-    # ── Update ontology with discovered JOINs ──
+    # ── Layer 3: Update ontology with discovered JOINs ────────────────
     onto_count = 0
     if ok and joins:
         onto_count = _update_ontology_from_joins(joins, tables, domain)
-        log.info(f"[LEARNING] Ontology updated: {onto_count} new edges from '{report_name}'")
+        log.info(f"[LEARNING] Ontology: {onto_count} new edges from '{report_name}'")
+
+    # ── Layer 4: Index report embedding (Gemini optional) ─────────────
+    if ok:
+        _try_index_report_embedding(
+            concept, report_name, description, intent, tables, kpis, domain
+        )
 
     log.info(
-        f"[LEARNING] train_from_query '{report_name}': "
-        f"tables={tables}, joins={len(joins)}, columns={len(columns)}, "
-        f"terms_ar={len(terms_ar)}, terms_en={len(terms_en)}, domain={domain}"
+        f"[LEARNING] train '{report_name}': "
+        f"tables={tables}, rels={len(relationships)}, kpis={len(kpis)}, "
+        f"intent={intent['intent']}, flow={entity_flow[:2]}"
     )
 
     return {
         "status": "learned" if ok else "failed",
         "knowledge_id": concept,
-        "tables_found": tables,
-        "joins_found": joins,
+        # Layer 1 — structural
+        "tables_found":  tables,
+        "joins_found":   joins,
         "columns_found": columns[:10],
-        "terms_ar": terms_ar[:5],
-        "terms_en": terms_en[:5],
-        "domain": domain,
-        "ontology_updated": onto_count,
+        "terms_ar":      terms_ar[:5],
+        "terms_en":      terms_en[:5],
+        "domain":        domain,
+        # Layer 2 — semantic
+        "business_intent":    intent,
+        "entity_flow":        entity_flow,
+        "kpis":               kpis,
+        "relationships":      relationships,
+        "table_roles":        roles,
+        # Layer 3 — ontology
+        "ontology_updated":   onto_count,
         "message": (
-            "✅ تم تدريب الـ AI — استُخرجت الجداول والعلاقات والمصطلحات وحُدّث الـ Ontology"
+            "✅ تم تدريب الـ AI — استُخرجت العلاقات والمفاهيم ومقاييس الأعمال وحُدّث الـ Ontology"
             if ok else "فشل الحفظ"
         ),
     }
@@ -697,10 +1158,11 @@ def _tokenize_query(text: str) -> set[str]:
 
 def search_knowledge_smart(query: str, limit: int = 5) -> list[dict]:
     """
-    Token-based knowledge search with Arabic normalization.
-    Scores entries by how many query tokens match their text fields.
-    Falls back to LIKE search if no tokens extracted.
-    Used by pipeline Phase 5 to find similar trained reports.
+    Multi-stage semantic knowledge search:
+    Stage 1 — Token scoring with Arabic normalization (always active)
+    Stage 2 — Intent-based boost using SEMANTIC metadata (always active)
+    Stage 3 — Embedding similarity boost (active when GEMINI_API_KEY is set)
+    Falls back to LIKE search if no tokens can be extracted.
     """
     if not query.strip():
         return []
@@ -709,11 +1171,12 @@ def search_knowledge_smart(query: str, limit: int = 5) -> list[dict]:
     if not query_tokens:
         return search_knowledge(query)
 
+    # ── Stage 1: Token-based scoring ────────────────────────────────
     all_entries = get_knowledge()
-    scored: list[tuple[float, dict]] = []
+    entry_scores: dict[str, float] = {}   # concept → score
+    entry_map: dict[str, dict] = {}        # concept → entry
 
     for entry in all_entries:
-        # Collect all searchable text from the entry
         text_parts: list[str] = []
         for key in ('description_ar', 'DESCRIPTION_AR',
                     'description_en', 'DESCRIPTION_EN',
@@ -721,7 +1184,6 @@ def search_knowledge_smart(query: str, limit: int = 5) -> list[dict]:
             v = entry.get(key, '')
             if v:
                 text_parts.append(str(v))
-
         for key in ('terms_ar_json', 'TERMS_AR_JSON',
                     'terms_en_json', 'TERMS_EN_JSON'):
             v = entry.get(key, '')
@@ -733,7 +1195,6 @@ def search_knowledge_smart(query: str, limit: int = 5) -> list[dict]:
         entry_text = ' '.join(text_parts)
         if not entry_text.strip():
             continue
-
         entry_tokens = _tokenize_query(entry_text)
         if not entry_tokens:
             continue
@@ -742,15 +1203,51 @@ def search_knowledge_smart(query: str, limit: int = 5) -> list[dict]:
         if not matches:
             continue
 
-        # Jaccard-like score: intersect / max(query, entry)
         score = len(matches) / max(len(query_tokens), len(entry_tokens))
-
-        # Boost trained reports over seed knowledge
         concept = entry.get('concept') or entry.get('CONCEPT', '')
         if concept.startswith('report_'):
             score *= 1.3
 
-        scored.append((score, entry))
+        if concept:
+            entry_scores[concept] = score
+            entry_map[concept] = entry
 
-    scored.sort(key=lambda x: -x[0])
-    return [e for _, e in scored[:limit] if _ > 0.0]
+    # ── Stage 2: Intent-based boost ─────────────────────────────────
+    query_intent = _classify_business_intent('', query, [], '')
+    q_intent_key = query_intent.get('intent', '')
+
+    if q_intent_key:
+        for concept, entry in entry_map.items():
+            semantic = _parse_semantic_from_entry(entry)
+            entry_intent = semantic.get('intent', '')
+            if entry_intent and entry_intent == q_intent_key:
+                entry_scores[concept] = entry_scores.get(concept, 0) * 1.5
+            elif entry_intent and entry_intent.split('_')[0] == q_intent_key.split('_')[0]:
+                # Partial domain match (e.g. both "sales_*")
+                entry_scores[concept] = entry_scores.get(concept, 0) * 1.2
+
+    # ── Stage 3: Embedding similarity boost ─────────────────────────
+    try:
+        from .embeddings import find_similar
+        similar_embeds = find_similar(
+            query, category="question", top_k=limit * 3, min_score=0.65
+        )
+        for s in similar_embeds:
+            meta    = s.get('metadata', {})
+            concept = meta.get('sub_intent', '')
+            tmpl    = meta.get('template', '')
+            if concept.startswith('report_') and tmpl == 'report_trained':
+                boost = s['score'] * 0.4
+                if concept in entry_scores:
+                    entry_scores[concept] = entry_scores[concept] * (1 + boost)
+                elif concept in entry_map:
+                    entry_scores[concept] = boost
+    except Exception:
+        pass  # Embedding unavailable — continue with token + intent scores
+
+    # ── Rank and return ──────────────────────────────────────────────
+    ranked = sorted(
+        [(score, concept) for concept, score in entry_scores.items() if score > 0],
+        key=lambda x: -x[0],
+    )
+    return [entry_map[c] for _, c in ranked[:limit] if c in entry_map]

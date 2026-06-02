@@ -748,10 +748,13 @@ async def _execute_llm_controlled(
         if join_hints:
             extra_context += f"\n== JOIN Hints ==\n{join_hints}\n"
 
-        # Phase 5: Inject structured knowledge from similar trained reports
+        # Phase 5: Semantic injection from similar trained reports
+        # Includes: intent, entity flow, KPIs, JOINs, reference SQL, explainability
         try:
             import json as _json
-            from learning.knowledge_base import search_knowledge_smart
+            from learning.knowledge_base import (
+                search_knowledge_smart, _parse_semantic_from_entry,
+            )
             similar = search_knowledge_smart(question, limit=3)
             report_blocks = []
             for k in similar[:2]:
@@ -773,20 +776,57 @@ async def _execute_llm_controlled(
                     except Exception:
                         patterns_raw = []
 
+                # Parse semantic metadata (new layer)
+                sem = _parse_semantic_from_entry(k)
+
                 lines = [f"[تقرير: {desc}  المجال: {domain_k}]"]
+
+                # Business intent (semantic layer)
+                if sem.get("intent_ar"):
+                    lines.append(f"الهدف: {sem['intent_ar']}")
+
+                # Entity flow (semantic layer)
+                flow = sem.get("entity_flow", [])
+                if flow:
+                    lines.append(f"التدفق: {' ← '.join(str(f) for f in flow[:4])}")
+
+                # Tables
                 if tables_raw:
                     lines.append(f"الجداول: {', '.join(str(t) for t in tables_raw[:6])}")
-                # JOIN hints stored at index 1
+
+                # JOIN conditions (structural layer)
                 if len(patterns_raw) > 1 and str(patterns_raw[1]).startswith("# JOINs:"):
                     lines.append(str(patterns_raw[1]))
-                # Reference SQL (first 250 chars)
+
+                # KPIs (semantic layer)
+                sem_kpis = sem.get("kpis", [])
+                if sem_kpis:
+                    kpi_strs = [
+                        f"{kp['name']} ({kp['label_ar']})"
+                        for kp in sem_kpis[:3]
+                    ]
+                    lines.append(f"مقاييس: {', '.join(kpi_strs)}")
+
+                # Reference SQL
                 if patterns_raw:
-                    lines.append(f"SQL: {str(patterns_raw[0])[:250]}")
+                    lines.append(f"SQL: {str(patterns_raw[0])[:220]}")
+
+                # Explainability line
+                rels = sem.get("relationships", [])
+                if rels:
+                    rel_labels = list(dict.fromkeys(
+                        r["label_ar"] for r in rels[:3] if r.get("label_ar")
+                    ))
+                    if rel_labels:
+                        lines.append(
+                            f"[سبب الاختيار: يحتوي العلاقات — "
+                            f"{' + '.join(rel_labels)}]"
+                        )
 
                 report_blocks.append("\n".join(lines))
 
             if report_blocks:
-                hint_block = "\n\n".join(report_blocks)[:700]
+                hint_block = "\n\n".join(report_blocks)[:900]
                 extra_context += f"\n== تقارير مدرّبة مشابهة ==\n{hint_block}\n"
         except Exception:
             pass
