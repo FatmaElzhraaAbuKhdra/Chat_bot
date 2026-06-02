@@ -748,29 +748,46 @@ async def _execute_llm_controlled(
         if join_hints:
             extra_context += f"\n== JOIN Hints ==\n{join_hints}\n"
 
-        # Phase 5: Inject stored report SQL patterns as reference (max 400 chars)
+        # Phase 5: Inject structured knowledge from similar trained reports
         try:
             import json as _json
-            from learning.knowledge_base import search_knowledge
-            similar = search_knowledge(question)
-            sql_hints = []
+            from learning.knowledge_base import search_knowledge_smart
+            similar = search_knowledge_smart(question, limit=3)
+            report_blocks = []
             for k in similar[:2]:
                 concept = k.get("concept") or k.get("CONCEPT", "")
                 if not concept.startswith("report_"):
                     continue
-                desc = k.get("description_ar") or k.get("DESCRIPTION_AR", "")
+                desc       = k.get("description_ar") or k.get("DESCRIPTION_AR", "")
+                domain_k   = k.get("domain") or k.get("DOMAIN", "")
+                tables_raw = k.get("tables_json") or k.get("TABLES_JSON", [])
+                if isinstance(tables_raw, str):
+                    try:
+                        tables_raw = _json.loads(tables_raw)
+                    except Exception:
+                        tables_raw = []
                 patterns_raw = k.get("sql_patterns") or k.get("SQL_PATTERNS", [])
                 if isinstance(patterns_raw, str):
                     try:
                         patterns_raw = _json.loads(patterns_raw)
                     except Exception:
                         patterns_raw = []
+
+                lines = [f"[تقرير: {desc}  المجال: {domain_k}]"]
+                if tables_raw:
+                    lines.append(f"الجداول: {', '.join(str(t) for t in tables_raw[:6])}")
+                # JOIN hints stored at index 1
+                if len(patterns_raw) > 1 and str(patterns_raw[1]).startswith("# JOINs:"):
+                    lines.append(str(patterns_raw[1]))
+                # Reference SQL (first 250 chars)
                 if patterns_raw:
-                    ref_sql = str(patterns_raw[0])[:300]
-                    sql_hints.append(f"# {desc}\n{ref_sql}")
-            if sql_hints:
-                hint_block = "\n\n".join(sql_hints)[:400]
-                extra_context += f"\n== SQL مرجعي من تقارير مشابهة ==\n{hint_block}\n"
+                    lines.append(f"SQL: {str(patterns_raw[0])[:250]}")
+
+                report_blocks.append("\n".join(lines))
+
+            if report_blocks:
+                hint_block = "\n\n".join(report_blocks)[:700]
+                extra_context += f"\n== تقارير مدرّبة مشابهة ==\n{hint_block}\n"
         except Exception:
             pass
 

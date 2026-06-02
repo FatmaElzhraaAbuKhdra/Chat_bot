@@ -337,6 +337,227 @@ def _detect_domain_from_tables(tables: list[str]) -> str:
     return max(scores, key=lambda d: scores[d])
 
 
+# ═══════════════════════════════════════════════════════════════════
+# SQL Deep Analysis — JOIN / Column / Term Extraction
+# ═══════════════════════════════════════════════════════════════════
+
+_JOIN_KW = {
+    'ON', 'WHERE', 'SET', 'LEFT', 'RIGHT', 'INNER', 'OUTER', 'FULL',
+    'CROSS', 'JOIN', 'AND', 'OR', 'WHEN', 'THEN', 'ELSE', 'END', 'AS',
+    'SELECT', 'FROM', 'GROUP', 'ORDER', 'HAVING', 'UNION', 'ALL', 'BY',
+    'WITH', 'INTO', 'VALUES', 'MERGE', 'USING', 'MATCHED', 'INSERT',
+    'UPDATE', 'DELETE',
+}
+
+_COL_SKIP = {
+    'SELECT', 'FROM', 'WHERE', 'AS', 'AND', 'OR', 'NOT', 'NULL', 'ON',
+    'SUM', 'COUNT', 'AVG', 'MAX', 'MIN', 'DISTINCT', 'CASE', 'WHEN',
+    'THEN', 'ELSE', 'END', 'OVER', 'ORDER', 'BY', 'GROUP', 'HAVING',
+    'UNION', 'ALL', 'INTO', 'DECODE', 'NVL', 'TRIM', 'UPPER', 'LOWER',
+    'TO_CHAR', 'TO_DATE', 'SUBSTR', 'TRUNC', 'ROUND', 'COALESCE',
+    'NULLIF', 'JOIN', 'LEFT', 'RIGHT', 'INNER', 'OUTER', 'FULL', 'CROSS',
+    'SET', 'BETWEEN', 'LIKE', 'IN', 'IS', 'EXISTS', 'WITH', 'FETCH',
+    'NEXT', 'ROWS', 'ONLY', 'OFFSET', 'PARTITION', 'RANK', 'ROW_NUMBER',
+    'DENSE_RANK', 'LAG', 'LEAD', 'CONNECT', 'PRIOR', 'START', 'LEVEL',
+    'ROWNUM', 'DUAL', 'EXTRACT', 'YEAR', 'MONTH', 'DAY', 'FROM',
+}
+
+# Table name → (Arabic terms, English terms)
+_TABLE_TERMS: dict[str, tuple[list, list]] = {
+    'MAIN_INV':          (['فاتورة', 'فواتير', 'مبيعات', 'بيع', 'مشتريات', 'إيرادات'],
+                          ['invoice', 'sale', 'purchase', 'revenue']),
+    'DETAIL_INV':        (['بنود فاتورة', 'تفاصيل فاتورة', 'أصناف مباعة'],
+                          ['invoice detail', 'line item', 'sold items']),
+    'CUST':              (['عميل', 'عملاء', 'مورد', 'موردين', 'زبون'],
+                          ['customer', 'supplier', 'vendor', 'client']),
+    'ITEMS':             (['صنف', 'أصناف', 'سلعة', 'منتج', 'بضاعة'],
+                          ['item', 'product', 'goods', 'material']),
+    'EMPLOYEES':         (['موظف', 'موظفين', 'عامل', 'كادر'],
+                          ['employee', 'staff', 'worker', 'personnel']),
+    'EMPLOYEE_SALARIES': (['راتب', 'رواتب', 'أجر', 'مرتب'],
+                          ['salary', 'payroll', 'wage', 'compensation']),
+    'ATT_EMP':           (['حضور', 'انصراف', 'غياب', 'دوام'],
+                          ['attendance', 'absence', 'timekeeping']),
+    'VOUCHERS':          (['قيد', 'قيود', 'يومية', 'قيد محاسبي'],
+                          ['voucher', 'journal entry', 'ledger']),
+    'VOUCHERS_DET':      (['تفاصيل قيد', 'بنود قيد', 'مدين', 'دائن'],
+                          ['voucher detail', 'debit', 'credit']),
+    'CHARTS':            (['حساب', 'حسابات', 'شجرة الحسابات', 'دليل الحسابات'],
+                          ['account', 'chart of accounts', 'ledger account']),
+    'TRANSACTION_TOT':   (['مخزن', 'رصيد مخزن', 'كمية', 'مخزون'],
+                          ['stock', 'inventory balance', 'quantity']),
+    'TRANSACTION':       (['حركة مخزن', 'حركات', 'صرف', 'إضافة', 'وارد', 'صادر'],
+                          ['inventory transaction', 'movement', 'issue', 'receipt']),
+    'PAYED':             (['سداد', 'دفع', 'تحصيل', 'قسط'],
+                          ['payment', 'receipt', 'collection', 'installment']),
+    'PURCHASE_INV':      (['مشتريات', 'فاتورة شراء', 'توريد'],
+                          ['purchase', 'buying', 'supply']),
+    'STORE':             (['مخزن', 'مستودع', 'مخازن'],
+                          ['store', 'warehouse', 'depot']),
+    'COST_CENTERS':      (['مركز تكلفة', 'مراكز تكلفة', 'قسم'],
+                          ['cost center', 'department']),
+    'ITEMGROUP':         (['مجموعة أصناف', 'فئة', 'تصنيف'],
+                          ['item group', 'category', 'classification']),
+    'MAIN_INV_PAYED':    (['سداد فاتورة', 'ربط سداد'],
+                          ['invoice payment link']),
+}
+
+
+def _extract_joins_from_sql(sql: str) -> list[str]:
+    """
+    Extract JOIN conditions as 'TABLE1.COL = TABLE2.COL [AND ...]' strings.
+    Resolves table aliases back to real table names.
+    """
+    # Build alias → table map
+    alias_map: dict[str, str] = {}
+    for m in re.finditer(
+        r'\b(?:FROM|JOIN)\s+([A-Z_][A-Z0-9_$#]*)\s+([A-Z_][A-Z0-9_]*)\b',
+        sql, re.IGNORECASE,
+    ):
+        tname = m.group(1).upper()
+        alias = m.group(2).upper()
+        if alias not in _JOIN_KW:
+            alias_map[alias] = tname
+    # Also self-map bare table names
+    for m in re.finditer(r'\b(?:FROM|JOIN)\s+([A-Z_][A-Z0-9_$#]*)\b', sql, re.IGNORECASE):
+        t = m.group(1).upper()
+        if t not in alias_map:
+            alias_map[t] = t
+
+    def _res(x: str) -> str:
+        return alias_map.get(x.upper(), x.upper())
+
+    # Find all table.col = table.col pairs
+    eq_matches = list(re.finditer(
+        r'([A-Z_][A-Z0-9_]*)\.([A-Z_][A-Z0-9_]*)\s*=\s*([A-Z_][A-Z0-9_]*)\.([A-Z_][A-Z0-9_]*)',
+        sql, re.IGNORECASE,
+    ))
+    if not eq_matches:
+        return []
+
+    # Group pairs that are within 200 chars of each other (= same ON clause)
+    groups: list[list] = [[eq_matches[0]]]
+    for m in eq_matches[1:]:
+        if m.start() - groups[-1][-1].end() < 200:
+            groups[-1].append(m)
+        else:
+            groups.append([m])
+
+    result = []
+    for group in groups:
+        parts = []
+        for m in group:
+            t1, c1, t2, c2 = m.groups()
+            parts.append(f"{_res(t1)}.{c1.upper()} = {_res(t2)}.{c2.upper()}")
+        join_str = " AND ".join(parts)
+        if join_str and join_str not in result:
+            result.append(join_str)
+    return result
+
+
+def _extract_columns_from_sql(sql: str) -> list[str]:
+    """Extract meaningful column names from table.column references in SQL."""
+    cols: set[str] = set()
+    for m in re.finditer(
+        r'\b[A-Z_][A-Z0-9_]*\.([A-Z_][A-Z0-9_]*)\b', sql, re.IGNORECASE
+    ):
+        col = m.group(1).upper()
+        if col not in _COL_SKIP and len(col) > 1 and not col.isdigit():
+            cols.add(col)
+    return sorted(cols)[:30]
+
+
+def _extract_business_terms(
+    report_name: str,
+    description: str,
+    tables: list[str],
+) -> tuple[list[str], list[str]]:
+    """
+    Extract Arabic and English business terms from report metadata + tables.
+    Returns (terms_ar, terms_en).
+    """
+    AR_STOP = {
+        'من', 'إلى', 'الى', 'في', 'على', 'عن', 'مع', 'هذا', 'هذه',
+        'ذلك', 'تلك', 'التي', 'الذي', 'كل', 'جميع', 'بين', 'حتى',
+        'لكل', 'خلال', 'بعد', 'قبل', 'منذ', 'عند', 'أو', 'و', 'ثم',
+        'لكن', 'بل', 'لا', 'لم', 'لن', 'هو', 'هي', 'هم', 'نحن',
+        'أنا', 'أنت', 'حسب', 'وفق', 'تقرير', 'بيانات', 'قائمة',
+        'عرض', 'كشف', 'ال',
+    }
+    EN_STOP = {
+        'the', 'a', 'an', 'of', 'in', 'on', 'at', 'by', 'for', 'with',
+        'to', 'from', 'and', 'or', 'not', 'is', 'are', 'was', 'were',
+        'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did',
+        'report', 'erp', 'data', 'total', 'all', 'per', 'each',
+        'list', 'view', 'show',
+    }
+    terms_ar: list[str] = []
+    terms_en: list[str] = []
+
+    combined = f"{report_name} {description}"
+    for w in re.findall(r'[؀-ۿ]+', combined):
+        if w not in AR_STOP and len(w) >= 2:
+            terms_ar.append(w)
+    for w in re.findall(r'[a-zA-Z][a-zA-Z_-]*', combined):
+        wl = w.lower()
+        if wl not in EN_STOP and len(wl) >= 3:
+            terms_en.append(wl)
+
+    for t in tables:
+        ar_t, en_t = _TABLE_TERMS.get(t, ([], []))
+        terms_ar.extend(ar_t)
+        terms_en.extend(en_t)
+
+    seen_ar: set[str] = set()
+    seen_en: set[str] = set()
+    uniq_ar = [w for w in terms_ar if not (w in seen_ar or seen_ar.add(w))]  # type: ignore[func-returns-value]
+    uniq_en = [w for w in terms_en if not (w in seen_en or seen_en.add(w))]  # type: ignore[func-returns-value]
+    return uniq_ar[:25], uniq_en[:25]
+
+
+def _update_ontology_from_joins(
+    joins: list[str],
+    tables: list[str],
+    domain: str,
+) -> int:
+    """Register newly discovered JOIN relationships in the ontology graph."""
+    try:
+        from .ontology import add_node, add_edge, Relation
+    except ImportError:
+        return 0
+
+    known = {t.upper() for t in tables}
+    count = 0
+
+    for t in tables:
+        add_node(f"tbl:{t}", "table", domain=domain)
+
+    for join_str in joins:
+        # Extract every (t1.col = t2.col) pair and create one edge per unique table pair
+        eq_pairs = re.findall(
+            r'([A-Z_][A-Z0-9_]*)\.([A-Z_][A-Z0-9_]*)\s*=\s*([A-Z_][A-Z0-9_]*)\.([A-Z_][A-Z0-9_]*)',
+            join_str, re.IGNORECASE,
+        )
+        seen_pairs: set[frozenset] = set()
+        for t1, _c1, t2, _c2 in eq_pairs:
+            t1u, t2u = t1.upper(), t2.upper()
+            pair = frozenset({t1u, t2u})
+            if t1u == t2u or pair in seen_pairs:
+                continue
+            seen_pairs.add(pair)
+            if t1u in known and t2u in known:
+                ok = add_edge(
+                    source=f"tbl:{t1u}",
+                    target=f"tbl:{t2u}",
+                    relation=Relation.JOINS_TO,
+                    weight=0.9,
+                    metadata={"join": join_str, "source": "trained_report"},
+                )
+                if ok:
+                    count += 1
+    return count
+
+
 def train_from_query(
     report_name: str,
     description: str,
@@ -344,12 +565,12 @@ def train_from_query(
     company_code: str = "1",
 ) -> dict:
     """
-    Store an ERP report's SQL as reference knowledge.
-    The AI uses stored SQL patterns when answering similar questions.
+    Train the AI from an ERP report.
+    Extracts tables, JOIN conditions, column names, and business terms.
+    Updates the ontology graph with discovered relationships.
+    All extracted knowledge is used at runtime for intent detection,
+    context building, and SQL generation.
     """
-    import re as _re
-    # Light validation — storage only, not execution
-    # (allows UNION ALL, APEX bind variables, Oracle views)
     try:
         from sql_safety import validate_sql_for_storage
         safety = validate_sql_for_storage(sql)
@@ -361,11 +582,26 @@ def train_from_query(
             }
         clean_sql = safety.sql
     except Exception:
-        clean_sql = sql.strip().rstrip(";")  # basic cleanup only
+        clean_sql = sql.strip().rstrip(";")
 
-    tables = _extract_tables_from_sql(clean_sql)
-    domain = _detect_domain_from_tables(tables)
-    concept = f"report_{_re.sub(r'[^a-zA-Z0-9_؀-ۿ]', '_', report_name)}"
+    # ── Structural extraction ──
+    tables  = _extract_tables_from_sql(clean_sql)
+    joins   = _extract_joins_from_sql(clean_sql)
+    columns = _extract_columns_from_sql(clean_sql)
+    terms_ar, terms_en = _extract_business_terms(report_name, description, tables)
+    domain  = _detect_domain_from_tables(tables)
+
+    # ── Build enriched sql_patterns ──
+    # [0] full SQL (reference)
+    # [1] JOIN conditions  (if any)
+    # [2] Columns used     (if any)
+    sql_patterns = [clean_sql]
+    if joins:
+        sql_patterns.append("# JOINs: " + " | ".join(joins[:4]))
+    if columns:
+        sql_patterns.append("# Columns: " + ", ".join(columns[:15]))
+
+    concept = f"report_{re.sub(r'[^a-zA-Z0-9_؀-ۿ]', '_', report_name)}"
 
     ok = add_knowledge(
         concept=concept,
@@ -373,16 +609,39 @@ def train_from_query(
         description_en=f"ERP report: {report_name}",
         domain=domain,
         tables=tables,
-        sql_patterns=[clean_sql],
+        terms_ar=terms_ar,
+        terms_en=terms_en,
+        sql_patterns=sql_patterns,
         source="trained",
         confidence=0.95,
     )
+
+    # ── Update ontology with discovered JOINs ──
+    onto_count = 0
+    if ok and joins:
+        onto_count = _update_ontology_from_joins(joins, tables, domain)
+        log.info(f"[LEARNING] Ontology updated: {onto_count} new edges from '{report_name}'")
+
+    log.info(
+        f"[LEARNING] train_from_query '{report_name}': "
+        f"tables={tables}, joins={len(joins)}, columns={len(columns)}, "
+        f"terms_ar={len(terms_ar)}, terms_en={len(terms_en)}, domain={domain}"
+    )
+
     return {
         "status": "learned" if ok else "failed",
         "knowledge_id": concept,
         "tables_found": tables,
+        "joins_found": joins,
+        "columns_found": columns[:10],
+        "terms_ar": terms_ar[:5],
+        "terms_en": terms_en[:5],
         "domain": domain,
-        "message": "✅ تم تدريب الـ AI على التقرير — سيستخدمه في الإجابات القادمة" if ok else "فشل الحفظ",
+        "ontology_updated": onto_count,
+        "message": (
+            "✅ تم تدريب الـ AI — استُخرجت الجداول والعلاقات والمصطلحات وحُدّث الـ Ontology"
+            if ok else "فشل الحفظ"
+        ),
     }
 
 
@@ -400,3 +659,98 @@ def get_knowledge_for_llm(domain: str) -> str:
             for p in patterns[:3]:
                 parts.append(f"  → {p}")
     return "\n".join(parts)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Smart Search — token-based scoring with Arabic normalization
+# ═══════════════════════════════════════════════════════════════════
+
+_AR_SEARCH_STOP = {
+    'من', 'إلى', 'الى', 'في', 'على', 'عن', 'مع', 'كل', 'هذا', 'هذه',
+    'التي', 'الذي', 'حسب', 'و', 'أو', 'لا', 'ما', 'كم', 'هل', 'بين',
+    'عند', 'هو', 'هي', 'هم', 'الى', 'بكم', 'اريد', 'أريد', 'اعطني',
+    'أعطني', 'ابحث', 'أبحث', 'عرض', 'بيانات', 'معلومات',
+}
+_EN_SEARCH_STOP = {
+    'the', 'a', 'an', 'of', 'in', 'on', 'at', 'is', 'are', 'how',
+    'many', 'what', 'which', 'who', 'where', 'when', 'why', 'total',
+    'show', 'get', 'find', 'list', 'give', 'me', 'all',
+}
+
+
+def _normalize_ar(text: str) -> str:
+    """Normalize Arabic text: remove diacritics, normalize alef/ya/ta."""
+    text = re.sub(r'[ً-ٰٟ]', '', text)   # diacritics
+    text = re.sub(r'[أإآٱ]', 'ا', text)                  # alef variants
+    return text.replace('ة', 'ه').replace('ى', 'ي').lower()
+
+
+def _tokenize_query(text: str) -> set[str]:
+    """Split query into meaningful Arabic + English tokens."""
+    normalized = _normalize_ar(text)
+    tokens: set[str] = set()
+    for t in re.findall(r'[؀-ۿ]+|[a-z]+', normalized):
+        if len(t) >= 2 and t not in _AR_SEARCH_STOP and t not in _EN_SEARCH_STOP:
+            tokens.add(t)
+    return tokens
+
+
+def search_knowledge_smart(query: str, limit: int = 5) -> list[dict]:
+    """
+    Token-based knowledge search with Arabic normalization.
+    Scores entries by how many query tokens match their text fields.
+    Falls back to LIKE search if no tokens extracted.
+    Used by pipeline Phase 5 to find similar trained reports.
+    """
+    if not query.strip():
+        return []
+
+    query_tokens = _tokenize_query(query)
+    if not query_tokens:
+        return search_knowledge(query)
+
+    all_entries = get_knowledge()
+    scored: list[tuple[float, dict]] = []
+
+    for entry in all_entries:
+        # Collect all searchable text from the entry
+        text_parts: list[str] = []
+        for key in ('description_ar', 'DESCRIPTION_AR',
+                    'description_en', 'DESCRIPTION_EN',
+                    'concept', 'CONCEPT'):
+            v = entry.get(key, '')
+            if v:
+                text_parts.append(str(v))
+
+        for key in ('terms_ar_json', 'TERMS_AR_JSON',
+                    'terms_en_json', 'TERMS_EN_JSON'):
+            v = entry.get(key, '')
+            if isinstance(v, list):
+                text_parts.extend(str(x) for x in v)
+            elif v:
+                text_parts.append(str(v))
+
+        entry_text = ' '.join(text_parts)
+        if not entry_text.strip():
+            continue
+
+        entry_tokens = _tokenize_query(entry_text)
+        if not entry_tokens:
+            continue
+
+        matches = query_tokens & entry_tokens
+        if not matches:
+            continue
+
+        # Jaccard-like score: intersect / max(query, entry)
+        score = len(matches) / max(len(query_tokens), len(entry_tokens))
+
+        # Boost trained reports over seed knowledge
+        concept = entry.get('concept') or entry.get('CONCEPT', '')
+        if concept.startswith('report_'):
+            score *= 1.3
+
+        scored.append((score, entry))
+
+    scored.sort(key=lambda x: -x[0])
+    return [e for _, e in scored[:limit] if _ > 0.0]
