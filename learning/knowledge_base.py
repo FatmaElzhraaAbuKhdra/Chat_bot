@@ -170,30 +170,41 @@ def add_knowledge(
     with get_conn() as conn:
         try:
             if is_oracle():
+                # Note: NULLIF doesn't work with CLOB/NCLOB in Oracle.
+                # Use CASE WHEN for CLOB columns; DECODE for VARCHAR2.
                 conn.execute(f"""
                     MERGE INTO {_T()} t
-                    USING (SELECT :1 AS c FROM DUAL) s
+                    USING (SELECT :concept AS c FROM DUAL) s
                     ON (t.CONCEPT = s.c)
                     WHEN MATCHED THEN UPDATE SET
-                        DESCRIPTION_AR = COALESCE(NULLIF(:2, ''), t.DESCRIPTION_AR),
-                        DESCRIPTION_EN = COALESCE(NULLIF(:3, ''), t.DESCRIPTION_EN),
-                        DOMAIN = COALESCE(NULLIF(:4, ''), t.DOMAIN),
-                        TABLES_JSON = COALESCE(NULLIF(:5, '[]'), t.TABLES_JSON),
-                        TERMS_AR_JSON = COALESCE(NULLIF(:6, '[]'), t.TERMS_AR_JSON),
-                        TERMS_EN_JSON = COALESCE(NULLIF(:7, '[]'), t.TERMS_EN_JSON),
-                        SQL_PATTERNS = COALESCE(NULLIF(:8, '[]'), t.SQL_PATTERNS),
-                        UPDATED_AT = SYSTIMESTAMP
+                        DESCRIPTION_AR = CASE WHEN :desc_ar IS NULL THEN t.DESCRIPTION_AR ELSE :desc_ar2 END,
+                        DESCRIPTION_EN = CASE WHEN :desc_en IS NULL THEN t.DESCRIPTION_EN ELSE :desc_en2 END,
+                        DOMAIN         = DECODE(:domain, '', t.DOMAIN, NULL, t.DOMAIN, :domain2),
+                        TABLES_JSON    = CASE WHEN :tables IS NULL THEN t.TABLES_JSON ELSE :tables2 END,
+                        TERMS_AR_JSON  = CASE WHEN :terms_ar IS NULL THEN t.TERMS_AR_JSON ELSE :terms_ar2 END,
+                        TERMS_EN_JSON  = CASE WHEN :terms_en IS NULL THEN t.TERMS_EN_JSON ELSE :terms_en2 END,
+                        SQL_PATTERNS   = CASE WHEN :patterns IS NULL THEN t.SQL_PATTERNS ELSE :patterns2 END,
+                        UPDATED_AT     = SYSTIMESTAMP
                     WHEN NOT MATCHED THEN INSERT
                         (CONCEPT, DESCRIPTION_AR, DESCRIPTION_EN, DOMAIN,
                          TABLES_JSON, TERMS_AR_JSON, TERMS_EN_JSON,
                          SQL_PATTERNS, SOURCE, CONFIDENCE)
-                    VALUES (:9, :10, :11, :12, :13, :14, :15, :16, :17, :18)
-                """, (concept,
-                      description_ar, description_en, domain,
-                      tables_j, terms_ar_j, terms_en_j, patterns_j,
-                      concept, description_ar, description_en, domain,
-                      tables_j, terms_ar_j, terms_en_j, patterns_j,
-                      source, confidence))
+                    VALUES (:concept2, :desc_ar3, :desc_en3, :domain3,
+                            :tables3, :terms_ar3, :terms_en3, :patterns3,
+                            :source, :confidence)
+                """, dict(
+                    concept=concept,
+                    desc_ar=description_ar,   desc_ar2=description_ar,   desc_ar3=description_ar,
+                    desc_en=description_en,   desc_en2=description_en,   desc_en3=description_en,
+                    domain=domain,            domain2=domain,            domain3=domain,
+                    tables=tables_j,          tables2=tables_j,          tables3=tables_j,
+                    terms_ar=terms_ar_j,      terms_ar2=terms_ar_j,      terms_ar3=terms_ar_j,
+                    terms_en=terms_en_j,      terms_en2=terms_en_j,      terms_en3=terms_en_j,
+                    patterns=patterns_j,      patterns2=patterns_j,      patterns3=patterns_j,
+                    concept2=concept,
+                    source=source,
+                    confidence=confidence,
+                ))
             else:
                 conn.execute(f"""
                     INSERT INTO {_T()}

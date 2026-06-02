@@ -124,9 +124,29 @@ class _OracleConnWrapper:
         if params is None:
             cur.execute(sql)
         elif isinstance(params, dict):
+            # Auto-set CLOB type for long string values
+            try:
+                import oracledb
+                sizes = {k: oracledb.DB_TYPE_CLOB
+                         for k, v in params.items()
+                         if isinstance(v, str) and len(v) > 32000}
+                if sizes:
+                    cur.setinputsizes(**sizes)
+            except Exception:
+                pass
             cur.execute(sql, params)
         elif isinstance(params, (tuple, list)):
-            cur.execute(sql, list(params))
+            param_list = list(params)
+            # Auto-set CLOB type for long string values (positional)
+            try:
+                import oracledb
+                sizes = [oracledb.DB_TYPE_CLOB if isinstance(p, str) and len(p) > 32000
+                         else None for p in param_list]
+                if any(s for s in sizes):
+                    cur.setinputsizes(*sizes)
+            except Exception:
+                pass
+            cur.execute(sql, param_list)
         else:
             cur.execute(sql, params)
         self._cursor = cur
