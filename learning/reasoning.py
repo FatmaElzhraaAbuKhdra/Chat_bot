@@ -625,19 +625,19 @@ def record_successful_plan(
             if is_oracle():
                 conn.execute(f"""
                     INSERT INTO {_t}
-                        (USER_ID, INTENT_SEQUENCE, PREDICTED_INTENT,
-                         CONFIDENCE, SQL_PATTERN, USED_COUNT)
-                    VALUES ('reasoning_engine', :1, :2, :3, :4, 1)
+                        (QUESTION, SUB_INTENT, DOMAIN, ENTITIES_JSON,
+                         CONFIDENCE, SOURCE, USAGE_COUNT, SUCCESS_COUNT)
+                    VALUES (:1, :2, :3, :4, :5, 'reasoning_engine', 1, 1)
                 """, (question[:200], plan.intent or 'general',
-                      plan.confidence, sql[:1000] if sql else ''))
+                      plan.domain or '', pattern, plan.confidence))
             else:
                 conn.execute(f"""
-                    INSERT OR REPLACE INTO {_t}
-                        (user_id, intent_sequence, predicted_intent,
-                         confidence, sql_pattern, used_count)
-                    VALUES ('reasoning_engine', ?, ?, ?, ?, 1)
+                    INSERT INTO {_t}
+                        (question, sub_intent, domain, entities_json,
+                         confidence, source, usage_count, success_count)
+                    VALUES (?, ?, ?, ?, ?, 'reasoning_engine', 1, 1)
                 """, (question[:200], plan.intent or 'general',
-                      plan.confidence, sql[:1000] if sql else ''))
+                      plan.domain or '', pattern, plan.confidence))
         log.debug(f"[REASONING] Recorded plan: {plan.intent}/{plan.metric}")
     except Exception as e:
         log.debug(f"[REASONING] record_successful_plan: {e}")

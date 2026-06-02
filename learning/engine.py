@@ -290,6 +290,52 @@ def should_use_template(template_name: str) -> bool:
         return True
 
 
+def _get_learned_patterns(domain: str, sub_intent: str, limit: int = 3) -> list[dict]:
+    """Read AI_LEARNED_PATTERNS rows matching domain or sub_intent.
+
+    Returns both adaptive patterns (success_count > 0) and user corrections.
+    """
+    try:
+        from .store import tbl, is_oracle
+        import json as _json
+        _t = tbl("learned_patterns")
+        with get_conn() as conn:
+            if is_oracle():
+                rows = conn.execute(f"""
+                    SELECT question, sub_intent, domain, entities_json, confidence, source
+                    FROM {_t}
+                    WHERE (sub_intent = :1 OR domain = :2)
+                      AND confidence >= 0.6
+                      AND (success_count > 0 OR source = 'user_correction')
+                    ORDER BY CASE WHEN source = 'user_correction' THEN 0 ELSE 1 END,
+                             success_count DESC, confidence DESC
+                    FETCH FIRST :3 ROWS ONLY
+                """, (sub_intent, domain, limit)).fetchall()
+            else:
+                rows = conn.execute(f"""
+                    SELECT question, sub_intent, domain, entities_json, confidence, source
+                    FROM {_t}
+                    WHERE (sub_intent = ? OR domain = ?)
+                      AND confidence >= 0.6
+                      AND (success_count > 0 OR source = 'user_correction')
+                    ORDER BY CASE WHEN source = 'user_correction' THEN 0 ELSE 1 END,
+                             success_count DESC, confidence DESC
+                    LIMIT ?
+                """, (sub_intent, domain, limit)).fetchall()
+        result = []
+        for r in rows:
+            rec = {k: r[k] for k in r.keys()}
+            try:
+                rec['entities'] = _json.loads(rec.get('entities_json') or '{}')
+            except Exception:
+                rec['entities'] = {}
+            result.append(rec)
+        return result
+    except Exception as e:
+        log.debug(f"[LEARNING] _get_learned_patterns: {e}")
+        return []
+
+
 def get_llm_context(domain: str, sub_intent: str = "") -> str:
     """
     Build additional LLM context from learned knowledge.
@@ -313,6 +359,28 @@ def get_llm_context(domain: str, sub_intent: str = "") -> str:
                     parts.append(f"سؤال: {q}")
                     if sql:
                         parts.append(f"SQL: {sql[:200]}")
+
+        # Inject learned patterns from AI_LEARNED_PATTERNS (adaptive memory)
+        patterns = _get_learned_patterns(domain, sub_intent, limit=3)
+        if patterns:
+            parts.append(f"\n══ أنماط مكتسبة لـ {sub_intent or domain} ══")
+            for p in patterns:
+                ent = p.get('entities', {})
+                source = p.get('source', '')
+                question_text = p.get('question', '')[:120]
+                if source == 'user_correction' and ent.get('corrected_sql'):
+                    # User-provided corrected SQL — highest priority hint
+                    parts.append(f"تصحيح المستخدم للسؤال: {question_text}")
+                    parts.append(f"SQL الصحيح: {ent['corrected_sql'][:400]}")
+                else:
+                    line = f"سؤال: {question_text}"
+                    if ent.get('metric'):
+                        line += f" | مقياس: {ent['metric']}"
+                    if ent.get('dimension'):
+                        line += f" | تجميع حسب: {ent['dimension']}"
+                    if ent.get('tables'):
+                        line += f" | جداول: {','.join(ent['tables'][:3])}"
+                    parts.append(line)
 
     except Exception as e:
         log.debug(f"[LEARNING] get_llm_context error: {e}")
