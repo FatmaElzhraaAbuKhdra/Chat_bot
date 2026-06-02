@@ -284,10 +284,8 @@ async def train_from_query_endpoint(
     req: TrainFromQueryRequest,
     _role: str = Depends(require_learning_read),
 ):
-    """
-    Train the AI from an ERP report's SQL.
-    The AI extracts tables, maps to domains, and uses the SQL as a reference pattern.
-    """
+    """Train the AI from an ERP report's SQL."""
+    import traceback as _tb
     from learning.knowledge_base import train_from_query
     if not req.report_name.strip():
         raise HTTPException(400, "report_name مطلوب")
@@ -295,12 +293,22 @@ async def train_from_query_endpoint(
         raise HTTPException(400, "sql مطلوب")
     if not req.description.strip():
         raise HTTPException(400, "description مطلوب")
-    return train_from_query(
-        report_name=req.report_name.strip(),
-        description=req.description.strip(),
-        sql=req.sql.strip(),
-        company_code=req.company_code,
-    )
+    try:
+        result = train_from_query(
+            report_name=req.report_name.strip(),
+            description=req.description.strip(),
+            sql=req.sql.strip(),
+            company_code=req.company_code,
+        )
+        return result
+    except Exception as e:
+        err_detail = f"{type(e).__name__}: {e}"
+        log.error(f"[TRAIN] Unhandled exception: {err_detail}\n{_tb.format_exc()}")
+        return {
+            "status": "failed",
+            "knowledge_id": "",
+            "message": f"خطأ في السيرفر: {err_detail[:300]}",
+        }
 
 
 @router.get("/knowledge")

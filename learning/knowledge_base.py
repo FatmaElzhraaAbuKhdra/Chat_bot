@@ -228,7 +228,8 @@ def add_knowledge(
                       tables_j, terms_ar_j, terms_en_j, patterns_j))
             return True
         except Exception as e:
-            log.warning(f"[LEARNING] Knowledge add failed: {e}")
+            import traceback as _tb
+            log.error(f"[LEARNING] Knowledge add failed: {type(e).__name__}: {e}\n{_tb.format_exc()}")
             return False
 
 
