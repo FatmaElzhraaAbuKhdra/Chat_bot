@@ -182,6 +182,46 @@ def validate_sql(sql: str) -> SafetyResult:
     )
 
 
+def validate_sql_for_storage(sql: str) -> SafetyResult:
+    """
+    Light validation for SQL that will be STORED as a reference pattern (not executed).
+    Allows: UNION ALL, Oracle views, APEX bind variables (:P1_ITEM), subqueries.
+    Blocks: DDL/DML, dangerous Oracle packages (UTL_, DBMS_, SYS.), xp_ procedures.
+    """
+    cleaned = sql.strip().rstrip(";").strip()
+
+    # Block DDL / DML
+    dml_match = _DML_KEYWORDS.search(cleaned)
+    if dml_match:
+        return SafetyResult(
+            is_safe=False, sql=cleaned, warnings=[],
+            blocked_reason=f"DML/DDL غير مسموح: {dml_match.group(0).upper()}",
+        )
+
+    # Block truly dangerous Oracle packages only
+    _STORAGE_DANGEROUS = [
+        (re.compile(r"\bUTL_\w+", re.IGNORECASE),  "UTL_ Oracle utility package"),
+        (re.compile(r"\bDBMS_\w+", re.IGNORECASE), "DBMS_ Oracle system package"),
+        (re.compile(r"\bSYS\.\w+",  re.IGNORECASE), "SYS schema access"),
+        (re.compile(r"\bxp_\w+",    re.IGNORECASE), "xp_ system procedure"),
+    ]
+    for pattern, reason in _STORAGE_DANGEROUS:
+        if pattern.search(cleaned):
+            return SafetyResult(
+                is_safe=False, sql=cleaned, warnings=[], blocked_reason=reason,
+            )
+
+    # Must be a SELECT (allow leading WITH for CTEs)
+    first_kw = re.match(r'\s*(SELECT|WITH)\b', cleaned, re.IGNORECASE)
+    if not first_kw:
+        return SafetyResult(
+            is_safe=False, sql=cleaned, warnings=[],
+            blocked_reason="يجب أن يبدأ الـ SQL بـ SELECT أو WITH",
+        )
+
+    return SafetyResult(is_safe=True, sql=cleaned, warnings=[])
+
+
 def _clean_sql(sql: str) -> str:
     """Basic SQL cleanup: remove markdown, semicolons, extra whitespace."""
     sql = re.sub(r"```sql\s*", "", sql, flags=re.IGNORECASE)

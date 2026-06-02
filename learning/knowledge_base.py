@@ -337,10 +337,11 @@ def train_from_query(
     The AI uses stored SQL patterns when answering similar questions.
     """
     import re as _re
-    # Validate SQL safety before storing
+    # Light validation — storage only, not execution
+    # (allows UNION ALL, APEX bind variables, Oracle views)
     try:
-        from sql_safety import validate_sql
-        safety = validate_sql(sql)
+        from sql_safety import validate_sql_for_storage
+        safety = validate_sql_for_storage(sql)
         if not safety.is_safe:
             return {
                 "status": "rejected",
@@ -349,7 +350,7 @@ def train_from_query(
             }
         clean_sql = safety.sql
     except Exception:
-        clean_sql = sql  # proceed without safety check if module unavailable
+        clean_sql = sql.strip().rstrip(";")  # basic cleanup only
 
     tables = _extract_tables_from_sql(clean_sql)
     domain = _detect_domain_from_tables(tables)
