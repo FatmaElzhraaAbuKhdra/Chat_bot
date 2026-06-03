@@ -247,25 +247,59 @@ def _ontology_select_groups(question: str) -> set[str]:
         return set()
 
 
+# Schema-context budget (chars). MAX_PROMPT_CHARS in llm_client.py is 28000;
+# the system-prompt template + examples take ~3.5K, so ~16K leaves ample room
+# for conversation history. Measured: a full domain group of comments ≈ 2–7.5K,
+# so the full Semantic Layer fits comfortably without truncating meaning.
+_SCHEMA_CTX_BUDGET = 16000
+_COL_DESC_CAP = 160     # per-column cap (median real desc = 47, avg = 58)
+_TBL_DESC_CAP = 300     # per-table cap (was 120 — RC2)
+
+
+def _compact_desc(text: str, cap: int) -> str:
+    """Normalize whitespace and cap length on a word boundary. Keeps meaning intact."""
+    d = re.sub(r'\s+', ' ', text or '').strip()
+    if len(d) > cap:
+        d = d[:cap].rsplit(' ', 1)[0].rstrip() + "…"
+    return d
+
+
 def _build_tables_context(tables: set[str]) -> str:
-    """Build schema context string for a set of tables."""
-    parts = []
+    """Build schema context = Structural + Semantic layers for a set of tables.
+
+    Each column carries its FULL business meaning from justclick_comments.sql
+    (whitespace-normalized, capped at _COL_DESC_CAP). FK markers, flag values
+    (0=x 1=y) and ⚠ warnings are preserved because they live inline in the comment
+    prose — so no separate FK-only extraction is needed (RC1/RC6 fix).
+
+    A running budget (_SCHEMA_CTX_BUDGET) guards against prompt overflow: any table
+    that would exceed it degrades to a name-only column list instead of being dropped.
+    """
+    parts: list[str] = []
+    total = 0
 
     for tbl in sorted(tables):
         if tbl not in _table_comments:
             continue
-        tbl_desc = _table_comments[tbl]
-        if len(tbl_desc) > 120:
-            tbl_desc = tbl_desc[:120].rsplit(' ', 1)[0] + "…"
-        parts.append(f"\n{tbl}: {tbl_desc}")
+
+        tbl_desc = _compact_desc(_table_comments[tbl], _TBL_DESC_CAP)
+        header = f"\n{tbl}: {tbl_desc}"
 
         cols = _column_comments.get(tbl, {})
-        col_strs = []
+        col_lines: list[str] = []
         for col, desc in cols.items():
-            ann = _col_annotation(desc)
-            col_strs.append(f"{col}{ann}" if ann else col)
-        if col_strs:
-            parts.append(" " + " | ".join(col_strs))
+            cdesc = _compact_desc(desc, _COL_DESC_CAP)
+            col_lines.append(f"  • {col}: {cdesc}" if cdesc else f"  • {col}")
+
+        block = header + ("\n" + "\n".join(col_lines) if col_lines else "")
+
+        # Budget guard: degrade to name-only columns rather than overflow the prompt
+        if total + len(block) > _SCHEMA_CTX_BUDGET and col_lines:
+            names = ", ".join(cols.keys())
+            block = header + f"\n  [{names}]"
+
+        parts.append(block)
+        total += len(block)
 
     return "\n".join(parts)
 
