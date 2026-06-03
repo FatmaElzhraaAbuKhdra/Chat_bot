@@ -1140,6 +1140,84 @@ def get_knowledge_for_llm(domain: str) -> str:
     return "\n".join(parts)
 
 
+def backfill_report_terms() -> dict:
+    """
+    Backfill terms_ar/terms_en for trained reports saved before Layer-1 term
+    extraction existed (concept starts with 'report_' and terms are empty).
+    Safe to run multiple times — only updates rows with empty/null terms.
+    """
+    updated = skipped = errors = 0
+
+    with get_conn() as conn:
+        if is_oracle():
+            rows = conn.execute(f"""
+                SELECT CONCEPT, DESCRIPTION_AR, DESCRIPTION_EN, TABLES_JSON
+                FROM {_T()}
+                WHERE CONCEPT LIKE 'report_%'
+                  AND (TERMS_AR_JSON IS NULL
+                       OR TO_CHAR(TERMS_AR_JSON) = '[]'
+                       OR TO_CHAR(TERMS_AR_JSON) = '')
+            """).fetchall()
+        else:
+            rows = conn.execute(f"""
+                SELECT concept, description_ar, description_en, tables_json
+                FROM {_T()}
+                WHERE concept LIKE 'report_%'
+                  AND (terms_ar_json IS NULL
+                       OR terms_ar_json = '[]'
+                       OR terms_ar_json = '')
+            """).fetchall()
+
+    for row in rows:
+        d = dict(row)
+        concept   = d.get("concept")   or d.get("CONCEPT", "")
+        desc_ar   = d.get("description_ar") or d.get("DESCRIPTION_AR", "") or ""
+        desc_en   = d.get("description_en") or d.get("DESCRIPTION_EN", "") or ""
+        tables_raw = d.get("tables_json") or d.get("TABLES_JSON", "[]") or "[]"
+        try:
+            tables = json.loads(tables_raw) if isinstance(tables_raw, str) else (tables_raw or [])
+        except (json.JSONDecodeError, TypeError):
+            tables = []
+
+        report_name = concept.replace("report_", "").replace("_", " ")
+        try:
+            terms_ar, terms_en = _extract_business_terms(
+                report_name, f"{desc_ar} {desc_en}", tables,
+            )
+            if not terms_ar and not terms_en:
+                skipped += 1
+                continue
+
+            terms_ar_j = json.dumps(terms_ar, ensure_ascii=False)
+            terms_en_j = json.dumps(terms_en)
+
+            with get_conn() as wconn:
+                if is_oracle():
+                    wconn.execute(f"""
+                        UPDATE {_T()} SET
+                            TERMS_AR_JSON = TO_NCLOB(:1),
+                            TERMS_EN_JSON = TO_CLOB(:2),
+                            UPDATED_AT    = SYSTIMESTAMP
+                        WHERE CONCEPT = :3
+                    """, (terms_ar_j, terms_en_j, concept))
+                else:
+                    wconn.execute(f"""
+                        UPDATE {_T()} SET
+                            terms_ar_json = ?,
+                            terms_en_json = ?,
+                            updated_at    = datetime('now')
+                        WHERE concept = ?
+                    """, (terms_ar_j, terms_en_j, concept))
+            updated += 1
+            log.info(f"[BACKFILL] {concept}: {len(terms_ar)} ar + {len(terms_en)} en terms")
+        except Exception as e:
+            log.error(f"[BACKFILL] Failed for {concept}: {e}")
+            errors += 1
+
+    log.info(f"[BACKFILL] Report terms done — updated={updated} skipped={skipped} errors={errors}")
+    return {"updated": updated, "skipped": skipped, "errors": errors, "total_found": len(rows)}
+
+
 # ═══════════════════════════════════════════════════════════════════
 # Smart Search — token-based scoring with Arabic normalization
 # ═══════════════════════════════════════════════════════════════════

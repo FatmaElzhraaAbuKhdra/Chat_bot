@@ -48,6 +48,16 @@ from export_engine import detect_export_intent, ExportRequest, generate_export, 
 from executive_reports import detect_report_intent, generate_executive_report, format_report_for_chat
 
 
+def _record_viz(domain: str, sub_intent: str, data: list, chart: dict) -> None:
+    """Non-blocking: record chart selection into AI_VIZ_RULES for adaptive learning."""
+    try:
+        from learning.visualization import record_chart_selection, analyze_data_shape
+        data_shape = analyze_data_shape(data, sub_intent)
+        record_chart_selection(domain, sub_intent, data_shape, chart.get("type", "bar"))
+    except Exception:
+        pass
+
+
 @dataclass
 class PipelineResult:
     answer: str
@@ -657,6 +667,8 @@ async def _execute_template(
         # Copilot enrichment
         _domain = getattr(template, 'domain', "")
         _sub_intent = getattr(template, 'sub_intent', template.name)
+        if chart:
+            _record_viz(_domain, _sub_intent, data, chart)
         suggestions = generate_suggestions(
             question=question,
             sub_intent=_sub_intent,
@@ -953,6 +965,8 @@ async def _execute_llm_controlled(
             chart = auto_generate_chart(data, question, intent.domain)
 
         # Copilot enrichment
+        if chart:
+            _record_viz(intent.domain, intent.sub_intent, data, chart)
         suggestions = generate_suggestions(
             question=question,
             sub_intent=intent.sub_intent,

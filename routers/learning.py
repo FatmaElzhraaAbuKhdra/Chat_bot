@@ -24,7 +24,7 @@ from learning.synonym_learner import (
     learn_synonym, find_synonyms, get_synonym_stats,
 )
 from learning.knowledge_base import (
-    add_knowledge, get_knowledge, search_knowledge,
+    add_knowledge, get_knowledge, search_knowledge, backfill_report_terms,
 )
 from learning.embeddings import get_embedding_stats
 from learning.analytics_tracker import (
@@ -313,6 +313,22 @@ async def train_from_query_endpoint(
             "knowledge_id": "",
             "message": f"خطأ في السيرفر: {err_detail[:300]}",
         }
+
+
+@router.post("/backfill-terms")
+async def backfill_terms_endpoint(
+    _role: str = Depends(require_learning_admin),
+):
+    """
+    Backfill terms_ar/terms_en for trained reports saved before term extraction existed.
+    Safe to run multiple times — only touches rows with empty terms.
+    Requires admin key.
+    """
+    try:
+        result = backfill_report_terms()
+        return {"status": "ok", **result}
+    except Exception as e:
+        raise HTTPException(500, f"فشل الـ backfill: {e}")
 
 
 @router.get("/knowledge")

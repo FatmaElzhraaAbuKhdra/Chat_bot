@@ -31,7 +31,7 @@ from .embeddings import (
 )
 from .analytics_tracker import (
     track_chart_preference, get_user_preferences,
-    predict_next_intent, track_workflow,
+    predict_next_intent, track_workflow, seed_workflow_patterns,
     get_popular_queries, get_common_workflows,
 )
 from .events import emit, EventType, on as on_event, get_event_stats
@@ -82,6 +82,7 @@ async def init_learning_engine() -> None:
     seed_synonyms()
     seed_knowledge()
     seed_ontology()
+    seed_workflow_patterns()
 
     # 3. Register internal event handlers
     _register_event_handlers()

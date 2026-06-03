@@ -14,6 +14,49 @@ _T_AP = lambda: tbl("analytics_prefs")
 _T_WP = lambda: tbl("workflow_patterns")
 
 
+# ═══════════════════════════════════════════════════════════════════
+# Cold-start Seed — common ERP intent sequences (frequency=5 so
+# predict_next_intent() sees them immediately without waiting for 2 real uses)
+# ═══════════════════════════════════════════════════════════════════
+
+_SEED_WORKFLOW_PATTERNS = [
+    ["sales_analysis", "customer_performance", "payment_collection"],
+    ["sales_analysis", "invoice_detail", "customer_performance"],
+    ["sales_analysis", "customer_performance"],
+    ["customer_performance", "payment_collection", "accounting_summary"],
+    ["customer_performance", "sales_analysis", "payment_collection"],
+    ["payment_collection", "customer_performance", "accounting_summary"],
+    ["purchasing_analysis", "inventory_movement", "item_analysis"],
+    ["purchasing_analysis", "inventory_movement"],
+    ["inventory_movement", "item_analysis", "purchasing_analysis"],
+    ["inventory_movement", "item_analysis"],
+    ["item_analysis", "inventory_movement", "sales_analysis"],
+    ["accounting_summary", "payment_collection", "customer_performance"],
+    ["accounting_summary", "trial_balance"],
+    ["hr_payroll", "employee_detail", "attendance_analysis"],
+    ["hr_payroll", "employee_detail"],
+    ["employee_detail", "hr_payroll", "attendance_analysis"],
+]
+
+# Static fallback: given the last intent, what's likely next?
+# Used when AI_WORKFLOW_PATTERNS is too sparse after seed but before real usage.
+_ERP_FALLBACK_FLOWS: dict[str, list[str]] = {
+    "sales_analysis":        ["customer_performance", "payment_collection", "invoice_detail"],
+    "customer_performance":  ["payment_collection", "sales_analysis", "invoice_detail"],
+    "payment_collection":    ["customer_performance", "accounting_summary", "sales_analysis"],
+    "invoice_detail":        ["customer_performance", "sales_analysis"],
+    "purchasing_analysis":   ["inventory_movement", "item_analysis", "vendor_analysis"],
+    "inventory_movement":    ["item_analysis", "purchasing_analysis", "sales_analysis"],
+    "item_analysis":         ["inventory_movement", "sales_analysis", "purchasing_analysis"],
+    "vendor_analysis":       ["purchasing_analysis", "inventory_movement"],
+    "accounting_summary":    ["payment_collection", "trial_balance", "customer_performance"],
+    "trial_balance":         ["accounting_summary", "payment_collection"],
+    "hr_payroll":            ["employee_detail", "attendance_analysis"],
+    "employee_detail":       ["hr_payroll", "attendance_analysis"],
+    "attendance_analysis":   ["employee_detail", "hr_payroll"],
+}
+
+
 def track_chart_preference(
     user_id: str,
     query_type: str,
@@ -129,6 +172,41 @@ def get_popular_queries(limit: int = 10) -> list[dict]:
 # Conversation Workflow Patterns
 # ═══════════════════════════════════════════════════════════════════
 
+def seed_workflow_patterns() -> int:
+    """
+    Seed AI_WORKFLOW_PATTERNS with common ERP sequences.
+    Uses MERGE/INSERT IGNORE so re-running is safe.
+    Seeds get frequency=5 so predict_next_intent() sees them on first call.
+    """
+    count = 0
+    for seq in _SEED_WORKFLOW_PATTERNS:
+        seq_json = json.dumps(seq)
+        seq_hash = hashlib.md5(seq_json.encode()).hexdigest()
+        try:
+            with get_conn() as conn:
+                if is_oracle():
+                    conn.execute(f"""
+                        MERGE INTO {_T_WP()} t
+                        USING (SELECT :1 AS sh FROM DUAL) s
+                        ON (t.SEQUENCE_HASH = s.sh)
+                        WHEN NOT MATCHED THEN INSERT
+                            (SEQUENCE_JSON, SEQUENCE_HASH, FREQUENCY, LAST_SEEN)
+                        VALUES (:2, :3, 5, SYSTIMESTAMP)
+                    """, (seq_hash, seq_json, seq_hash))
+                else:
+                    conn.execute(f"""
+                        INSERT INTO {_T_WP()}
+                            (sequence_json, sequence_hash, frequency, last_seen)
+                        VALUES (?, ?, 5, datetime('now'))
+                        ON CONFLICT(sequence_hash) DO NOTHING
+                    """, (seq_json, seq_hash))
+            count += 1
+        except Exception as e:
+            log.debug(f"[ANALYTICS] seed_workflow skip: {e}")
+    log.info(f"[ANALYTICS] Seeded {count} workflow patterns")
+    return count
+
+
 def track_workflow(sequence: list[str]) -> None:
     """Track a conversation workflow pattern."""
     if len(sequence) < 2:
@@ -202,9 +280,15 @@ def predict_next_intent(recent_intents: list[str], top_k: int = 3) -> list[dict]
                 next_intent = seq[i + len(recent)]
                 predictions[next_intent] = predictions.get(next_intent, 0) + freq
 
-    results = [{"intent": k, "confidence": v} for k, v in predictions.items()]
-    results.sort(key=lambda x: x["confidence"], reverse=True)
-    return results[:top_k]
+    if predictions:
+        results = [{"intent": k, "confidence": v} for k, v in predictions.items()]
+        results.sort(key=lambda x: x["confidence"], reverse=True)
+        return results[:top_k]
+
+    # Cold-start fallback: static ERP transition map when DB is too sparse
+    current = recent_intents[-1]
+    fallback = _ERP_FALLBACK_FLOWS.get(current, [])
+    return [{"intent": f, "confidence": 1} for f in fallback[:top_k]]
 
 
 def get_common_workflows(limit: int = 10) -> list[dict]:
