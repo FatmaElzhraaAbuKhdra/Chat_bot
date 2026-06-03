@@ -296,7 +296,8 @@ def _strip_tenant_filters(sql: str) -> str:
 # ══════════════════════════════════════════════════════════════════════
 
 def format_answer(question: str, data: list[dict], sql: str,
-                  history: list = None, truncated: bool = False) -> str:
+                  history: list = None, truncated: bool = False,
+                  extra_context: str = "") -> str:
 
     if not data:
         is_arabic = any('؀' <= c <= 'ۿ' for c in question)
@@ -389,6 +390,11 @@ def format_answer(question: str, data: list[dict], sql: str,
 • عرض القيم كما هي — لا اختراع أرقام
 • الإيجاز قوة — لا حشو ولا تكرار
 • الإجابة تبدو كأنها مكتوبة بواسطة مستشار مالي تنفيذي وليس تقرير قاعدة بيانات خام"""
+
+    # RC5: inject column business meanings (from schema comments) so the narrative
+    # is grounded in what each column actually represents — also for the template path.
+    if extra_context:
+        system_prompt += f"\n\n══ معاني الأعمدة (للفهم فقط — لا تعرضها كأسماء تقنية) ══\n{extra_context}"
 
     data_str = str(data[:50])
     history_budget = MAX_PROMPT_CHARS - len(system_prompt) - len(data_str) - len(question) - 500

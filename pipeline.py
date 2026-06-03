@@ -1194,6 +1194,31 @@ def _format_data_as_table(data: list[dict], question: str = "") -> str:
     return result
 
 
+def _comment_context_for_sql(sql: str) -> str:
+    """RC5: Build a compact 'column = business meaning' context from
+    justclick_comments.sql for the tables referenced in the SQL. Used to ground
+    the answer narrative — including on the TEMPLATE path, which otherwise never
+    sees any business meaning from the comments.
+    """
+    try:
+        from schema_loader import _column_comments
+        tbls = re.findall(r'\b(?:FROM|JOIN)\s+([A-Z_][A-Z0-9_]*)', sql, re.IGNORECASE)
+        seen: set[str] = set()
+        lines: list[str] = []
+        for t in tbls:
+            t = t.upper()
+            if t in seen:
+                continue
+            seen.add(t)
+            for col, desc in list(_column_comments.get(t, {}).items())[:8]:
+                head = re.split(r'[.\n]', desc, 1)[0].strip()
+                if head:
+                    lines.append(f"{col} = {head[:60]}")
+        return " | ".join(lines[:25])
+    except Exception:
+        return ""
+
+
 def _safe_format_answer(question, data, sql, history=None, truncated=False):
     """Format with executive AI copilot style. Falls back to local on error."""
     if not data:
@@ -1201,7 +1226,8 @@ def _safe_format_answer(question, data, sql, history=None, truncated=False):
     # Use LLM executive formatting for reasonable data sizes
     if len(data) <= 50:
         try:
-            return format_answer(question, data, sql, history, truncated)
+            extra = _comment_context_for_sql(sql)   # RC5: comment-grounded narrative
+            return format_answer(question, data, sql, history, truncated, extra)
         except Exception as e:
             log.info(f"[PIPELINE] LLM format fallback to local: {e}")
     # Fallback: enhanced local formatting
