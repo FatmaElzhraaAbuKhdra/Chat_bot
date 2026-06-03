@@ -240,20 +240,61 @@ _NAV_PATTERNS = re.compile(
     re.IGNORECASE
 )
 
+# Words that signal an analytical/data query — block navigation detection
+_ANALYTICS_TOKENS = {
+    "عدد", "كم", "كمية", "إجمالي", "اجمالي", "مجموع", "متوسط", "نسبة",
+    "أعلى", "اعلى", "أقل", "اقل", "احسب", "احصاء", "تحليل", "تقرير",
+    "ارسم", "رسم", "مقارنة", "قارن", "ميزان", "كشف", "ملخص", "اجمع",
+    "count", "sum", "total", "average", "top", "show", "list", "report",
+    "chart", "graph", "compare", "balance", "statement", "analyze",
+}
+
+
+def _is_analytics_question(question: str) -> bool:
+    """Return True if question is clearly a data/analytics request, not navigation."""
+    tokens = set(re.split(r'\s+', question.strip().lower()))
+    return bool(tokens & _ANALYTICS_TOKENS)
+
 
 def detect_navigation_intent(question: str) -> Optional[list[dict]]:
     """
     Detect if the user wants to navigate to an APEX page.
     Returns matched pages or None.
+
+    Guard: analytical questions (count, sum, chart…) are NEVER navigation.
+    Guard: keyword matching uses whole-word check to prevent substring false positives.
     """
-    match = _NAV_PATTERNS.search(question.strip())
+    q = question.strip()
+
+    # Guard: analytical/data queries are never navigation
+    if _is_analytics_question(q):
+        return None
+
+    # Case 1: explicit navigation verb ("افتح", "open", "go to"…)
+    match = _NAV_PATTERNS.search(q)
     if match:
-        target = match.group(3).strip() if match.group(3) else question
+        target = match.group(3).strip() if match.group(3) else q
         pages = find_pages(target)
         if pages:
             return pages
 
-    # Also check for general page references without action verbs
-    # Require very high confidence (title match) to avoid false positives on data queries
-    pages = find_pages(question)
-    return [p for p in pages if p.get("relevance", 0) >= 8.0] or None
+    # Case 2: no verb — require very high relevance AND whole-word title match
+    # Must contain the FULL page title as a standalone word/phrase to avoid
+    # "عدد فواتير المبيعات" incorrectly matching "الفواتير" page.
+    q_lower = q.lower()
+    high_conf = []
+    for page in APEX_PAGES:
+        # Only accept if the exact Arabic title appears as a standalone word/phrase
+        title_ar = page.title_ar  # e.g. "الفواتير"
+        if re.search(r'(^|\s)' + re.escape(title_ar) + r'(\s|$)', q_lower):
+            url = build_apex_url(page.page_id)
+            high_conf.append({
+                "page_id": page.page_id,
+                "title_ar": title_ar,
+                "title_en": page.title_en,
+                "domain": page.domain,
+                "icon": page.icon,
+                "url": url,
+                "relevance": 10.0,
+            })
+    return high_conf or None
