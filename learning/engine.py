@@ -449,7 +449,9 @@ def get_join_hint(from_table: str, to_table: str) -> str | None:
                 meta = {}
             join_info = meta.get("join", "")
             if join_info:
-                hints.append(join_info)
+                # RC4: attach the semantic meaning of the JOIN, not just the columns
+                label = meta.get("label_ar", "") or meta.get("rel_type", "")
+                hints.append(f"{join_info} [{label}]" if label else join_info)
 
         return " → ".join(hints) if hints else None
     except Exception as e:

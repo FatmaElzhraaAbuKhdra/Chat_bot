@@ -309,6 +309,26 @@ def search_knowledge(query: str) -> list[dict]:
         return results
 
 
+# RC4: canonicalize common table aliases so ontology edges & JOIN hints stay
+# consistent regardless of how a trained report names them.
+_TABLE_ALIASES: dict[str, str] = {
+    "INV_DETAILS":     "DETAIL_INV",
+    "INVOICE_DETAILS": "DETAIL_INV",
+    "DETAILS_INV":     "DETAIL_INV",
+    "MAIN_INVOICE":    "MAIN_INV",
+    "INVOICES":        "MAIN_INV",
+    "CUSTOMERS":       "CUST",
+    "CUSTOMER":        "CUST",
+    "VOUCHER_DET":     "VOUCHERS_DET",
+    "VOUCHER_DETAILS": "VOUCHERS_DET",
+}
+
+
+def _canon_table(name: str) -> str:
+    """Map a table name to its canonical schema name (RC4)."""
+    return _TABLE_ALIASES.get(name.upper(), name.upper())
+
+
 def _extract_tables_from_sql(sql: str) -> list[str]:
     """Extract table names referenced in a SQL statement."""
     # Match tokens after FROM / JOIN keywords (ignores subqueries and aliases)
@@ -320,7 +340,7 @@ def _extract_tables_from_sql(sql: str) -> list[str]:
     for m in pattern.finditer(sql):
         t = m.group(1).upper()
         if t not in ("SELECT", "WHERE", "ON", "SET", "INTO", "UPDATE", "VALUES"):
-            tables.append(t)
+            tables.append(_canon_table(t))   # RC4: normalize aliases
     return list(dict.fromkeys(tables))  # deduplicate, preserve order
 
 
@@ -428,7 +448,9 @@ def _extract_joins_from_sql(sql: str) -> list[str]:
             alias_map[t] = t
 
     def _res(x: str) -> str:
-        return alias_map.get(x.upper(), x.upper())
+        # RC4: resolve alias → real table, then canonicalize so join strings,
+        # the extracted table list, and ontology edges all agree on one name.
+        return _canon_table(alias_map.get(x.upper(), x.upper()))
 
     # Find all table.col = table.col pairs
     eq_matches = list(re.finditer(
@@ -468,6 +490,52 @@ def _extract_columns_from_sql(sql: str) -> list[str]:
         if col not in _COL_SKIP and len(col) > 1 and not col.isdigit():
             cols.add(col)
     return sorted(cols)[:30]
+
+
+def _terms_and_meanings_from_comments(
+    tables: list[str],
+) -> tuple[list[str], str]:
+    """RC3: Bridge justclick_comments.sql into training.
+
+    For each table in the trained report, pull the REAL business meaning from the
+    comments file (the same source the LLM schema context uses) and return:
+      - extra Arabic business terms (harvested from table/column descriptions)
+      - a compact "# COMMENTS:" block stored alongside the report so the meaning
+        is injected back into the prompt via search_knowledge_smart().
+
+    Previously training drew meaning only from hardcoded _TABLE_TERMS, so it was
+    blind to the rich per-column descriptions that already exist in the schema.
+    """
+    try:
+        from schema_loader import _table_comments, _column_comments
+    except Exception:
+        return [], ""
+
+    extra_terms: list[str] = []
+    meaning_lines: list[str] = []
+
+    for t in tables:
+        tdesc = _table_comments.get(t, "")
+        if tdesc:
+            head = re.split(r'[.\n]', tdesc, 1)[0].strip()
+            if head:
+                meaning_lines.append(f"{t}: {head[:90]}")
+                extra_terms.extend(re.findall(r'[؀-ۿ]{3,}', head))
+
+        cols = _column_comments.get(t, {})
+        for col, desc in list(cols.items())[:10]:
+            head = re.split(r'[.\n]', desc, 1)[0].strip()
+            if head:
+                meaning_lines.append(f"{t}.{col}: {head[:70]}")
+                extra_terms.extend(re.findall(r'[؀-ۿ]{3,}', head))
+
+    # Deduplicate terms, drop the generic stop-words already filtered elsewhere
+    seen: set[str] = set()
+    uniq_terms = [w for w in extra_terms
+                  if not (w in seen or seen.add(w))]  # type: ignore[func-returns-value]
+
+    block = ("# COMMENTS: " + " | ".join(meaning_lines[:24])) if meaning_lines else ""
+    return uniq_terms[:25], block
 
 
 def _extract_business_terms(
@@ -522,12 +590,28 @@ def _update_ontology_from_joins(
     joins: list[str],
     tables: list[str],
     domain: str,
+    relationships: list[dict] = None,
 ) -> int:
-    """Register newly discovered JOIN relationships in the ontology graph."""
+    """Register newly discovered JOIN relationships in the ontology graph.
+
+    RC4: each edge now carries the SEMANTIC relationship type (MasterDetail /
+    Lookup / Bridge / Associated) and its Arabic label, so get_join_hint() can
+    inject the *meaning* of a JOIN ("رأس فاتورة ← بنود") and not just the columns.
+    """
     try:
         from .ontology import add_node, add_edge, Relation
     except ImportError:
         return 0
+
+    # Build a pair → (type, label_ar) lookup from the already-classified relationships
+    rel_lookup: dict[frozenset, tuple[str, str]] = {}
+    for r in (relationships or []):
+        try:
+            rel_lookup[frozenset({_canon_table(r['from']), _canon_table(r['to'])})] = (
+                r.get('type', ''), r.get('label_ar', ''),
+            )
+        except Exception:
+            continue
 
     known = {t.upper() for t in tables}
     count = 0
@@ -543,18 +627,24 @@ def _update_ontology_from_joins(
         )
         seen_pairs: set[frozenset] = set()
         for t1, _c1, t2, _c2 in eq_pairs:
-            t1u, t2u = t1.upper(), t2.upper()
+            t1u, t2u = _canon_table(t1), _canon_table(t2)
             pair = frozenset({t1u, t2u})
             if t1u == t2u or pair in seen_pairs:
                 continue
             seen_pairs.add(pair)
             if t1u in known and t2u in known:
+                rel_type, label_ar = rel_lookup.get(pair, ("", ""))
                 ok = add_edge(
                     source=f"tbl:{t1u}",
                     target=f"tbl:{t2u}",
                     relation=Relation.JOINS_TO,
                     weight=0.9,
-                    metadata={"join": join_str, "source": "trained_report"},
+                    metadata={
+                        "join": join_str,
+                        "rel_type": rel_type,     # RC4: semantic relationship type
+                        "label_ar": label_ar,     # RC4: Arabic meaning of the JOIN
+                        "source": "trained_report",
+                    },
                 )
                 if ok:
                     count += 1
@@ -1030,6 +1120,11 @@ def train_from_query(
     terms_ar, terms_en = _extract_business_terms(report_name, description, tables)
     domain  = _detect_domain_from_tables(tables)
 
+    # ── RC3: enrich with REAL business meaning from justclick_comments.sql ──
+    _c_terms, _c_meaning = _terms_and_meanings_from_comments(tables)
+    if _c_terms:
+        terms_ar = list(dict.fromkeys(terms_ar + _c_terms))[:30]
+
     # ── Layer 2: Semantic extraction (non-blocking — graceful fallback) ──
     relationships: list[dict] = []
     roles: dict[str, str] = {}
@@ -1057,6 +1152,8 @@ def train_from_query(
         sql_patterns.append("# JOINs: " + " | ".join(joins[:4]))
     if columns:
         sql_patterns.append("# Columns: " + ", ".join(columns[:15]))
+    if _c_meaning:                       # RC3: real column meanings from comments
+        sql_patterns.append(_c_meaning)
     if _semantic_entry:
         sql_patterns.append(_semantic_entry)
 
@@ -1084,7 +1181,8 @@ def train_from_query(
     # ── Layer 3: Update ontology with discovered JOINs ────────────────
     onto_count = 0
     if ok and joins:
-        onto_count = _update_ontology_from_joins(joins, tables, domain)
+        # RC4: pass classified relationships so edges carry semantic type + label
+        onto_count = _update_ontology_from_joins(joins, tables, domain, relationships)
         log.info(f"[LEARNING] Ontology: {onto_count} new edges from '{report_name}'")
 
     # ── Layer 4: Index report embedding (Gemini optional) ─────────────
