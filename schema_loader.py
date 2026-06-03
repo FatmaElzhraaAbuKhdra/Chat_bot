@@ -125,13 +125,23 @@ def get_schema_context() -> str:
 
 
 def get_relevant_schema(question: str) -> str:
-    """Build schema context with only relevant tables for the question."""
+    """Build schema context with only relevant tables for the question.
+
+    P0/F1: two-tier by default (primary = full meaning, referenced = name-only).
+    Set SCHEMA_TIERED=0 to revert to the flat full-context behaviour.
+    """
     if not _table_comments:
         raise RuntimeError("Schema context not initialized.")
 
-    relevant = _select_tables(question)
-    ctx = _build_tables_context(relevant)
-    log.info(f"[SCHEMA] question matched {len(relevant)} tables, context={len(ctx)} chars")
+    if os.getenv("SCHEMA_TIERED", "1") != "0":
+        primary, referenced = _select_tables_tiered(question)
+        ctx = _build_tiered_context(primary, referenced)
+        log.info(f"[SCHEMA] tiered: {len(primary)} primary + {len(referenced)} referenced, "
+                 f"context={len(ctx)} chars")
+    else:
+        relevant = _select_tables(question)
+        ctx = _build_tables_context(relevant)
+        log.info(f"[SCHEMA] flat: {len(relevant)} tables, context={len(ctx)} chars")
     return ctx
 
 
@@ -181,10 +191,15 @@ def _col_annotation(desc: str) -> str:
     return f"({', '.join(parts)})" if parts else ""
 
 
-def _select_tables(question: str) -> set[str]:
-    """Select relevant tables based on question keywords.
-    Phase 9: When no domain keywords match, use ontology + learned concepts
-    to select minimal relevant tables instead of defaulting to accounting+invoicing.
+def _select_tables_tiered(question: str) -> tuple[set[str], set[str]]:
+    """P0/F1: split relevant tables into two tiers.
+
+      primary    = ALWAYS_INCLUDE + domain-group matches  → FULL column meaning
+      referenced = FK neighbours of primary (capped)       → name-only, JOIN-able
+
+    The UNION equals the legacy _select_tables() set (minus the referenced cap),
+    so JOIN-ability is preserved while the prompt no longer pays full-description
+    cost for every FK-reachable table.
     """
     q_lower = question.lower()
     matched_groups = set()
@@ -203,25 +218,35 @@ def _select_tables(question: str) -> set[str]:
     if not matched_groups:
         matched_groups = {"accounting", "invoicing"}
 
-    # Collect tables from matched groups
-    tables = set(ALWAYS_INCLUDE)
-    for group in matched_groups:
-        tables.update(TABLE_GROUPS.get(group, []))
-
-    # Also add FK-related tables: if a selected table references another, add it
     all_known = set(_table_comments.keys())
-    extra = set()
-    for tbl in tables:
-        cols = _column_comments.get(tbl, {})
-        for col, desc in cols.items():
+
+    # PRIMARY: the query's own domain tables (full semantic detail)
+    primary = set(ALWAYS_INCLUDE)
+    for group in matched_groups:
+        primary.update(TABLE_GROUPS.get(group, []))
+    primary &= all_known
+
+    # REFERENCED: FK neighbours of primary tables (name-only, for JOINs)
+    referenced: set[str] = set()
+    for tbl in primary:
+        for col, desc in _column_comments.get(tbl, {}).items():
             fk = re.search(r'FK\s*[→→]\s*(\w+)', desc)
             if fk:
                 ref_tbl = fk.group(1).upper()
-                if ref_tbl in all_known:
-                    extra.add(ref_tbl)
-    tables.update(extra)
+                if ref_tbl in all_known and ref_tbl not in primary:
+                    referenced.add(ref_tbl)
+    referenced = set(sorted(referenced)[:_MAX_REFERENCED])
 
-    return tables & all_known
+    return primary, referenced
+
+
+def _select_tables(question: str) -> set[str]:
+    """Select relevant tables (UNION of both tiers) — legacy/back-compat entry point.
+    Used by the ontology JOIN-hint loop in pipeline.py; rendering now goes through
+    the tiered path in get_relevant_schema().
+    """
+    primary, referenced = _select_tables_tiered(question)
+    return primary | referenced
 
 
 def _ontology_select_groups(question: str) -> set[str]:
@@ -254,6 +279,7 @@ def _ontology_select_groups(question: str) -> set[str]:
 _SCHEMA_CTX_BUDGET = 16000
 _COL_DESC_CAP = 160     # per-column cap (median real desc = 47, avg = 58)
 _TBL_DESC_CAP = 300     # per-table cap (was 120 — RC2)
+_MAX_REFERENCED = 18    # P0/F1: bound FK-referenced (name-only) tables
 
 
 def _compact_desc(text: str, cap: int) -> str:
@@ -262,6 +288,29 @@ def _compact_desc(text: str, cap: int) -> str:
     if len(d) > cap:
         d = d[:cap].rsplit(' ', 1)[0].rstrip() + "…"
     return d
+
+
+def _full_table_block(tbl: str) -> str:
+    """Render one table with FULL column business meanings (Semantic Layer)."""
+    tbl_desc = _compact_desc(_table_comments[tbl], _TBL_DESC_CAP)
+    header = f"\n{tbl}: {tbl_desc}"
+    cols = _column_comments.get(tbl, {})
+    col_lines = []
+    for col, desc in cols.items():
+        cdesc = _compact_desc(desc, _COL_DESC_CAP)
+        col_lines.append(f"  • {col}: {cdesc}" if cdesc else f"  • {col}")
+    return header + ("\n" + "\n".join(col_lines) if col_lines else "")
+
+
+def _name_only_block(tbl: str) -> str:
+    """Render one table as name + purpose + column NAMES only (JOIN-able, compact).
+
+    Used for FK-referenced tables (P0/F1): the LLM still sees the table and its
+    column names to build JOINs, without spending tokens on full descriptions.
+    """
+    tbl_desc = _compact_desc(_table_comments[tbl], 120)
+    cols = ", ".join(_column_comments.get(tbl, {}).keys())
+    return f"\n{tbl}: {tbl_desc}\n  [{cols}]"
 
 
 def _build_tables_context(tables: set[str]) -> str:
@@ -274,6 +323,7 @@ def _build_tables_context(tables: set[str]) -> str:
 
     A running budget (_SCHEMA_CTX_BUDGET) guards against prompt overflow: any table
     that would exceed it degrades to a name-only column list instead of being dropped.
+    (Flat renderer — used for the health-check full context and the legacy path.)
     """
     parts: list[str] = []
     total = 0
@@ -282,22 +332,47 @@ def _build_tables_context(tables: set[str]) -> str:
         if tbl not in _table_comments:
             continue
 
-        tbl_desc = _compact_desc(_table_comments[tbl], _TBL_DESC_CAP)
-        header = f"\n{tbl}: {tbl_desc}"
-
-        cols = _column_comments.get(tbl, {})
-        col_lines: list[str] = []
-        for col, desc in cols.items():
-            cdesc = _compact_desc(desc, _COL_DESC_CAP)
-            col_lines.append(f"  • {col}: {cdesc}" if cdesc else f"  • {col}")
-
-        block = header + ("\n" + "\n".join(col_lines) if col_lines else "")
+        block = _full_table_block(tbl)
 
         # Budget guard: degrade to name-only columns rather than overflow the prompt
-        if total + len(block) > _SCHEMA_CTX_BUDGET and col_lines:
-            names = ", ".join(cols.keys())
-            block = header + f"\n  [{names}]"
+        if total + len(block) > _SCHEMA_CTX_BUDGET and tbl in _column_comments:
+            names = ", ".join(_column_comments.get(tbl, {}).keys())
+            block = f"\n{tbl}: {_compact_desc(_table_comments[tbl], _TBL_DESC_CAP)}\n  [{names}]"
 
+        parts.append(block)
+        total += len(block)
+
+    return "\n".join(parts)
+
+
+def _build_tiered_context(primary: set[str], referenced: set[str]) -> str:
+    """P0/F1: two-tier schema context.
+
+    PRIMARY tables (the query's domain) get FULL column meanings and are emitted
+    FIRST so the budget never starves the tables the query actually needs (fixes
+    the alphabetical-ordering degradation, F4). FK-REFERENCED tables follow as
+    compact name-only blocks — enough for the LLM to JOIN, without the token cost
+    of full descriptions.
+    """
+    parts: list[str] = []
+    total = 0
+
+    for tbl in sorted(primary):
+        if tbl not in _table_comments:
+            continue
+        block = _full_table_block(tbl)
+        # Even a primary degrades only if it alone would blow the whole budget
+        if total + len(block) > _SCHEMA_CTX_BUDGET and tbl in _column_comments:
+            block = _name_only_block(tbl)
+        parts.append(block)
+        total += len(block)
+
+    for tbl in sorted(referenced):
+        if tbl not in _table_comments:
+            continue
+        block = _name_only_block(tbl)
+        if total + len(block) > _SCHEMA_CTX_BUDGET:
+            block = f"\n{tbl}: [{', '.join(_column_comments.get(tbl, {}).keys())}]"
         parts.append(block)
         total += len(block)
 
