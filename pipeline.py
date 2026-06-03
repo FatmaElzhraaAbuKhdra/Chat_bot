@@ -1545,5 +1545,8 @@ def _handle_navigation(nav_pages: list[dict]) -> Optional[PipelineResult]:
         answer="\n".join(lines),
         method="navigation",
         navigation_links=nav_pages,
-        suggestions=["افتح الصفحة", "الصفحات ذات الصلة"],
+        suggestions=[
+            {"label": "المبيعات", "query": "إجمالي المبيعات اليوم", "icon": "finance"},
+            {"label": "أعلى العملاء", "query": "أعلى 5 عملاء في المبيعات", "icon": "ranking"},
+        ],
     )
