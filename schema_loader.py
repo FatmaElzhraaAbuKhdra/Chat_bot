@@ -173,24 +173,6 @@ def _parse_comments_file(sql_text: str) -> tuple[dict, dict]:
     return table_comments, column_comments
 
 
-def _col_annotation(desc: str) -> str:
-    """Extract only FK, flag values, and warnings from a column description."""
-    parts = []
-
-    fk = re.search(r'FK\s*[→→]\s*([\w.]+)', desc)
-    if fk:
-        parts.append(f"FK→{fk.group(1)}")
-
-    flags = re.findall(r'(\d)\s*=\s*([^,،.]+)', desc)
-    if flags and len(flags) <= 6:
-        parts.append(' '.join(f"{v}={lbl.strip()}" for v, lbl in flags))
-
-    for warn in re.finditer(r'⚠\s*([^⚠.]+)', desc):
-        parts.append(f"⚠{warn.group(1).strip()}")
-
-    return f"({', '.join(parts)})" if parts else ""
-
-
 def _select_tables_tiered(question: str) -> tuple[set[str], set[str]]:
     """P0/F1: split relevant tables into two tiers.
 

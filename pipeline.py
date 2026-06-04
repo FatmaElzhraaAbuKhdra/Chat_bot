@@ -601,7 +601,19 @@ async def _execute_template(
     company_code: str = "",
     fiscal_year: str = "",
 ) -> Optional[PipelineResult]:
-    """Execute a query template with extracted parameters."""
+    """Execute a query template with extracted parameters.
+
+    NOTE (F5 — known, by-design limitation): the SQL here is produced by
+    render_template() from a vetted, fixed pattern. It deliberately does NOT
+    consume learned knowledge / ontology / trained reports — those only shape
+    the LLM path. The template path's two learning hooks are:
+      1. should_use_template() (engine.py) — can demote a poorly-performing
+         template to the LLM path where full knowledge IS injected;
+      2. _comment_context_for_sql() (RC5) — grounds the ANSWER narrative in
+         column business meaning.
+    So template SQL stays stable/correct but cannot self-improve from training.
+    To let a trained report override a template, route via should_use_template.
+    """
     try:
         # Check required params
         missing = [p for p in template.required_params
