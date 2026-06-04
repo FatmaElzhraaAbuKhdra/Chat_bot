@@ -235,7 +235,7 @@ def get_related_pages(domain: str, limit: int = 3) -> list[dict]:
 # ══════════════════════════════════════════════════════════════════
 
 _NAV_PATTERNS = re.compile(
-    r"(افتح|فتح|انتقل|روح|خدني|اعرض|navigate|open|go\s*to)\s*"
+    r"(افتح|فتح|انتقل|روح|خدني|navigate|open|go\s*to)\s*"
     r"(شاشة|صفحة|page|screen)?\s*(.+)",
     re.IGNORECASE
 )
@@ -266,11 +266,13 @@ def detect_navigation_intent(question: str) -> Optional[list[dict]]:
     """
     q = question.strip()
 
-    # Guard: analytical/data queries are never navigation
-    if _is_analytics_question(q):
-        return None
-
-    # Case 1: explicit navigation verb ("افتح", "open", "go to"…)
+    # ARCHITECTURAL FIX: navigation requires an EXPLICIT navigation verb
+    # (افتح / فتح / انتقل / روح / خدني / open / go to / navigate). A data query is
+    # NEVER converted to navigation merely because it contains a page name — the
+    # page-title-containment router (old "Case 2") is removed, together with the
+    # _is_analytics_question keyword guard that only existed to fight it.
+    # find_pages() (page-name scoring) is SUPPORTING and runs ONLY after an
+    # explicit navigation verb has established navigation intent.
     match = _NAV_PATTERNS.search(q)
     if match:
         target = match.group(3).strip() if match.group(3) else q
@@ -278,23 +280,4 @@ def detect_navigation_intent(question: str) -> Optional[list[dict]]:
         if pages:
             return pages
 
-    # Case 2: no verb — require very high relevance AND whole-word title match
-    # Must contain the FULL page title as a standalone word/phrase to avoid
-    # "عدد فواتير المبيعات" incorrectly matching "الفواتير" page.
-    q_lower = q.lower()
-    high_conf = []
-    for page in APEX_PAGES:
-        # Only accept if the exact Arabic title appears as a standalone word/phrase
-        title_ar = page.title_ar  # e.g. "الفواتير"
-        if re.search(r'(^|\s)' + re.escape(title_ar) + r'(\s|$)', q_lower):
-            url = build_apex_url(page.page_id)
-            high_conf.append({
-                "page_id": page.page_id,
-                "title_ar": title_ar,
-                "title_en": page.title_en,
-                "domain": page.domain,
-                "icon": page.icon,
-                "url": url,
-                "relevance": 10.0,
-            })
-    return high_conf or None
+    return None
