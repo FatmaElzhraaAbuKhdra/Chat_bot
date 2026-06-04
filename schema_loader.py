@@ -20,6 +20,7 @@ _table_comments: dict[str, str] = {}
 _column_comments: dict[str, dict[str, str]] = {}
 _fk_lines: list[str] = []
 _full_context: Optional[str] = None
+_flag_concept_map: Optional[dict] = None   # derived from comments, lazily built
 
 def _get_comments_file() -> Path:
     return Path(__file__).parent / os.getenv("SCHEMA_FILE", "justclick_comments.sql")
@@ -75,7 +76,8 @@ ALWAYS_INCLUDE = {"COMPANIES", "BRANCHES"}
 
 
 async def init_schema_context() -> None:
-    global _table_comments, _column_comments, _fk_lines, _full_context
+    global _table_comments, _column_comments, _fk_lines, _full_context, _flag_concept_map
+    _flag_concept_map = None   # rebuild from fresh comments
 
     comments_file = _get_comments_file()
     if comments_file.exists():
@@ -270,6 +272,44 @@ def _compact_desc(text: str, cap: int) -> str:
     if len(d) > cap:
         d = d[:cap].rsplit(' ', 1)[0].rstrip() + "…"
     return d
+
+
+# ── Comment-derived business concepts (single source of truth) ───────
+def _normalize_concept(text: str) -> str:
+    """Normalize an Arabic concept label for matching (strip leading ال, alef/ya/ta)."""
+    t = re.sub(r'[أإآٱ]', 'ا', (text or '').strip().lower())
+    t = t.replace('ة', 'ه').replace('ى', 'ي')
+    if t.startswith('ال') and len(t) > 4:
+        t = t[2:]
+    return t
+
+
+def get_flag_concept_map() -> dict[str, list[tuple[str, str]]]:
+    """Derive {concept_label: [(COLUMN, value), …]} from the 'N=label' flag
+    definitions inside column comments.
+
+    The comments are the authority for what each coded value MEANS
+    (e.g. INVTYPE 0=بيع 1=شراء), so routing/consistency checks read concepts
+    from HERE instead of hardcoded keyword lists. Auto-extends as comments grow.
+    Cached after first build.
+    """
+    global _flag_concept_map
+    if _flag_concept_map is not None:
+        return _flag_concept_map
+
+    cmap: dict[str, list[tuple[str, str]]] = {}
+    for _tbl, cols in _column_comments.items():
+        for col, desc in cols.items():
+            flags = re.findall(r'(\d)\s*=\s*([^,،.\d⚠]+)', desc)
+            if not (2 <= len(flags) <= 6):     # only genuine small enum columns
+                continue
+            for val, label in flags:
+                lbl = _normalize_concept(label)
+                if len(lbl) < 3:
+                    continue
+                cmap.setdefault(lbl, []).append((col.upper(), val))
+    _flag_concept_map = cmap
+    return cmap
 
 
 def _full_table_block(tbl: str) -> str:

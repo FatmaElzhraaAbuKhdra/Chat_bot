@@ -66,9 +66,21 @@ _GATE_TIME_WORDS = (
 )
 
 
+def _template_filter_values(sql_upper: str) -> dict:
+    """Parse simple 'COLUMN = <digit>' equality filters from template SQL."""
+    return {m.group(1): m.group(2)
+            for m in re.finditer(r'\b([A-Z_][A-Z0-9_]*)\s*=\s*(\d+)\b', sql_upper)}
+
+
 def _template_matches_meaning(template, entities: dict, question: str) -> tuple[bool, str]:
     """Is this fast template consistent with the question's MEANING?
     Returns (consistent, reason_if_not). False ⇒ skip template, use the LLM path.
+
+    The authority for business meaning is the schema comments + ontology. The
+    transaction-type check below derives its concepts from the comment flag-
+    dictionaries (single source of truth), NOT from hardcoded keyword lists; the
+    reasoning engine is intentionally not consulted as a routing authority. Time
+    and entity checks are question-intent signals that the comments support.
     """
     sql_u = (getattr(template, "sql", "") or "").upper()
     q = question or ""
@@ -87,11 +99,23 @@ def _template_matches_meaning(template, entities: dict, question: str) -> tuple[
         if not any(k in consumed for k in present):
             return False, f"question names {present} but the template can't filter by it"
 
-    # 3. Transaction type — sales template used for a purchase/return question
-    if any(w in q for w in ("شراء", "مشتريات", "purchase")) and "INVTYPE = 0" in sql_u:
-        return False, "purchase asked but template filters sales (INVTYPE=0)"
-    if any(w in q for w in ("مرتجع", "مرتجعات", "return")) and "RETURN_FLAG = 0" in sql_u:
-        return False, "returns asked but template excludes them (RETURN_FLAG=0)"
+    # 3. Transaction type — COMMENT-DERIVED. If the question names a coded concept
+    #    whose comment-defined value conflicts with a value the template hard-codes
+    #    (comment: 'INVTYPE 0=بيع 1=شراء' → a شراء question must not use an
+    #    INVTYPE=0 template). Concepts come from the comments, so this auto-extends.
+    try:
+        from schema_loader import get_flag_concept_map, _normalize_concept
+        q_norm = _normalize_concept(q)
+        tmpl_filters = _template_filter_values(sql_u)
+        if tmpl_filters:
+            for label, mappings in get_flag_concept_map().items():
+                if label in q_norm:
+                    for col, val in mappings:
+                        if col in tmpl_filters and tmpl_filters[col] != val:
+                            return False, (f"comments map '{label}' → {col}={val}, "
+                                           f"but template forces {col}={tmpl_filters[col]}")
+    except Exception:
+        pass
 
     return True, ""
 
