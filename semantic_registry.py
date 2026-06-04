@@ -137,6 +137,36 @@ def coded_columns() -> set[str]:
     return set(_registry.keys())
 
 
+def meaning_candidates(column: str) -> list[str]:
+    """The CLOSED set of comment-defined meanings for a coded column, ordered by
+    value. This is the ONLY legal vocabulary the LLM may choose from for this
+    column — injected into the prompt so the LLM selects a comment meaning rather
+    than inventing one from training knowledge (Architecture A constraint source)."""
+    _ensure()
+    legend = _registry.get((column or "").upper())
+    if not legend:
+        return []
+    return [legend[v] for v in sorted(legend)]
+
+
+def legal_meaning(column: str, meaning: str) -> bool:
+    """True iff `meaning` is a comment-defined meaning for `column`. The enforcement
+    gate uses this to reject any meaning the LLM emits that is not in the registry."""
+    return resolve(column, meaning) is not None
+
+
+def build_constraint_block() -> str:
+    """Prompt fragment: the per-column closed meaning-sets, generated purely from
+    comments. Tells the LLM 'for these columns you may ONLY use these meanings as
+    {{flag:COL:meaning}} — never a number, never a meaning outside this list.'
+    Regenerated on every comment change (no manual upkeep)."""
+    _ensure()
+    lines = ["== القيم المرمَّزة: استخدم {{flag:COL:meaning}} فقط بمعنى من هذه القائمة (ممنوع رقم) =="]
+    for col in sorted(_registry):
+        lines.append(f"  {col}: " + " | ".join(meaning_candidates(col)))
+    return "\n".join(lines)
+
+
 def snapshot() -> dict[str, dict[int, str]]:
     """Full compiled registry (inspection / persistence)."""
     _ensure()

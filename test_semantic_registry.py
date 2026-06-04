@@ -135,7 +135,8 @@ BANNED = {
     'domain keywords':     r'DOMAIN_KEYWORDS',
     'table groups':        r'TABLE_GROUPS',
 }
-SELF = {'semantic_registry.py', 'test_semantic_registry.py', 'normalizer.py'}
+SELF = {'semantic_registry.py', 'test_semantic_registry.py', 'normalizer.py',
+        'slot_gate.py', 'test_slot_gate.py'}  # compiler infra + test fixtures, not authorities
 counts = {k: 0 for k in BANNED}
 for path in glob.glob('**/*.py', recursive=True):
     if '__pycache__' in path or '.claude' in path or os.path.basename(path) in SELF:
