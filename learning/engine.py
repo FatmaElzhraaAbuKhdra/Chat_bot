@@ -171,6 +171,53 @@ def _extract_txn_context(sql: str) -> dict:
     return ctx
 
 
+# sub_intent → business-object type (current_entity)
+_SUBINTENT_ENTITY = {
+    "invoice_detail": "invoice", "invoice_count": "invoice",
+    "invoice_count_purchase": "invoice", "sales_summary": "invoice",
+    "purchase_summary": "invoice", "outstanding": "invoice",
+    "customer_info": "customer", "customer_list": "customer",
+    "top_customers": "customer", "customer_balance": "customer",
+    "supplier_list": "supplier",
+    "item_info": "item", "item_card": "item", "stock_balance": "item",
+    "top_items": "item",
+    "account_balance": "account", "account_statement": "account",
+    "account_info": "account", "trial_balance": "account",
+    "employee_count": "employee", "employee_list": "employee",
+    "salary_info": "employee", "attendance": "employee",
+}
+
+# record-id filters by entity (the specific row a query is scoped to)
+_RECORD_PATTERNS = [
+    ("invoice",  r'\bINVID\s*=\s*(\d+)'),
+    ("account",  r"\bCHART_CODE\s*=\s*'?(\d+)"),
+    ("item",     r'\bITEMID\s*=\s*(\d+)'),
+    ("employee", r'\bEMP_ID\s*=\s*(\d+)'),
+]
+
+
+def _extract_record(sql: str):
+    """Return (entity, record_id) if the SQL is scoped to a specific row, else (None,None)."""
+    for ent, pat in _RECORD_PATTERNS:
+        m = re.search(pat, sql or "", re.IGNORECASE)
+        if m:
+            return ent, m.group(1)
+    return None, None
+
+
+def _extract_party_ids(sql: str):
+    """Return (customer_id, supplier_id) when the SQL filters a specific party.
+    CUST_TYPE=1 ⇒ supplier, otherwise customer (comment-grounded: CUST_TYPE 0=عميل 1=مورد)."""
+    cust = supp = ""
+    m = re.search(r'\bCUST(?:ID|_ID)\s*=\s*(\d+)', sql or "", re.IGNORECASE)
+    if m:
+        if re.search(r'\bCUST_TYPE\s*=\s*1', sql or "", re.IGNORECASE):
+            supp = m.group(1)
+        else:
+            cust = m.group(1)
+    return cust, supp
+
+
 def on_query_complete(
     question: str,
     sub_intent: str,
@@ -220,6 +267,12 @@ def on_query_complete(
                 _tables = _extract_tables_from_sql(sql or "")
                 _txn = _extract_txn_context(sql or "")
                 _entity = _tables[0] if _tables else ""
+                # Conversational-BI state: the business object + record id this query is on
+                _cur_entity = _SUBINTENT_ENTITY.get(sub_intent, "")
+                _rec_entity, _rec_id = _extract_record(sql or "")
+                _current_record = ({"entity": _rec_entity or _cur_entity, "id": _rec_id}
+                                   if _rec_id else None)
+                _cust_id, _supp_id = _extract_party_ids(sql or "")
                 update_context_after_query(
                     session_id=session_id,
                     question=question,
@@ -233,6 +286,10 @@ def on_query_complete(
                     user_id=user_id,
                     txn_context=_txn,
                     last_entity=_entity,
+                    current_entity=_cur_entity,
+                    current_record=_current_record,
+                    current_customer_id=_cust_id,
+                    current_supplier_id=_supp_id,
                 )
             except Exception:
                 pass

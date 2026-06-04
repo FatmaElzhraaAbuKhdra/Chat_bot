@@ -30,6 +30,12 @@ def _empty_context() -> dict:
         "last_filters": {},
         "txn_context": {},          # FIX: comment-derived txn flags (e.g. {"INVTYPE": 0})
         "last_entity": None,        # FIX: primary entity/table of the last query
+        # ── Conversational-BI state (current business object the user is on) ──
+        "current_entity": None,        # business object type: invoice|customer|supplier|item|account
+        "current_record": None,        # {"entity":..., "id":...} — STICKY across reference turns
+        "current_customer_id": None,   # captured when a query is scoped to a specific customer
+        "current_supplier_id": None,   # captured when scoped to a specific supplier
+        "current_drill_path": [],      # breadcrumb of {"entity","id"} as the user drills
         "last_columns": [],
         "last_row_count": 0,
         "last_chart_type": None,
@@ -153,6 +159,10 @@ def update_context_after_query(
     user_id: str = "",
     txn_context: dict = None,
     last_entity: str = "",
+    current_entity: str = "",
+    current_record: dict = None,
+    current_customer_id: str = "",
+    current_supplier_id: str = "",
 ) -> dict:
     """Update BI context after a successful query."""
     ctx = get_context(session_id)
@@ -184,6 +194,23 @@ def update_context_after_query(
         ctx["txn_context"] = txn_context
     if last_entity:
         ctx["last_entity"] = last_entity
+    # ── Conversational-BI state ──
+    # current_entity tracks the focus type; updated when known.
+    if current_entity:
+        ctx["current_entity"] = current_entity
+    # current_record is STICKY: only replaced when THIS query establishes a new
+    # record. A bare reference turn ("العميل", "رقمه") carries no record, so the
+    # previous one persists → no need to re-ask the invoice number.
+    if current_record and current_record.get("id"):
+        ctx["current_record"] = current_record
+        path = ctx.get("current_drill_path", []) or []
+        if not path or path[-1] != current_record:
+            path.append(current_record)
+        ctx["current_drill_path"] = path[-8:]
+    if current_customer_id:
+        ctx["current_customer_id"] = current_customer_id
+    if current_supplier_id:
+        ctx["current_supplier_id"] = current_supplier_id
     ctx["conversation_turns"] = ctx.get("conversation_turns", 0) + 1
     ctx["applied_modifiers"] = []  # reset modifiers for new query
 
@@ -272,6 +299,18 @@ def is_followup(question: str, session_id: str) -> bool:
                  question.strip()):
         return True
 
+    # Conversational-BI reference: a SHORT attribute/pronoun query about the
+    # CURRENT record (العميل / رقمه / العنوان / الهاتف / آخر دفعة / هو) is a
+    # follow-up. Gated on an existing current_record so plural/list queries
+    # ("العملاء", "المخازن", "عدد الموظفين") never match.
+    if ctx.get("current_record"):
+        qn = question.strip()
+        _ref = (r'(^|\s)(هو|هي|هم|بياناته|بياناتها|رقمه|رقمها|عنوانه|عنوانها|'
+                r'العنوان|الهاتف|رقم\s*الهاتف|الرصيد|المدفوعات|دفعة|العميل|'
+                r'المورد|الصنف)(\s|$)')
+        if len(qn.split()) <= 3 and re.search(_ref, qn):
+            return True
+
     return False
 
 
@@ -282,6 +321,17 @@ def build_followup_context(session_id: str) -> str:
         return ""
 
     parts = ["══ سياق المحادثة السابق ══"]
+    # Conversational-BI: inject the CURRENT record deterministically (from session
+    # state, not guessed) so references resolve to it without re-asking its number.
+    cur = ctx.get("current_record")
+    if cur and cur.get("id"):
+        line = f"السجل الحالي محل النقاش: {cur.get('entity')} رقم {cur.get('id')}"
+        txn = ctx.get("txn_context") or {}
+        if "INVTYPE" in txn:
+            line += f" (INVTYPE={txn['INVTYPE']})"
+        parts.append(line)
+        parts.append("أي إشارة (العميل، رقمه، عنوانه، الهاتف، آخر دفعة، هو، بياناته) "
+                     "تخص هذا السجل تحديدًا — استخدم معرّفه في WHERE.")
     parts.append(f"السؤال السابق: {ctx['last_query']}")
     if ctx.get("last_intent"):
         parts.append(f"Intent: {ctx['last_intent']}")
