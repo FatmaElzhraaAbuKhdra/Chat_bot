@@ -5,6 +5,7 @@ The central engine that orchestrates:
   + Action Engine -> Workflow -> Export -> APEX Navigation -> Executive Reports
 """
 import re
+import os
 import logging
 import sys
 import time
@@ -46,6 +47,53 @@ from erp_actions.workflows import is_workflow_query, get_pending_approvals, get_
 from erp_actions.apex_nav import detect_navigation_intent, find_pages
 from export_engine import detect_export_intent, ExportRequest, generate_export, ExportFormat
 from executive_reports import detect_report_intent, generate_executive_report, format_report_for_chat
+
+
+# ── Hybrid semantic-first routing gate ───────────────────────────────
+# Meaning decides whether a fast template MAY be used; the template is only an
+# execution optimization, never the source of meaning. This gate can only DEMOTE
+# template→LLM (never fabricate SQL), so the worst case is a slower-but-correct
+# LLM answer — a safe failure mode. Set SEMANTIC_FIRST=0 to revert to pure
+# template-first routing. It deliberately uses only CHEAP, RELIABLE signals
+# (intent entities + transaction-type words + the template's own SQL) and NOT the
+# reasoning plan, whose dimension/table/time detection over-fires (verified).
+_GATE_SPECIFIC_ENTITIES = (
+    "customer_name", "store_name", "employee_name", "supplier_name", "item_name",
+)
+_GATE_TIME_WORDS = (
+    "اليوم", "النهارده", "today", "امس", "أمس", "الشهر", "السنة", "سنة",
+    "الربع", "اسبوع", "أسبوع", "week", "month", "year",
+)
+
+
+def _template_matches_meaning(template, entities: dict, question: str) -> tuple[bool, str]:
+    """Is this fast template consistent with the question's MEANING?
+    Returns (consistent, reason_if_not). False ⇒ skip template, use the LLM path.
+    """
+    sql_u = (getattr(template, "sql", "") or "").upper()
+    q = question or ""
+    entities = entities or {}
+
+    # 1. Time scope — template must not impose a date filter the user didn't ask for
+    if "SYSDATE" in sql_u:
+        wants_time = ("time_today" in entities) or any(w in q for w in _GATE_TIME_WORDS)
+        if not wants_time:
+            return False, "template imposes a date filter the question didn't request"
+
+    # 2. Specific entity — template cannot honor a named customer/store/item/etc.
+    present = [k for k in _GATE_SPECIFIC_ENTITIES if k in entities]
+    if present:
+        consumed = set(template.required_params) | set(template.optional_params)
+        if not any(k in consumed for k in present):
+            return False, f"question names {present} but the template can't filter by it"
+
+    # 3. Transaction type — sales template used for a purchase/return question
+    if any(w in q for w in ("شراء", "مشتريات", "purchase")) and "INVTYPE = 0" in sql_u:
+        return False, "purchase asked but template filters sales (INVTYPE=0)"
+    if any(w in q for w in ("مرتجع", "مرتجعات", "return")) and "RETURN_FLAG = 0" in sql_u:
+        return False, "returns asked but template excludes them (RETURN_FLAG=0)"
+
+    return True, ""
 
 
 def _record_viz(domain: str, sub_intent: str, data: list, chart: dict) -> None:
@@ -550,6 +598,17 @@ async def _handle_data_query(
         else:
             template = find_template(intent.sub_intent, intent.entities)
             log.info(f"[PIPELINE] sub_intent={intent.sub_intent} template={'FOUND:'+template.name if template else 'NONE'}")
+
+            # Hybrid semantic-first gate: the derived MEANING must agree with the
+            # template before it may short-circuit the LLM. Otherwise → LLM path.
+            if template and os.getenv("SEMANTIC_FIRST", "1") != "0":
+                consistent, why = _template_matches_meaning(
+                    template, intent.entities, question
+                )
+                if not consistent:
+                    log.info(f"[PIPELINE] Semantic gate rejected template "
+                             f"{template.name}: {why} -> LLM path")
+                    template = None
 
             # Phase 2: Check template trust score from learning engine
             if template:
