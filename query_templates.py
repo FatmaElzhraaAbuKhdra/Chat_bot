@@ -223,7 +223,7 @@ _register(QueryTemplate(
     sql="""
 SELECT COUNT(*) AS invoice_count
   FROM MAIN_INV
- WHERE INVTYPE = 0
+ WHERE INVTYPE = {{flag:INVTYPE:بيع}}
    AND RETURN_FLAG = 0
 """,
     required_params=[],
@@ -238,7 +238,7 @@ _register(QueryTemplate(
     sql="""
 SELECT COUNT(*) AS invoice_count
   FROM MAIN_INV
- WHERE INVTYPE = 1
+ WHERE INVTYPE = {{flag:INVTYPE:شراء}}
    AND RETURN_FLAG = 0
 """,
     required_params=[],
@@ -255,7 +255,7 @@ SELECT COUNT(*) AS invoice_count,
        NVL(SUM(FINALTOTAL), 0) AS total_sales,
        NVL(SUM(TAX), 0) AS total_tax
   FROM MAIN_INV
- WHERE INVTYPE = 0
+ WHERE INVTYPE = {{flag:INVTYPE:بيع}}
    AND RETURN_FLAG = 0
 """,
     required_params=[],
@@ -272,7 +272,7 @@ SELECT COUNT(*) AS invoice_count,
        NVL(SUM(FINALTOTAL), 0) AS total_sales,
        NVL(SUM(TAX), 0) AS total_tax
   FROM MAIN_INV
- WHERE INVTYPE = 0
+ WHERE INVTYPE = {{flag:INVTYPE:بيع}}
    AND RETURN_FLAG = 0
    AND TRUNC(INVDATE) = TRUNC(SYSDATE)
 """,
@@ -290,7 +290,7 @@ SELECT TRUNC(INVDATE) AS sale_date,
        COUNT(*) AS invoice_count,
        NVL(SUM(FINALTOTAL), 0) AS total_sales
   FROM MAIN_INV
- WHERE INVTYPE = 0
+ WHERE INVTYPE = {{flag:INVTYPE:بيع}}
    AND RETURN_FLAG = 0
    AND TRUNC(INVDATE) BETWEEN TO_DATE('{{date_from}}', 'YYYY-MM-DD')
                            AND TO_DATE('{{date_to}}', 'YYYY-MM-DD')
@@ -312,7 +312,7 @@ SELECT COUNT(*) AS invoice_count,
        NVL(SUM(FINALTOTAL), 0) AS total_purchases,
        NVL(SUM(TAX), 0) AS total_tax
   FROM MAIN_INV
- WHERE INVTYPE = 1
+ WHERE INVTYPE = {{flag:INVTYPE:شراء}}
    AND RETURN_FLAG = 0
 """,
     required_params=[],
@@ -329,7 +329,7 @@ SELECT COUNT(*) AS invoice_count,
        NVL(SUM(FINALTOTAL), 0) AS total_purchases,
        NVL(SUM(TAX), 0) AS total_tax
   FROM MAIN_INV
- WHERE INVTYPE = 1
+ WHERE INVTYPE = {{flag:INVTYPE:شراء}}
    AND RETURN_FLAG = 0
    AND TRUNC(INVDATE) = TRUNC(SYSDATE)
 """,
@@ -349,9 +349,9 @@ SELECT cu.CUSTID,
        NVL(SUM(m.FINALTOTAL), 0) AS total_sales
   FROM MAIN_INV m
   JOIN CUST cu ON cu.CUSTID = m.CUST_ID AND cu.CUST_TYPE = m.CUST_TYPE
- WHERE m.INVTYPE = 0
+ WHERE m.INVTYPE = {{flag:INVTYPE:بيع}}
    AND m.RETURN_FLAG = 0
-   AND cu.CUST_TYPE = 0
+   AND cu.CUST_TYPE = {{flag:CUST_TYPE:عميل}}
  GROUP BY cu.CUSTID, cu.CUST_NAME
  ORDER BY total_sales DESC
  FETCH FIRST {{top_n}} ROWS ONLY
@@ -375,7 +375,7 @@ SELECT i.ITEMID,
   FROM DETAIL_INV d
   JOIN ITEMS i ON i.ITEMID = d.ITEMID
   JOIN MAIN_INV m ON m.INV_KEY = d.INV_KEY
- WHERE m.INVTYPE = 0
+ WHERE m.INVTYPE = {{flag:INVTYPE:بيع}}
    AND m.RETURN_FLAG = 0
  GROUP BY i.ITEMID, i.ITEMNAME
  ORDER BY total_sales DESC
@@ -398,9 +398,9 @@ SELECT cu.CUSTID,
        NVL(SUM(m.FINALTOTAL - m.SDAD), 0) AS outstanding
   FROM MAIN_INV m
   JOIN CUST cu ON cu.CUSTID = m.CUST_ID AND cu.CUST_TYPE = m.CUST_TYPE
- WHERE m.INVTYPE = 0
+ WHERE m.INVTYPE = {{flag:INVTYPE:بيع}}
    AND m.RETURN_FLAG = 0
-   AND cu.CUST_TYPE = 0
+   AND cu.CUST_TYPE = {{flag:CUST_TYPE:عميل}}
    AND (m.FINALTOTAL - m.SDAD) > 0
  GROUP BY cu.CUSTID, cu.CUST_NAME
  ORDER BY outstanding DESC
@@ -480,7 +480,7 @@ SELECT CUSTID,
        CREDIT_LIMIT,
        TAX_NO
   FROM CUST
- WHERE CUST_TYPE = 0
+ WHERE CUST_TYPE = {{flag:CUST_TYPE:عميل}}
    AND ACTIVE = '1'
  ORDER BY CUST_NAME
  FETCH FIRST 200 ROWS ONLY
@@ -506,7 +506,7 @@ SELECT CUSTID,
        CHART_CODE
   FROM CUST
  WHERE CUSTID = {{customer_id}}
-   AND CUST_TYPE = 0
+   AND CUST_TYPE = {{flag:CUST_TYPE:عميل}}
 """,
     required_params=["customer_id"],
     result_type="table",
@@ -525,7 +525,7 @@ SELECT CUSTID,
        CREDIT_LIMIT,
        TAX_NO
   FROM CUST
- WHERE CUST_TYPE = 1
+ WHERE CUST_TYPE = {{flag:CUST_TYPE:مورد}}
    AND ACTIVE = '1'
  ORDER BY CUST_NAME
  FETCH FIRST 200 ROWS ONLY
