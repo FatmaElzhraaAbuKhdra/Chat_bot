@@ -72,6 +72,28 @@ def _template_filter_values(sql_upper: str) -> dict:
             for m in re.finditer(r'\b([A-Z_][A-Z0-9_]*)\s*=\s*(\d+)\b', sql_upper)}
 
 
+def _question_txn(question: str):
+    """Return an explicit INVTYPE value (0=sales,1=purchase) ONLY if the question
+    itself names a sales/purchase concept — resolved via the comment flag-dictionary
+    (get_flag_concept_map), NOT a hardcoded keyword list. None if absent or ambiguous
+    (both concepts present), so an ambiguous query never guesses.
+    """
+    try:
+        from schema_loader import get_flag_concept_map, _normalize_concept
+        qn = _normalize_concept(question or "")
+        found = set()
+        for label, mappings in get_flag_concept_map().items():
+            if label in qn:
+                for col, val in mappings:
+                    if col == "INVTYPE":
+                        found.add(val)
+        if len(found) == 1:
+            return int(found.pop())
+    except Exception:
+        pass
+    return None
+
+
 def _template_matches_meaning(template, entities: dict, question: str) -> tuple[bool, str]:
     """Is this fast template consistent with the question's MEANING?
     Returns (consistent, reason_if_not). False ⇒ skip template, use the LLM path.
@@ -611,6 +633,29 @@ async def _handle_data_query(
     followup_context: str = "",
 ) -> PipelineResult:
     """Handle data query: template match first, then LLM fallback."""
+
+    # ── FIX 2/3/4: resolve INVTYPE for ambiguous INVID lookups (sales vs purchase) ──
+    # INVID is NOT unique across invoice types (per MAIN_INV.INVID comment), so an
+    # invoice-detail lookup MUST be scoped by INVTYPE. Priority: explicit in the
+    # question → inherited from session txn_context → otherwise leave UNSET so the
+    # template's required 'invtype' param is missing → find_template returns None →
+    # LLM fallback (never execute a leaky template). No guessing.
+    if os.getenv("CONTEXT_ENFORCE", "1") != "0" \
+            and intent.sub_intent == "invoice_detail" \
+            and "invtype" not in intent.entities:
+        _txn = _question_txn(question)
+        if _txn is None:
+            try:
+                from learning.conversation_bi import get_context as _bi_get
+                _txn = (_bi_get(user_id).get("txn_context") or {}).get("INVTYPE")
+            except Exception:
+                _txn = None
+        if _txn is not None:
+            intent.entities["invtype"] = str(_txn)
+            log.info(f"[PIPELINE] invoice_detail scoped to INVTYPE={_txn} "
+                     f"(source={'question' if _question_txn(question) is not None else 'session'})")
+        else:
+            log.info("[PIPELINE] invoice_detail with unknown INVTYPE -> LLM (fail-safe)")
 
     # ── Try template matching ──
     if intent.sub_intent:

@@ -208,9 +208,10 @@ SELECT m.INVID,
   JOIN ITEMS i ON i.ITEMID = d.ITEMID
   LEFT JOIN CUST cu ON cu.CUSTID = m.CUST_ID AND cu.CUST_TYPE = m.CUST_TYPE
  WHERE m.INVID = {{invoice_id}}
+   AND m.INVTYPE = {{invtype}}
  FETCH FIRST 200 ROWS ONLY
 """,
-    required_params=["invoice_id"],
+    required_params=["invoice_id", "invtype"],
     result_type="table",
 ))
 
