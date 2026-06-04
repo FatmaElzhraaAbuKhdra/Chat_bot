@@ -27,6 +27,8 @@ def _empty_context() -> dict:
         "last_domain": None,
         "last_tables": [],
         "last_filters": {},
+        "txn_context": {},          # FIX: comment-derived txn flags (e.g. {"INVTYPE": 0})
+        "last_entity": None,        # FIX: primary entity/table of the last query
         "last_columns": [],
         "last_row_count": 0,
         "last_chart_type": None,
@@ -58,7 +60,9 @@ def get_context(session_id: str) -> dict:
             """, (session_id,)).fetchone()
 
     if row:
-        raw = row.get("context_json") or row.get("CONTEXT_JSON", "{}")
+        # FIX: SQLite returns a bare sqlite3.Row (no .get); normalize to dict first
+        d = dict(row)
+        raw = d.get("context_json") or d.get("CONTEXT_JSON", "{}")
         try:
             return json.loads(raw)
         except (json.JSONDecodeError, TypeError):
@@ -145,6 +149,8 @@ def update_context_after_query(
     row_count: int,
     chart_type: str = "",
     user_id: str = "",
+    txn_context: dict = None,
+    last_entity: str = "",
 ) -> dict:
     """Update BI context after a successful query."""
     ctx = get_context(session_id)
@@ -170,6 +176,12 @@ def update_context_after_query(
     ctx["last_columns"] = columns
     ctx["last_row_count"] = row_count
     ctx["last_chart_type"] = chart_type
+    # FIX 5: txn_context / last_entity are sticky — NEVER auto-reset. They change
+    # only when the new query carries its own (explicit switch), per the context rule.
+    if txn_context:
+        ctx["txn_context"] = txn_context
+    if last_entity:
+        ctx["last_entity"] = last_entity
     ctx["conversation_turns"] = ctx.get("conversation_turns", 0) + 1
     ctx["applied_modifiers"] = []  # reset modifiers for new query
 

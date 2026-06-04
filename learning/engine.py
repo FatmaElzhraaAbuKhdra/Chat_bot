@@ -3,6 +3,7 @@ learning/engine.py — Main Learning Engine Orchestrator (Enterprise)
 Ties all learning components together.
 Provides a single interface for the pipeline to interact with.
 """
+import re
 import logging
 import time
 from typing import Optional
@@ -149,6 +150,27 @@ def _register_event_handlers():
 # Pipeline Integration — called from pipeline.py
 # ═══════════════════════════════════════════════════════════════════
 
+def _extract_tables_from_sql(sql: str) -> list:
+    """FIX 1: tables referenced in executed SQL (for session memory)."""
+    seen = []
+    for m in re.finditer(r'\b(?:FROM|JOIN)\s+([A-Z_][A-Z0-9_]*)', sql or "", re.IGNORECASE):
+        t = m.group(1).upper()
+        if t not in seen:
+            seen.append(t)
+    return seen
+
+
+def _extract_txn_context(sql: str) -> dict:
+    """FIX 1: capture transaction-defining flag filters (INVTYPE) from executed SQL.
+    Comment-grounded concept (INVTYPE 0=بيع 1=شراء) — NOT a new keyword list.
+    """
+    ctx: dict = {}
+    m = re.search(r'\bINVTYPE\s*=\s*(\d)', sql or "", re.IGNORECASE)
+    if m:
+        ctx["INVTYPE"] = int(m.group(1))
+    return ctx
+
+
 def on_query_complete(
     question: str,
     sub_intent: str,
@@ -191,20 +213,26 @@ def on_query_complete(
             "method": method,
         }, user_id)
 
-        # Update BI context
+        # Update BI context (FIX 1/5: record REAL filters/tables/txn_context so the
+        # next query can inherit them — previously hardcoded to {}/[] = no memory)
         if session_id and success:
             try:
+                _tables = _extract_tables_from_sql(sql or "")
+                _txn = _extract_txn_context(sql or "")
+                _entity = _tables[0] if _tables else ""
                 update_context_after_query(
                     session_id=session_id,
                     question=question,
                     sql=sql or "",
                     sub_intent=sub_intent,
                     domain=domain,
-                    tables=[],
+                    tables=_tables,
                     columns=[],
-                    filters={},
+                    filters=_txn,
                     row_count=row_count,
                     user_id=user_id,
+                    txn_context=_txn,
+                    last_entity=_entity,
                 )
             except Exception:
                 pass
