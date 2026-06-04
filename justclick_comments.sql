@@ -60,116 +60,213 @@
 --  MAIN_INV — رأس الفاتورة
 -- ------------------------------------------------------------
 COMMENT ON TABLE MAIN_INV IS
-'رأس فاتورة البيع والشراء. كل صف = فاتورة واحدة.
-INVTYPE: 0=بيع/Sale, 1=شراء/Purchase.
-RETURN_FLAG: 0=فاتورة عادية, 1=مرتجع/Return.
-⚠ JOIN مع DETAIL_INV يكون على INV_KEY وليس INVID.
-⚠ JOIN مع CUST يكون على (CUST_ID,CUST_TYPE) معاً وليس CUST_ID وحده.
-لجلب مبيعات نقية: WHERE INVTYPE=0 AND RETURN_FLAG=0.
-لجلب مرتجعات البيع: WHERE INVTYPE=0 AND RETURN_FLAG=1.
-Header table for all sales and purchase invoices.';
+    'راس فاتورة البيع والشراء. كل صف = فاتورة واحدة.
+     INVTYPE     : 0=بيع , 1=شراء.
+     RETURN_FLAG : 0=فاتورة عادية , 1=مرتجع.
+     ⚠ JOIN مع DETAIL_INV      يكون على INV_KEY وليس INVID.
+     ⚠ JOIN مع CUST             يكون على (CUST_ID + CUST_TYPE) معا وليس CUST_ID وحده.
+     ⚠ JOIN مع MAIN_INV_EFFECTS يكون على INV_KEY مع فلتر ADD_DIS.
+     لجلب مبيعات نقية    : WHERE INVTYPE=0 AND RETURN_FLAG=0.
+     لجلب مرتجعات البيع  : WHERE INVTYPE=0 AND RETURN_FLAG=1.
+     لجلب مشتريات نقية   : WHERE INVTYPE=1 AND RETURN_FLAG=0.
+     صافي المبيعات = SUM(FINALTOTAL WHERE RETURN_FLAG=0) - SUM(FINALTOTAL WHERE RETURN_FLAG=1).';
 
 COMMENT ON COLUMN MAIN_INV.INV_KEY IS
-'المفتاح الداخلي الفريد للفاتورة — Internal unique surrogate key.
-⚠ هذا هو المفتاح المستخدم في كل الـ JOINs مع DETAIL_INV وجميع الجداول الأخرى.
-⚠ لا تستخدم INVID في الـ JOIN — استخدم INV_KEY دائماً.
-Use this for ALL joins, never use INVID for joins.';
+    'المفتاح الداخلي الفريد للفاتورة - Surrogate PK.
+     ⚠ هذا هو المفتاح المستخدم في كل الـ JOINs مع DETAIL_INV و MAIN_INV_EFFECTS.
+     ⚠ لا تستخدم INVID في JOIN - استخدم INV_KEY دائما';
 
 COMMENT ON COLUMN MAIN_INV.INVID IS
-'رقم الفاتورة المرئي للمستخدم — User-visible invoice number.
-⚠ غير فريد عبر أنواع الفواتير المختلفة (قد يتكرر نفس الرقم في بيع وشراء).
-⚠ للعرض فقط — لا تستخدمه في JOIN.
-Display only. NOT unique across transaction types.';
-
-COMMENT ON COLUMN MAIN_INV.INVDATE IS
-'تاريخ الفاتورة — Invoice date.
-استخدمه في فلاتر التاريخ مثلاً: WHERE TRUNC(INVDATE) BETWEEN تاريخ_البداية AND تاريخ_النهاية.';
-
-COMMENT ON COLUMN MAIN_INV.INVTOTAL IS
-'إجمالي الفاتورة قبل الضريبة وقبل الخصم الإجمالي.
-Invoice subtotal before tax and before header-level discount.';
-
-COMMENT ON COLUMN MAIN_INV.FINALTOTAL IS
-'الإجمالي النهائي للفاتورة = INVTOTAL + TAX - خصومات.
-هو الرقم الذي يُعرض للمستخدم كإجمالي مستحق.
-Final amount due: includes tax, after all discounts. This is what the customer pays.';
-
-COMMENT ON COLUMN MAIN_INV.TAX IS
-'قيمة الضريبة المضافة (مبلغ وليس نسبة).
-⚠ هذا مبلغ فعلي بالعملة وليس نسبة مئوية.
-Tax amount in currency (not a percentage).';
-
-COMMENT ON COLUMN MAIN_INV.SDAD IS
-'المبلغ المسدَّد نقداً فور إنشاء الفاتورة.
-المتبقي غير المسدد = FINALTOTAL - SDAD.
-Cash paid at invoice creation. Outstanding = FINALTOTAL - SDAD.';
-
-COMMENT ON COLUMN MAIN_INV.CUST_ID IS
-'كود العميل أو المورد.
-FK → CUST.CUSTID
-⚠ الـ JOIN لازم يكون على عمودين معاً:
-  MAIN_INV.CUST_ID   = CUST.CUSTID
-  MAIN_INV.CUST_TYPE = CUST.CUST_TYPE
-بدون CUST_TYPE في الشرط ستظهر بيانات خاطئة.';
-
-COMMENT ON COLUMN MAIN_INV.CUST_TYPE IS
-'نوع الطرف الآخر في الفاتورة:
-0 = عميل / Customer
-1 = مورد / Supplier
-2 = وكيل / Dealer
-⚠ جزء أساسي من مفتاح الـ JOIN مع جدول CUST — لا تحذفه من شرط JOIN.';
+    'رقم الفاتورة المرئي للمستخدم - للعرض فقط.
+     ⚠ غير فريد عبر انواع الفواتير (قد يتكرر نفس الرقم في بيع وشراء).
+     ⚠ لا تستخدمه في JOIN';
 
 COMMENT ON COLUMN MAIN_INV.INVTYPE IS
-'نوع الفاتورة:
-0 = بيع / Sale
-1 = شراء / Purchase';
+    'نوع الفاتورة : 0=بيع , 1=شراء';
 
 COMMENT ON COLUMN MAIN_INV.RETURN_FLAG IS
-'حالة الفاتورة:
-0 = فاتورة عادية / Normal invoice
-1 = مرتجع / Return invoice
-⚠ المرتجعات لها نفس INVTYPE (0 لمرتجع بيع، 1 لمرتجع شراء).
-⚠ عند حساب صافي المبيعات: اطرح RETURN_FLAG=1 من RETURN_FLAG=0.';
+    'حالة الفاتورة : 0=عادية , 1=مرتجع.
+     ⚠ المرتجعات لها نفس INVTYPE (0=مرتجع بيع , 1=مرتجع شراء).
+     ⚠ عند حساب صافي المبيعات : اطرح RETURN_FLAG=1 من RETURN_FLAG=0';
+
+COMMENT ON COLUMN MAIN_INV.INVDATE IS
+    'تاريخ الفاتورة (التاريخ المحاسبي).
+     للفلترة : WHERE TRUNC(INVDATE) BETWEEN :from_date AND :to_date';
+
+COMMENT ON COLUMN MAIN_INV.INVTOTAL IS
+    'اجمالي الفاتورة قبل الخصومات والاضافات والضريبة';
+
+COMMENT ON COLUMN MAIN_INV.FINALTOTAL IS
+    'الاجمالي النهائي = INVTOTAL + اضافات - خصومات + ضريبة.
+     هو الرقم المعروض للمستخدم كاجمالي مستحق الدفع';
+
+COMMENT ON COLUMN MAIN_INV.TAX IS
+    'قيمة الضريبة المضافة بالعملة (مبلغ وليس نسبة).
+     ⚠ هذا مبلغ فعلي بالعملة وليس نسبة مئوية';
+
+COMMENT ON COLUMN MAIN_INV.DISCOUNT IS
+    'قيمة الخصم الاجمالي على راس الفاتورة';
+
+COMMENT ON COLUMN MAIN_INV.SDAD IS
+    'المبلغ المسدد نقدا فور انشاء الفاتورة.
+     المتبقي غير المسدد = FINALTOTAL - SDAD';
+
+COMMENT ON COLUMN MAIN_INV.CASH_AMOUNT IS
+    'جزء الدفع نقدا عند تقسيم طريقة الدفع';
+
+COMMENT ON COLUMN MAIN_INV.BANK_AMOUNT IS
+    'جزء الدفع بالتحويل البنكي عند تقسيم طريقة الدفع';
+
+COMMENT ON COLUMN MAIN_INV.PAY_METHOD IS
+    'طريقة الدفع : 0=كاش , 1=شيك , 2=فيزا , 3=تحويل بنكي.
+     ⚠ مخزن كرقم - استخدم DECODE او CASE للعرض النصي';
+
+COMMENT ON COLUMN MAIN_INV.CUST_ID IS
+    'كود العميل او المورد - FK → CUST.CUSTID.
+     ⚠ الـ JOIN لازم يشمل CUST_TYPE ايضا :
+       MAIN_INV.CUST_ID   = CUST.CUSTID
+       MAIN_INV.CUST_TYPE = CUST.CUST_TYPE';
+
+COMMENT ON COLUMN MAIN_INV.CUST_TYPE IS
+    'نوع الجهة في الفاتورة : 0=عميل , 1=مورد , 2=وكيل.
+     ⚠ جزء اساسي من شرط JOIN مع CUST - لا تحذفه';
 
 COMMENT ON COLUMN MAIN_INV.STORE_CODE IS
-'كود المخزن الذي تمت منه العملية.
-FK → STORE.STORE_CODE';
+    'كود المخزن الذي تمت منه العملية - FK → STORE.STORE_CODE | الاسم في STORE.STORE_NAME';
+
+COMMENT ON COLUMN MAIN_INV.TRANS_CODE IS
+    'رقم الاذن المخزني المرتبط بالفاتورة - FK → TRANSMASTER.TRANS_CODE';
+
+COMMENT ON COLUMN MAIN_INV.TRANS_TYPE_CODE IS
+    'كود نوع الاذن المخزني المرتبط - FK → STORE_TRANS_TYPE.TRANS_CODE | التصنيف في STORE_TRANS_TYPE.TRANS_TYPE';
+
+COMMENT ON COLUMN MAIN_INV.CHART_CODE IS
+    'كود الحساب في دليل الحسابات - FK → CHARTS_ELEMENTS.CHART_CODE';
+
+COMMENT ON COLUMN MAIN_INV.CREATE_TRANS IS
+    'علم انشاء الحركة المخزنية تلقائيا عند حفظ الفاتورة : 1=نعم , 0=لا';
+
+COMMENT ON COLUMN MAIN_INV.CASH_FLAG IS
+    'نوع الفاتورة من حيث الدفع : 1=نقدي (فوري) , 0=آجل';
 
 COMMENT ON COLUMN MAIN_INV.INV_TRANS_TYPE IS
-'نوع حركة الفاتورة التفصيلي (نقدي، آجل، إلخ).
-FK → SAL_PURCH_TRANS_TYPE.TRANS_CODE';
+    'نوع حركة الفاتورة (نقدي / آجل / إلخ) - FK → SAL_PURCH_TRANS_TYPE.TRANS_CODE | الاسم في SAL_PURCH_TRANS_TYPE.TRANS_NAME';
 
 COMMENT ON COLUMN MAIN_INV.INV_CAT IS
-'تصنيف الفاتورة.
-FK → INV_CATEGORIES.INV_CAT';
+    'تصنيف الفاتورة - FK → INV_CATEGORIES.INV_CAT';
 
 COMMENT ON COLUMN MAIN_INV.EFFECT_VALUE IS
-'قيمة الإضافة على مستوى رأس الفاتورة (ضريبة إجمالية أو رسوم).
-Added value at invoice header level (overall tax or fees).';
+    'قيمة الاضافة على مستوى راس الفاتورة (ضريبة اجمالية او رسوم)';
 
 COMMENT ON COLUMN MAIN_INV.EFFECT_VALUE_CUST IS
-'قيمة الخصم الخاص بالعميل على مستوى رأس الفاتورة.
-Customer-specific discount at invoice header level.';
-
-COMMENT ON COLUMN MAIN_INV.CREATE_DATE_TM IS
-'تاريخ ووقت إنشاء الفاتورة في النظام (يختلف عن INVDATE).
-System creation timestamp (differs from INVDATE which is the business date).';
-
-COMMENT ON COLUMN MAIN_INV.HEAD_NOTES IS
-'ملاحظات الفاتورة — Notes/remarks on the invoice.';
+    'قيمة الخصم الخاص بالعميل على مستوى راس الفاتورة';
 
 COMMENT ON COLUMN MAIN_INV.DEALER_ID IS
-'كود الوكيل المرتبط بالفاتورة (إن وجد).
-FK → DEALER_DATA.DEALER_ID  (DEALER_TYPE=2)';
+    'كود الوكيل المرتبط بالفاتورة - FK → DEALER_DATA.DEALER_ID';
+
+COMMENT ON COLUMN MAIN_INV.ADMIN_ID IS
+    'كود المسؤول او المراجع - FK → ACC_USERS.USERID';
+
+COMMENT ON COLUMN MAIN_INV.AREA_ID IS
+    'كود المنطقة الجغرافية للفاتورة';
+
+COMMENT ON COLUMN MAIN_INV.COST_CODE IS
+    'مركز التكلفة المرتبط بالفاتورة - FK → COST_CENTERS.COST_CODE | الاسم في COST_CENTERS.COST_NAME';
+
+COMMENT ON COLUMN MAIN_INV.CREATE_DATE_TM IS
+    'تاريخ ووقت انشاء الفاتورة في النظام.
+     ⚠ يختلف عن INVDATE : INVDATE=التاريخ المحاسبي , CREATE_DATE_TM=وقت الادخال الفعلي';
+
+COMMENT ON COLUMN MAIN_INV.SER_IN_DAY IS
+    'الرقم التسلسلي للفاتورة خلال اليوم الواحد';
+
+COMMENT ON COLUMN MAIN_INV.HEAD_NOTES IS
+    'ملاحظات راس الفاتورة';
+
+COMMENT ON COLUMN MAIN_INV.DESERVE_DATE IS
+    'تاريخ استحقاق الدفع للفواتير الآجلة';
+
+COMMENT ON COLUMN MAIN_INV.CLIENT_NAME IS
+    'اسم العميل حر النص - للعملاء غير المسجلين في CUST';
+
+COMMENT ON COLUMN MAIN_INV.BOOK_INVNO IS
+    'رقم الفاتورة في دفتر الفواتير الورقي للمطابقة اليدوية';
+
+COMMENT ON COLUMN MAIN_INV.CLINET_ADDRESS IS
+    '⚠ اسم الحقل فيه خطا املائي (CLINET بدلا من CLIENT).
+     عنوان العميل غير المسجل';
+
+COMMENT ON COLUMN MAIN_INV.CLINET_PERSONAL_ID IS
+    '⚠ اسم الحقل فيه خطا املائي (CLINET بدلا من CLIENT).
+     رقم الهوية الشخصية للعميل غير المسجل';
+
+COMMENT ON COLUMN MAIN_INV.CLINET_GOVE_NAME IS
+    '⚠ اسم الحقل فيه خطا املائي (CLINET بدلا من CLIENT).
+     المحافظة / المنطقة للعميل غير المسجل';
+
+COMMENT ON COLUMN MAIN_INV.CLIENT_TRAD_ID IS
+    'رقم السجل التجاري للعميل غير المسجل';
+
+COMMENT ON COLUMN MAIN_INV.ORIGINAL_INV_KEY IS
+    'مفتاح الفاتورة الاصلية في حالة المرتجع - FK → MAIN_INV.INV_KEY';
+
+COMMENT ON COLUMN MAIN_INV.OLD_INV_KEY IS
+    'مفتاح الفاتورة في النظام القديم قبل الترحيل';
+
+COMMENT ON COLUMN MAIN_INV.OLD_SESSION_ID IS
+    'رقم الجلسة في النظام القديم قبل الترحيل';
+
+COMMENT ON COLUMN MAIN_INV.SESSION_ID IS
+    'معرف جلسة نقطة البيع (POS) المرتبطة بالفاتورة';
+
+COMMENT ON COLUMN MAIN_INV.POS_INV_KEY IS
+    'معرف الفاتورة في نظام نقطة البيع (POS)';
+
+COMMENT ON COLUMN MAIN_INV.SUBMISSIONID IS
+    'رقم تقديم الفاتورة الالكترونية لهيئة الزكاة والضريبة (ZATCA)';
+
+COMMENT ON COLUMN MAIN_INV.UUID IS
+    'المعرف الفريد للفاتورة الالكترونية (UUID) - مطلوب من ZATCA';
+
+COMMENT ON COLUMN MAIN_INV.LONGID IS
+    'المعرف الطويل للفاتورة الالكترونية من ZATCA';
+
+COMMENT ON COLUMN MAIN_INV.HASHKEY IS
+    'الـ Hash المشفر للفاتورة الالكترونية - للتحقق من سلامة البيانات';
+
+COMMENT ON COLUMN MAIN_INV.STATUS IS
+    'حالة تقديم الفاتورة الالكترونية لـ ZATCA (REPORTED / CLEARED / ERROR)';
+
+COMMENT ON COLUMN MAIN_INV.MSG IS
+    'رسالة الاستجابة من ZATCA عند تقديم الفاتورة الالكترونية';
+
+COMMENT ON COLUMN MAIN_INV.INV_KEY_TAX IS
+    'مفتاح الفاتورة الضريبية المرتبطة';
+
+COMMENT ON COLUMN MAIN_INV.SENT_DATE IS
+    'تاريخ ارسال الفاتورة الالكترونية لـ ZATCA';
+
+COMMENT ON COLUMN MAIN_INV.GENERATEDQR IS
+    'بيانات QR Code المولد للفاتورة الالكترونية.
+     ⚠ نوع البيانات LONG (legacy) - تجنب استخدامه في WHERE او JOIN';
+
+COMMENT ON COLUMN MAIN_INV.JSON_TAX_RESPONSE IS
+    'الاستجابة الكاملة من ZATCA بصيغة JSON - نوع البيانات CLOB';
+
+COMMENT ON COLUMN MAIN_INV.ACTION_TYPE IS
+    'نوع الاجراء على الفاتورة الالكترونية (Submit / Report / Clear)';
+
+COMMENT ON COLUMN MAIN_INV.ORD_NO IS
+    'رقم امر الطلب / الشغل المرتبط بالفاتورة';
 
 COMMENT ON COLUMN MAIN_INV.COMPANY_CODE IS
-'كود الشركة — Tenant identifier (SaaS isolation).
+    'كود الشركة - Tenant identifier (SaaS isolation)';
 
 COMMENT ON COLUMN MAIN_INV.FISCAL_YEAR IS
-'السنة المالية — Fiscal year.
+    'السنة المالية';
 
 COMMENT ON COLUMN MAIN_INV.BRANCH_ID IS
-'كود الفرع — Branch identifier.
+    'كود الفرع';
 
 
 -- ------------------------------------------------------------
@@ -1168,6 +1265,381 @@ COMMENT ON COLUMN STORE_TRANS_TYPE.TRANS_TYPE IS
 
 COMMENT ON COLUMN STORE_TRANS_TYPE.TRANS_NAME IS
 'اسم نوع الحركة بالعربي (مثال: بيع، شراء، تحويل، جرد).';
+
+--------------------------------------------------------------------------------
+
+
+---Abdullah
+-- =============================================================================
+-- Oracle APEX Page 20 - STORE_TRANSACTION_FORM
+-- الحركات المخزنية
+-- Comments on Tables and Columns extracted from f103_page_20.sql
+-- Target Schema : JUSTCLICK2
+-- =============================================================================
+
+-- =============================================================================
+-- 1. TRANSMASTER  (رأس الحركة المخزنية - Header)
+-- =============================================================================
+COMMENT ON TABLE TRANSMASTER IS
+    'رأس الحركة المخزنية - يخزن بيانات رأس كل إذن صرف أو إضافة أو تحويل مخزني';
+
+COMMENT ON COLUMN TRANSMASTER.STORE_CODE IS
+    'كود المخزن المصدر - FK → STORE.STORE_CODE | الاسم في STORE.STORE_NAME';
+
+COMMENT ON COLUMN TRANSMASTER.TRANS_TYPE_CODE IS
+    'كود نوع الإذن المخزني - FK → STORE_TRANS_TYPE.TRANS_CODE | التصنيف في STORE_TRANS_TYPE.TRANS_TYPE : 0=صرف ، 1=إضافة ، 2=تحويل';
+
+COMMENT ON COLUMN TRANSMASTER.DIRECTION IS
+    'كود الجهة (العميل أو المورد) - FK → CUST.CUSTID | الاسم في CUST.CUST_NAME | نوع الجهة في CUST.CUST_TYPE : 0=عميل ، 1=مورد';
+
+COMMENT ON COLUMN TRANSMASTER.TRANS_DATE IS
+    'تاريخ الحركة المخزنية';
+
+COMMENT ON COLUMN TRANSMASTER.TRANS_CODE IS
+    'رقم الإذن المخزني - رقم تسلسلي داخل نوع الحركة والمخزن';
+
+COMMENT ON COLUMN TRANSMASTER.NOTES IS
+    'ملاحظات الحركة المخزنية';
+
+COMMENT ON COLUMN TRANSMASTER.INVID IS
+    'رقم الفاتورة المرتبطة بالحركة - مرجع اختياري لفاتورة المورد أو العميل';
+
+COMMENT ON COLUMN TRANSMASTER.TO_STORE_CODE IS
+    'كود المخزن المستلِم في حالة التحويل - FK → STORE.STORE_CODE | الاسم في STORE.STORE_NAME';
+
+COMMENT ON COLUMN TRANSMASTER.PARENT_STORE_CODE IS
+    'الرقم التسلسلي للإذن الأصلي عند التحويل - FK → TRANSMASTER.TRANS_SER';
+
+COMMENT ON COLUMN TRANSMASTER.COST_CODE IS
+    'كود مركز التكلفة المرتبط بالحركة - FK → COST_CENTERS.COST_CODE | الاسم في COST_CENTERS.COST_NAME | ⚠ اختياري NULL — استخدم LEFT JOIN فقط';
+
+COMMENT ON COLUMN TRANSMASTER.TRANS_SER IS
+    'الرقم التسلسلي الفريد للحركة عبر كل المخازن وأنواع الحركات - المفتاح الطبيعي القديم (Business PK)';
+
+COMMENT ON COLUMN TRANSMASTER.PRODUCT_ORDER_CODE IS
+    'رقم أمر الشغل أو الإنتاج المرتبط بالحركة - اختياري';
+
+COMMENT ON COLUMN TRANSMASTER.USER_SEEN IS
+    'آخر مستخدم اطلع على الحركة - تسجيل للمراجعة';
+
+COMMENT ON COLUMN TRANSMASTER.INV_KEY IS
+    'مفتاح الفاتورة الداخلية - ربط تفصيلي بالفاتورة';
+
+COMMENT ON COLUMN TRANSMASTER.REAL_BALANCE_CODE IS
+    'كود الجرد الفعلي المرتبط بالحركة - FK → REAL_BALANCE_HEAD.REAL_BALANCE_CODE';
+
+COMMENT ON COLUMN TRANSMASTER.MASTER_ID IS
+    'Surrogate Key للسجل - يستخدم في APEX لتحديد حالة الحفظ : IS NOT NULL = محفوظ مسبقاً';
+
+
+-- =============================================================================
+-- 2. TRANSACTION  (تفاصيل الحركة المخزنية - Detail IG)
+-- =============================================================================
+COMMENT ON TABLE TRANSACTION IS
+    'تفاصيل الحركة المخزنية - يخزن بنود كل إذن صرف أو إضافة أو تحويل مخزني';
+
+COMMENT ON COLUMN TRANSACTION.STORE_CODE IS
+    'كود المخزن - FK → STORE.STORE_CODE | الاسم في STORE.STORE_NAME';
+
+COMMENT ON COLUMN TRANSACTION.TRANS_TYPE_CODE IS
+    'كود نوع الإذن - FK → STORE_TRANS_TYPE.TRANS_CODE | التصنيف في STORE_TRANS_TYPE.TRANS_TYPE : 0=صرف ، 1=إضافة ، 2=تحويل';
+
+COMMENT ON COLUMN TRANSACTION.TRANS_CODE IS
+    'رقم الإذن - مطابق لـ TRANSMASTER.TRANS_CODE';
+
+COMMENT ON COLUMN TRANSACTION.ITEMID IS
+    'كود الصنف - FK → ITEMS.ITEMID | الاسم في ITEMS.ITEMNAME';
+
+COMMENT ON COLUMN TRANSACTION.PRICE IS
+    'سعر الوحدة في هذه الحركة';
+
+COMMENT ON COLUMN TRANSACTION.QTY IS
+    'كمية الوحدة الرئيسية للصنف في الحركة';
+
+COMMENT ON COLUMN TRANSACTION.DISCOUNT IS
+    'نسبة الخصم أو قيمة الخصم على السطر';
+
+COMMENT ON COLUMN TRANSACTION.NOTES IS
+    'ملاحظات على سطر الحركة';
+
+COMMENT ON COLUMN TRANSACTION.INVID IS
+    'رقم الفاتورة المرتبطة بالسطر - قد يختلف عن رأس الحركة';
+
+COMMENT ON COLUMN TRANSACTION.COST_CODE IS
+    'كود مركز التكلفة على مستوى السطر - FK → COST_CENTERS.COST_CODE | الاسم في COST_CENTERS.COST_NAME | ⚠ اختياري NULL — استخدم LEFT JOIN فقط';
+
+COMMENT ON COLUMN TRANSACTION.UNIT_ID IS
+    'كود وحدة القياس المستخدمة في هذا السطر - FK → UNITS.UNIT_ID | الاسم في UNITS.UNIT_NAME';
+
+COMMENT ON COLUMN TRANSACTION.QTY_UNITS IS
+    'كمية الوحدة الفرعية (sub-unit) للصنف في الحركة';
+
+COMMENT ON COLUMN TRANSACTION.ADD_ID IS
+    'الرقم التسلسلي لحركة الإضافة - يُولَّد عند تسجيل الإضافة في الرصيد';
+
+COMMENT ON COLUMN TRANSACTION.SUB_ID IS
+    'الرقم التسلسلي لحركة الصرف - يُولَّد عند خصم الكمية من الرصيد';
+
+COMMENT ON COLUMN TRANSACTION.TURNON_ID IS
+    'رقم التشغيلة (Batch/Lot Number) للصنف - يُستخدم لتتبع الدُفعات الإنتاجية';
+
+COMMENT ON COLUMN TRANSACTION.TURNON_DT IS
+    'تاريخ التشغيلة (تاريخ الدُفعة الإنتاجية)';
+
+COMMENT ON COLUMN TRANSACTION.EXP_DATE IS
+    'تاريخ صلاحية الصنف في هذا السطر';
+
+COMMENT ON COLUMN TRANSACTION.PARENT_SUB_ID IS
+    'رقم SUB_ID الأصلي في الإذن المحوَّل منه - FK → TRANSACTION.SUB_ID في إذن المصدر';
+
+COMMENT ON COLUMN TRANSACTION.TRANSACTION_SER IS
+    'الرقم التسلسلي الفريد للسطر داخل الحركة - يُستخدم للربط مع EXPIRY_DATA.TRANSACTION_SER';
+
+COMMENT ON COLUMN TRANSACTION.ID_SEQ IS
+    'رقم تسلسلي للسطر - يُميز بين سطور متعددة لنفس الصنف داخل الإذن الواحد';
+
+COMMENT ON COLUMN TRANSACTION.UNIT_ID2 IS
+    'كود وحدة القياس الثانوية - FK → UNITS.UNIT_ID | الاسم في UNITS.UNIT_NAME';
+
+COMMENT ON COLUMN TRANSACTION.ITEMID2 IS
+    'كود الصنف البديل أو المُحوَّل إليه - FK → ITEMS.ITEMID | الاسم في ITEMS.ITEMNAME';
+
+
+-- =============================================================================
+-- 3. TRANSACTION_TOT  (إجمالي الحركات - IG بسياسة السعر 0)
+-- =============================================================================
+COMMENT ON TABLE TRANSACTION_TOT IS
+    'إجمالي بنود الحركة المخزنية - يُستخدم عند INST.PRICE_POLICY=0 (سعر موحد) بدون تفصيل تشغيلات';
+
+COMMENT ON COLUMN TRANSACTION_TOT.STORE_CODE IS
+    'كود المخزن - FK → STORE.STORE_CODE | الاسم في STORE.STORE_NAME';
+
+COMMENT ON COLUMN TRANSACTION_TOT.TRANS_TYPE_CODE IS
+    'كود نوع الإذن - FK → STORE_TRANS_TYPE.TRANS_CODE | التصنيف في STORE_TRANS_TYPE.TRANS_TYPE : 0=صرف ، 1=إضافة ، 2=تحويل';
+
+COMMENT ON COLUMN TRANSACTION_TOT.TRANS_CODE IS
+    'رقم الإذن - مطابق لـ TRANSMASTER.TRANS_CODE';
+
+COMMENT ON COLUMN TRANSACTION_TOT.ITEMID IS
+    'كود الصنف - FK → ITEMS.ITEMID | الاسم في ITEMS.ITEMNAME';
+
+COMMENT ON COLUMN TRANSACTION_TOT.PRICE IS
+    'سعر الوحدة - read-only محسوب أو محمّل من سياسة الأسعار';
+
+COMMENT ON COLUMN TRANSACTION_TOT.QTY IS
+    'كمية الوحدة الرئيسية للصنف';
+
+COMMENT ON COLUMN TRANSACTION_TOT.DISCOUNT IS
+    'نسبة الخصم أو قيمة الخصم على السطر';
+
+COMMENT ON COLUMN TRANSACTION_TOT.NOTES IS
+    'ملاحظات على سطر الإجمالي';
+
+COMMENT ON COLUMN TRANSACTION_TOT.INVID IS
+    'رقم الفاتورة المرتبطة بالسطر';
+
+COMMENT ON COLUMN TRANSACTION_TOT.COST_CODE IS
+    'كود مركز التكلفة - FK → COST_CENTERS.COST_CODE | الاسم في COST_CENTERS.COST_NAME | ⚠ اختياري NULL — استخدم LEFT JOIN فقط';
+
+COMMENT ON COLUMN TRANSACTION_TOT.UNIT_ID IS
+    'كود وحدة القياس المستخدمة - FK → UNITS.UNIT_ID | الاسم في UNITS.UNIT_NAME';
+
+COMMENT ON COLUMN TRANSACTION_TOT.QTY_UNITS IS
+    'كمية الوحدة الفرعية للصنف';
+
+COMMENT ON COLUMN TRANSACTION_TOT.SUB_ID IS
+    'الرقم التسلسلي لحركة الصرف في جدول الرصيد';
+
+COMMENT ON COLUMN TRANSACTION_TOT.TRANSACTION_SER IS
+    'الرقم التسلسلي الفريد للسطر - يُستخدم للربط مع EXPIRY_DATA.TRANSACTION_SER';
+
+COMMENT ON COLUMN TRANSACTION_TOT.ID_SEQ IS
+    'رقم تسلسلي للسطر - يُميز السطور المتعددة للصنف الواحد في نفس الإذن';
+
+
+-- =============================================================================
+-- 4. EXPIRY_DATA  (بيانات تواريخ الصلاحية)
+-- =============================================================================
+COMMENT ON TABLE EXPIRY_DATA IS
+    'تواريخ الصلاحية للأصناف - يُخزن تفاصيل الدُفعات وتواريخ الصلاحية لكل سطر حركة';
+
+COMMENT ON COLUMN EXPIRY_DATA.STORE_CODE IS
+    'كود المخزن - FK → STORE.STORE_CODE | الاسم في STORE.STORE_NAME';
+
+COMMENT ON COLUMN EXPIRY_DATA.TRANS_TYPE_CODE IS
+    'كود نوع الإذن - FK → STORE_TRANS_TYPE.TRANS_CODE | التصنيف في STORE_TRANS_TYPE.TRANS_TYPE : 0=صرف ، 1=إضافة ، 2=تحويل';
+
+COMMENT ON COLUMN EXPIRY_DATA.TRANS_CODE IS
+    'رقم الإذن المرتبط - FK → TRANSMASTER.TRANS_CODE';
+
+COMMENT ON COLUMN EXPIRY_DATA.EXPIRE_DATE IS
+    'تاريخ انتهاء الصلاحية للدُفعة';
+
+COMMENT ON COLUMN EXPIRY_DATA.TURNON_NUMBER IS
+    'رقم التشغيلة (Batch/Lot) المرتبط بتاريخ الصلاحية';
+
+COMMENT ON COLUMN EXPIRY_DATA.QTY IS
+    'الكمية الخاصة بهذه الدُفعة / تاريخ الصلاحية';
+
+COMMENT ON COLUMN EXPIRY_DATA.TRANSACTION_SER IS
+    'الرقم التسلسلي للسطر - FK → TRANSACTION.TRANSACTION_SER';
+
+COMMENT ON COLUMN EXPIRY_DATA.ITEM_ID IS
+    'كود الصنف - FK → ITEMS.ITEMID | الاسم في ITEMS.ITEMNAME';
+
+
+-- =============================================================================
+-- 5. INST  (إعدادات النظام - System Configuration)
+-- =============================================================================
+COMMENT ON TABLE INST IS
+    'إعدادات النظام - سجل واحد لكل شركة يضبط سلوك الحركات المخزنية والنظام ككل';
+
+COMMENT ON COLUMN INST.CREATE_TRANS IS
+    'علم إنشاء الحركة : 1=مسموح بإنشاء أذون جديدة ، 0=محظور';
+
+COMMENT ON COLUMN INST.ADD_TRANS IS
+    'علم إذن الإضافة : 1=مسموح ، 0=محظور';
+
+COMMENT ON COLUMN INST.SUB_TRANS IS
+    'علم إذن الصرف : 1=مسموح ، 0=محظور';
+
+COMMENT ON COLUMN INST.RETURN_ADD_TRANS IS
+    'علم إذن مرتجع الإضافة : 1=مسموح ، 0=محظور';
+
+COMMENT ON COLUMN INST.RETURN_SUB_TRANS IS
+    'علم إذن مرتجع الصرف : 1=مسموح ، 0=محظور';
+
+COMMENT ON COLUMN INST.PRICE_POLICY IS
+    'سياسة السعر : 0=سعر موحد يُكتب في TRANSACTION_TOT ، 1=سعر تفصيلي يُكتب في TRANSACTION';
+
+COMMENT ON COLUMN INST.TURNON_FLAG IS
+    'علم التشغيلة : 1=إلزامي إدخال رقم التشغيلة في بنود الحركة ، 0=اختياري';
+
+COMMENT ON COLUMN INST.EXP_DATE_FLAG IS
+    'علم تاريخ الصلاحية : 1=إلزامي إدخال تاريخ الصلاحية في بنود الحركة ، 0=اختياري';
+
+COMMENT ON COLUMN INST.MAIN_SHEMA IS
+    'اسم الـ Schema الرئيسي للنظام - يُستخدم في الاستعلامات الديناميكية';
+
+COMMENT ON COLUMN INST.TO_TRANSFER_TRANS_CODE IS
+    'كود نوع الإذن المستخدم في الجانب المستلِم عند التحويل التلقائي - FK → STORE_TRANS_TYPE.TRANS_CODE | الاسم في STORE_TRANS_TYPE.TRANS_NAME';
+
+COMMENT ON COLUMN INST.MOTO_CHK IS
+    'علم تحقق إضافي في الحركات (MOTO Check) : 1=مفعّل ، 0=معطّل';
+
+COMMENT ON COLUMN INST.COST_IN_TRANSACTION IS
+    'علم ظهور حقل مركز التكلفة في بنود الحركة : 1=يظهر ، 0=مخفي';
+
+COMMENT ON COLUMN INST.DEFAULT_STORE IS
+    'كود المخزن الافتراضي - FK → STORE.STORE_CODE | الاسم في STORE.STORE_NAME | يُملأ تلقائياً عند فتح نموذج الحركة الجديدة';
+
+
+-- =============================================================================
+-- 6. STORE  (المخازن)
+-- =============================================================================
+COMMENT ON TABLE STORE IS
+    'جدول المخازن - يُعرِّف المخازن المتاحة في النظام';
+
+COMMENT ON COLUMN STORE.STORE_CODE IS
+    'كود المخزن - المفتاح الأساسي';
+
+COMMENT ON COLUMN STORE.STORE_NAME IS
+    'اسم المخزن باللغة العربية';
+
+COMMENT ON COLUMN STORE.STORE_NAME_EN IS
+    'اسم المخزن باللغة الإنجليزية';
+
+
+-- =============================================================================
+-- 7. STORE_TRANS_TYPE  (أنواع الحركات المخزنية)
+-- =============================================================================
+COMMENT ON TABLE STORE_TRANS_TYPE IS
+    'تعريف أنواع أذون الحركات المخزنية وخصائص كل نوع';
+
+COMMENT ON COLUMN STORE_TRANS_TYPE.TRANS_CODE IS
+    'كود نوع الحركة - المفتاح الأساسي';
+
+COMMENT ON COLUMN STORE_TRANS_TYPE.TRANS_NAME IS
+    'اسم نوع الحركة (مثلاً: إذن إضافة مواد خام ، إذن صرف إنتاج)';
+
+COMMENT ON COLUMN STORE_TRANS_TYPE.TRANS_TYPE IS
+    'تصنيف نوع الحركة : 0=صرف ، 1=إضافة ، 2=تحويل';
+
+COMMENT ON COLUMN STORE_TRANS_TYPE.DUP_ITEM IS
+    'السماح بتكرار الصنف في الإذن الواحد : 0=غير مسموح ، 1=مسموح';
+
+
+-- =============================================================================
+-- 8. ITEMS  (الأصناف)
+-- =============================================================================
+COMMENT ON TABLE ITEMS IS
+    'جدول الأصناف المخزنية - يُعرِّف كل صنف وخصائصه';
+
+COMMENT ON COLUMN ITEMS.ITEMID IS
+    'كود الصنف - المفتاح الأساسي';
+
+COMMENT ON COLUMN ITEMS.ITEMNAME IS
+    'اسم الصنف';
+
+COMMENT ON COLUMN ITEMS.UNIT_ID IS
+    'كود وحدة القياس الرئيسية - FK → UNITS.UNIT_ID | الاسم في UNITS.UNIT_NAME';
+
+COMMENT ON COLUMN ITEMS.SUB_UNIT_ID IS
+    'كود وحدة القياس الفرعية (مثلاً: كرتونة / قطعة) - FK → UNITS.UNIT_ID | الاسم في UNITS.UNIT_NAME';
+
+
+-- =============================================================================
+-- 9. UNITS  (وحدات القياس)
+-- =============================================================================
+COMMENT ON TABLE UNITS IS
+    'جدول وحدات القياس المستخدمة للأصناف المخزنية';
+
+COMMENT ON COLUMN UNITS.UNIT_ID IS
+    'كود وحدة القياس - المفتاح الأساسي';
+
+COMMENT ON COLUMN UNITS.UNIT_NAME IS
+    'اسم وحدة القياس (مثلاً: كيلو ، طن ، قطعة ، كرتونة)';
+
+
+-- =============================================================================
+-- 10. CUST  (العملاء / الموردون)
+-- =============================================================================
+COMMENT ON TABLE CUST IS
+    'جدول العملاء والموردين - يُستخدم كجهة الحركة في أذون الصرف والإضافة';
+
+COMMENT ON COLUMN CUST.CUSTID IS
+    'كود العميل / المورد - المفتاح الأساسي';
+
+COMMENT ON COLUMN CUST.CUST_NAME IS
+    'اسم العميل أو المورد';
+
+COMMENT ON COLUMN CUST.CUST_TYPE IS
+    'نوع الجهة : 0=عميل (مستلِم عند الصرف) ، 1=مورد (مُسلِّم عند الإضافة)';
+
+
+-- =============================================================================
+-- 11. COST_CENTERS  (مراكز التكلفة)
+-- =============================================================================
+COMMENT ON TABLE COST_CENTERS IS
+    'جدول مراكز التكلفة - يُحدد الجهة المحاسبية التي تتحمل تكلفة الحركة المخزنية';
+
+COMMENT ON COLUMN COST_CENTERS.COST_CODE IS
+    'كود مركز التكلفة - المفتاح الأساسي';
+
+COMMENT ON COLUMN COST_CENTERS.COST_NAME IS
+    'اسم مركز التكلفة باللغة العربية';
+
+COMMENT ON COLUMN COST_CENTERS.COST_NAME_E IS
+    'اسم مركز التكلفة باللغة الإنجليزية';
+
+
+-- =============================================================================
+-- End of Comments Script - Page 20 (STORE_TRANSACTION_FORM)
+-- =============================================================================
+
+
+
+
 
 
 -- ============================================================
