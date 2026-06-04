@@ -255,6 +255,10 @@ ENTITY_PATTERNS = {
     "invoice_id":    r"(?:فاتور[ةه]|رقم|invoice|inv)?\s*[#]?(\d{5,12})",
     "customer_name": r"(?:عميل|اسم|customer)\s+([^\d\s].{2,30})",
     "date_single":   r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
+    # P1: explicit "today" signal (whole word — must NOT match اليومية/journal).
+    # Templates that filter by SYSDATE require this entity, so a time-less query
+    # falls through to the all-time default instead of a silent today filter.
+    "time_today":    r"(?:^|\s)(اليوم|النهارده|today)(?:\s|$|؟|\?)",
     "top_n":         r"(?:ل)?(?:أكثر|اكثر|أعلى|اعلى|أعلي|اعلي|أقل|اقل|top|bottom)\s*(\d+)",
     "year":          r"(?:سنة|عام|year)\s*(\d{4})",
     "month":         r"(?:شهر|month)\s*(\d{1,2})",

@@ -245,6 +245,23 @@ SELECT COUNT(*) AS invoice_count
 ))
 
 _register(QueryTemplate(
+    name="sales_summary_alltime",
+    description="إجمالي المبيعات (كل الفترات) / Sales total, all-time (default)",
+    domain="invoicing",
+    sub_intent="sales_summary",
+    sql="""
+SELECT COUNT(*) AS invoice_count,
+       NVL(SUM(FINALTOTAL), 0) AS total_sales,
+       NVL(SUM(TAX), 0) AS total_tax
+  FROM MAIN_INV
+ WHERE INVTYPE = 0
+   AND RETURN_FLAG = 0
+""",
+    required_params=[],
+    result_type="scalar",
+))
+
+_register(QueryTemplate(
     name="sales_summary_today",
     description="إجمالي مبيعات اليوم / Today's sales total",
     domain="invoicing",
@@ -258,7 +275,7 @@ SELECT COUNT(*) AS invoice_count,
    AND RETURN_FLAG = 0
    AND TRUNC(INVDATE) = TRUNC(SYSDATE)
 """,
-    required_params=[],
+    required_params=["time_today"],   # P1: only when user explicitly says "today"
     result_type="scalar",
 ))
 
@@ -285,6 +302,23 @@ SELECT TRUNC(INVDATE) AS sale_date,
 ))
 
 _register(QueryTemplate(
+    name="purchase_summary_alltime",
+    description="إجمالي المشتريات (كل الفترات) / Purchase total, all-time (default)",
+    domain="invoicing",
+    sub_intent="purchase_summary",
+    sql="""
+SELECT COUNT(*) AS invoice_count,
+       NVL(SUM(FINALTOTAL), 0) AS total_purchases,
+       NVL(SUM(TAX), 0) AS total_tax
+  FROM MAIN_INV
+ WHERE INVTYPE = 1
+   AND RETURN_FLAG = 0
+""",
+    required_params=[],
+    result_type="scalar",
+))
+
+_register(QueryTemplate(
     name="purchase_summary_today",
     description="إجمالي مشتريات اليوم / Today's purchase total",
     domain="invoicing",
@@ -298,7 +332,7 @@ SELECT COUNT(*) AS invoice_count,
    AND RETURN_FLAG = 0
    AND TRUNC(INVDATE) = TRUNC(SYSDATE)
 """,
-    required_params=[],
+    required_params=["time_today"],   # P1: only when user explicitly says "today"
     result_type="scalar",
 ))
 
