@@ -85,7 +85,7 @@ COMMENT ON COLUMN MAIN_INV.INVTYPE IS
     'نوع الفاتورة : 0=بيع , 1=شراء';
 
 COMMENT ON COLUMN MAIN_INV.RETURN_FLAG IS
-    'حالة الفاتورة : 0=عادية , 1=مرتجع.
+    'حالة الفاتورة : 0=فاتورة عادية , 1=مرتجع.
      ⚠ المرتجعات لها نفس INVTYPE (0=مرتجع بيع , 1=مرتجع شراء).
      ⚠ عند حساب صافي المبيعات : اطرح RETURN_FLAG=1 من RETURN_FLAG=0';
 

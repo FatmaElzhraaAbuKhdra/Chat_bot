@@ -224,7 +224,7 @@ _register(QueryTemplate(
 SELECT COUNT(*) AS invoice_count
   FROM MAIN_INV
  WHERE INVTYPE = {{flag:INVTYPE:بيع}}
-   AND RETURN_FLAG = {{flag:RETURN_FLAG:عادية}}
+   AND RETURN_FLAG = 0
 """,
     required_params=[],
     result_type="scalar",
@@ -239,7 +239,7 @@ _register(QueryTemplate(
 SELECT COUNT(*) AS invoice_count
   FROM MAIN_INV
  WHERE INVTYPE = {{flag:INVTYPE:شراء}}
-   AND RETURN_FLAG = {{flag:RETURN_FLAG:عادية}}
+   AND RETURN_FLAG = 0
 """,
     required_params=[],
     result_type="scalar",
@@ -256,7 +256,7 @@ SELECT COUNT(*) AS invoice_count,
        NVL(SUM(TAX), 0) AS total_tax
   FROM MAIN_INV
  WHERE INVTYPE = {{flag:INVTYPE:بيع}}
-   AND RETURN_FLAG = {{flag:RETURN_FLAG:عادية}}
+   AND RETURN_FLAG = 0
 """,
     required_params=[],
     result_type="scalar",
@@ -273,7 +273,7 @@ SELECT COUNT(*) AS invoice_count,
        NVL(SUM(TAX), 0) AS total_tax
   FROM MAIN_INV
  WHERE INVTYPE = {{flag:INVTYPE:بيع}}
-   AND RETURN_FLAG = {{flag:RETURN_FLAG:عادية}}
+   AND RETURN_FLAG = 0
    AND TRUNC(INVDATE) = TRUNC(SYSDATE)
 """,
     required_params=["time_today"],   # P1: only when user explicitly says "today"
@@ -291,7 +291,7 @@ SELECT TRUNC(INVDATE) AS sale_date,
        NVL(SUM(FINALTOTAL), 0) AS total_sales
   FROM MAIN_INV
  WHERE INVTYPE = {{flag:INVTYPE:بيع}}
-   AND RETURN_FLAG = {{flag:RETURN_FLAG:عادية}}
+   AND RETURN_FLAG = 0
    AND TRUNC(INVDATE) BETWEEN TO_DATE('{{date_from}}', 'YYYY-MM-DD')
                            AND TO_DATE('{{date_to}}', 'YYYY-MM-DD')
  GROUP BY TRUNC(INVDATE)
@@ -313,7 +313,7 @@ SELECT COUNT(*) AS invoice_count,
        NVL(SUM(TAX), 0) AS total_tax
   FROM MAIN_INV
  WHERE INVTYPE = {{flag:INVTYPE:شراء}}
-   AND RETURN_FLAG = {{flag:RETURN_FLAG:عادية}}
+   AND RETURN_FLAG = 0
 """,
     required_params=[],
     result_type="scalar",
@@ -330,7 +330,7 @@ SELECT COUNT(*) AS invoice_count,
        NVL(SUM(TAX), 0) AS total_tax
   FROM MAIN_INV
  WHERE INVTYPE = {{flag:INVTYPE:شراء}}
-   AND RETURN_FLAG = {{flag:RETURN_FLAG:عادية}}
+   AND RETURN_FLAG = 0
    AND TRUNC(INVDATE) = TRUNC(SYSDATE)
 """,
     required_params=["time_today"],   # P1: only when user explicitly says "today"
@@ -350,7 +350,7 @@ SELECT cu.CUSTID,
   FROM MAIN_INV m
   JOIN CUST cu ON cu.CUSTID = m.CUST_ID AND cu.CUST_TYPE = m.CUST_TYPE
  WHERE m.INVTYPE = {{flag:INVTYPE:بيع}}
-   AND m.RETURN_FLAG = {{flag:RETURN_FLAG:عادية}}
+   AND m.RETURN_FLAG = 0
    AND cu.CUST_TYPE = {{flag:CUST_TYPE:عميل}}
  GROUP BY cu.CUSTID, cu.CUST_NAME
  ORDER BY total_sales DESC
@@ -376,7 +376,7 @@ SELECT i.ITEMID,
   JOIN ITEMS i ON i.ITEMID = d.ITEMID
   JOIN MAIN_INV m ON m.INV_KEY = d.INV_KEY
  WHERE m.INVTYPE = {{flag:INVTYPE:بيع}}
-   AND m.RETURN_FLAG = {{flag:RETURN_FLAG:عادية}}
+   AND m.RETURN_FLAG = 0
  GROUP BY i.ITEMID, i.ITEMNAME
  ORDER BY total_sales DESC
  FETCH FIRST {{top_n}} ROWS ONLY
@@ -399,7 +399,7 @@ SELECT cu.CUSTID,
   FROM MAIN_INV m
   JOIN CUST cu ON cu.CUSTID = m.CUST_ID AND cu.CUST_TYPE = m.CUST_TYPE
  WHERE m.INVTYPE = {{flag:INVTYPE:بيع}}
-   AND m.RETURN_FLAG = {{flag:RETURN_FLAG:عادية}}
+   AND m.RETURN_FLAG = 0
    AND cu.CUST_TYPE = {{flag:CUST_TYPE:عميل}}
    AND (m.FINALTOTAL - m.SDAD) > 0
  GROUP BY cu.CUSTID, cu.CUST_NAME

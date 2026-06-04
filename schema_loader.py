@@ -362,9 +362,11 @@ def get_flag_concept_map() -> dict[str, list[tuple[str, str]]]:
     cmap: dict[str, list[tuple[str, str]]] = {}
     for _tbl, cols in _column_comments.items():
         for col, desc in cols.items():
-            # Parse main legend only — stop before any ⚠ warning/aside clause
+            # Parse main legend only — stop before any ⚠ warning/aside clause.
+            # Stop-chars extended: / strips bilingual "label / English" suffixes;
+            # — (—) strips "label — English note" suffixes.
             main_legend = desc.split('⚠')[0]
-            flags = re.findall(r'(\d)\s*=\s*([^,،.\d⚠]+)', main_legend)
+            flags = re.findall(r'(\d)\s*=\s*([^,،.\d⚠/—]+)', main_legend)
             if not (2 <= len(flags) <= 6):     # only genuine small enum columns
                 continue
             for val, label in flags:
