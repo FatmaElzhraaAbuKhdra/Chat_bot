@@ -111,6 +111,10 @@ SUB_INTENT_PATTERNS = {
     "journal_entries":    r"(قيود?\s*اليومية|يومية|journal\s*entries)",
 
     # Invoicing
+    # invoice_count* MUST precede sales_summary/invoice_detail so "عدد فواتير"
+    # is read as a COUNT (all-time) and not mis-scored as a today sales summary.
+    "invoice_count_purchase": r"(عدد\s*(ال)?فوات[يی]ر\s*(ال)?(مشتريات|شراء)|كم\s*فاتور[ةه]\s*(مشتريات|شراء)|count\s*(of\s*)?purchase\s*invoices?)",
+    "invoice_count":          r"(عدد\s*(ال)?فوات[يی]ر|كم\s*(عدد\s*)?(ال)?فوات[يی]ر|كم\s*فاتور[ةه]|count\s*(of\s*)?invoices?|how\s*many\s*invoices?)",
     "invoice_detail":     r"(تفاصيل?\s*(الفاتور[ةه]|فاتور[ةه])|بيانات?\s*(الفاتور[ةه]|فاتور[ةه])|invoice\s*detail)",
     "sales_summary":      r"(إجمالي\s*المبيعات|مبيعات\s*(اليوم|الشهر|السنة)|total\s*sales|sales\s*summary|اجمالي\s*المبيعات)",
     "purchase_summary":   r"(إجمالي\s*المشتريات|مشتريات\s*(اليوم|الشهر|السنة)|total\s*purchase|اجمالي\s*المشتريات)",

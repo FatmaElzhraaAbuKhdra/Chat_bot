@@ -215,6 +215,36 @@ SELECT m.INVID,
 ))
 
 _register(QueryTemplate(
+    name="invoice_count_sales",
+    description="عدد فواتير المبيعات (كل الفترات) / Count of sales invoices, all-time",
+    domain="invoicing",
+    sub_intent="invoice_count",
+    sql="""
+SELECT COUNT(*) AS invoice_count
+  FROM MAIN_INV
+ WHERE INVTYPE = 0
+   AND RETURN_FLAG = 0
+""",
+    required_params=[],
+    result_type="scalar",
+))
+
+_register(QueryTemplate(
+    name="invoice_count_purchase",
+    description="عدد فواتير المشتريات (كل الفترات) / Count of purchase invoices, all-time",
+    domain="invoicing",
+    sub_intent="invoice_count_purchase",
+    sql="""
+SELECT COUNT(*) AS invoice_count
+  FROM MAIN_INV
+ WHERE INVTYPE = 1
+   AND RETURN_FLAG = 0
+""",
+    required_params=[],
+    result_type="scalar",
+))
+
+_register(QueryTemplate(
     name="sales_summary_today",
     description="إجمالي مبيعات اليوم / Today's sales total",
     domain="invoicing",
