@@ -547,7 +547,7 @@ _register(QueryTemplate(
     sql="""
 SELECT COUNT(*) AS employee_count
   FROM EMPLOYEES
- WHERE EMP_ACTIVE = '1'
+ WHERE EMP_ACTIVE = '{{flag:EMP_ACTIVE:نشط}}'
    AND END_SERVICE_FLG = 'N'
 """,
     required_params=[],
@@ -566,7 +566,7 @@ SELECT EMP_ID,
        HIRE_DATE,
        END_SERVICE_FLG
   FROM EMPLOYEES
- WHERE EMP_ACTIVE = '1'
+ WHERE EMP_ACTIVE = '{{flag:EMP_ACTIVE:نشط}}'
    AND END_SERVICE_FLG = 'N'
  ORDER BY EMP_NAME_AR
  FETCH FIRST 200 ROWS ONLY
@@ -607,9 +607,36 @@ def find_template(sub_intent: str, entities: dict) -> Optional[QueryTemplate]:
     return best
 
 
+class FlagResolutionError(Exception):
+    """Raised when a {{flag:COL:label}} placeholder has no comment-defined value.
+    The caller (template execution) treats this as INELIGIBLE → LLM fallback."""
+
+
+_FLAG_PH = re.compile(r'\{\{flag:([A-Z_][A-Z0-9_]*):([^}]+)\}\}')
+
+
+def _resolve_flag_placeholders(sql: str) -> str:
+    """COMMENT-FIRST: replace every {{flag:COLUMN:label}} with the value the
+    COMMENTS assign to that label. Comments are the only source of the value.
+    """
+    from schema_loader import resolve_flag
+
+    def _repl(m):
+        col, label = m.group(1), m.group(2).strip()
+        val = resolve_flag(col, label)
+        if val is None:
+            raise FlagResolutionError(f"{col}:{label}")
+        return str(val)
+
+    return _FLAG_PH.sub(_repl, sql)
+
+
 def render_template(template: QueryTemplate, entities: dict) -> str:
     """Render a template with extracted entities, producing safe SQL."""
     sql = template.sql.strip()
+
+    # Comment-first: resolve coded literals from comments at render time (Phase A).
+    sql = _resolve_flag_placeholders(sql)
 
     params = dict(template.param_defaults)
     params.update(entities)

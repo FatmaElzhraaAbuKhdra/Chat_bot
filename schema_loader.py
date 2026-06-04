@@ -374,6 +374,25 @@ def get_flag_concept_map() -> dict[str, list[tuple[str, str]]]:
     return cmap
 
 
+def resolve_flag(column: str, label: str):
+    """COMMENT-FIRST resolver: return the coded VALUE that the comment assigns to
+    `label` for `column` — read ONLY from the comment-derived flag map.
+
+    The template knows the concept label (e.g. بيع); comments own the value (0/1).
+    Returns None if the label isn't a comment-defined legend for that column
+    (caller treats None as "template ineligible → LLM"). No keyword/synonym list;
+    matching is exact after Unicode normalization only.
+    """
+    norm = _normalize_concept(label)
+    col = column.upper()
+    for lbl, maps in get_flag_concept_map().items():
+        if lbl == norm:
+            for c, v in maps:
+                if c == col:
+                    return v
+    return None
+
+
 def _full_table_block(tbl: str) -> str:
     """Render one table with FULL column business meanings (Semantic Layer)."""
     tbl_desc = _compact_desc(_table_comments[tbl], _TBL_DESC_CAP)
