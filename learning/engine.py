@@ -337,15 +337,18 @@ def _get_learned_patterns(domain: str, sub_intent: str, limit: int = 3) -> list[
         return []
 
 
-def get_llm_context(domain: str, sub_intent: str = "") -> str:
+def get_llm_context(domain: str, sub_intent: str = "", schema_ctx: str = "") -> str:
     """
     Build additional LLM context from learned knowledge.
     Injected into the generate_sql prompt.
+
+    P1/F3: schema_ctx (already in the prompt) is passed so domain-knowledge facts
+    already present in the schema comments are not duplicated.
     """
     parts = []
     try:
-        # Add domain knowledge
-        knowledge = get_knowledge_for_llm(domain)
+        # Add domain knowledge (deduped against the schema context)
+        knowledge = get_knowledge_for_llm(domain, schema_ctx)
         if knowledge:
             parts.append(knowledge)
 

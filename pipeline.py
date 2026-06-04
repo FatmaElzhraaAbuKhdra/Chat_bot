@@ -752,6 +752,7 @@ async def _execute_llm_controlled(
             learned_context = get_llm_context(
                 domain=intent.domain,
                 sub_intent=intent.sub_intent,
+                schema_ctx=schema_ctx,   # P1/F3: dedup knowledge already in schema
             )
         except Exception:
             pass

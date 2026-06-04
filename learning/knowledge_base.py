@@ -1222,8 +1222,28 @@ def train_from_query(
     }
 
 
-def get_knowledge_for_llm(domain: str) -> str:
-    """Build a compact knowledge context string for LLM prompts."""
+def _line_covered_by_schema(line: str, schema_ctx: str) -> bool:
+    """P1/F3: True if EVERY significant token of `line` already appears in
+    schema_ctx — i.e. the schema comments already convey this fact, so re-injecting
+    it is pure duplication. Conservative: needs ≥2 tokens and full coverage, so a
+    line carrying any new token (a formula, a rule) is always kept.
+    """
+    if not schema_ctx:
+        return False
+    toks = re.findall(r'[؀-ۿ]{3,}|[A-Z_][A-Z0-9_]{2,}', line)
+    sig = [t for t in toks if t not in ('JOIN', 'SELECT', 'FROM', 'WHERE', 'AND')]
+    if len(sig) < 2:
+        return False
+    return all(t in schema_ctx for t in sig)
+
+
+def get_knowledge_for_llm(domain: str, schema_ctx: str = "") -> str:
+    """Build a compact knowledge context string for LLM prompts.
+
+    P1/F3: when schema_ctx is supplied, sql_pattern lines already fully covered by
+    the schema comments are skipped to avoid duplicate facts (e.g. INVTYPE flags).
+    Descriptions and cross-table rules/formulas are always kept.
+    """
     entries = get_knowledge(domain)
     if not entries:
         return ""
@@ -1234,6 +1254,8 @@ def get_knowledge_for_llm(domain: str) -> str:
         patterns = e.get("sql_patterns") or e.get("SQL_PATTERNS", [])
         if isinstance(patterns, list):
             for p in patterns[:3]:
+                if _line_covered_by_schema(str(p), schema_ctx):
+                    continue   # already in schema comments — don't duplicate
                 parts.append(f"  → {p}")
     return "\n".join(parts)
 
