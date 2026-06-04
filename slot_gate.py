@@ -18,8 +18,11 @@ from __future__ import annotations
 
 import re
 import semantic_registry as registry
+import span_resolver
+from span_resolver import UNRESOLVED
 
 _SLOT = re.compile(r'\{\{flag:([A-Z_][A-Z0-9_]*):([^}]+)\}\}')
+_SLOT_SPAN = re.compile(r'\{\{slot:([A-Z_][A-Z0-9_]*):([^}]+)\}\}')
 
 
 class SlotViolation(Exception):
@@ -59,3 +62,32 @@ def enforce_and_resolve(llm_sql: str) -> str:
         return str(val)
 
     return _SLOT.sub(_sub, llm_sql)
+
+
+def enforce_and_resolve_spans(llm_sql: str) -> str:
+    """THIS-spec gate: the LLM emits {{slot:COLUMN:TEXT_SPAN}} (verbatim query text,
+    no meaning). Resolve each span → value via comments ONLY (span_resolver).
+
+    Raises SlotViolation if (a) a coded column carries a raw value, or (b) any span
+    is UNRESOLVED_FROM_COMMENTS. No guess, no fallback — the caller fails safe.
+    """
+    raw = _raw_coded_literal(llm_sql)
+    if raw:
+        col, frag = raw
+        raise SlotViolation(f"raw value on coded column: '{frag}' "
+                            f"(must be {{{{slot:{col}:span}}}})")
+
+    unresolved: list[tuple[str, str]] = []
+
+    def _sub(m: re.Match) -> str:
+        col, span = m.group(1), m.group(2).strip()
+        v = span_resolver.resolve_span(col, span)
+        if v == UNRESOLVED:
+            unresolved.append((col, span))
+            return m.group(0)
+        return str(v)
+
+    out = _SLOT_SPAN.sub(_sub, llm_sql)
+    if unresolved:
+        raise SlotViolation(f"{UNRESOLVED}: {unresolved}")
+    return out
