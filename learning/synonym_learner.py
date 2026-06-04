@@ -187,6 +187,7 @@ def get_canonical(term: str) -> str | None:
                 WHERE term = ? ORDER BY confidence DESC LIMIT 1
             """, (term_norm,)).fetchone()
         if row:
+            row = dict(row)  # ROW SAFETY: normalize OracleRow/sqlite3.Row
             return row.get("canonical") or row.get("CANONICAL")
         return None
 

@@ -86,6 +86,7 @@ def save_context(session_id: str, context: dict,
             """, (session_id,)).fetchone()
 
             if exists:
+                exists = dict(exists)  # ROW SAFETY: normalize before .get()
                 eid = exists.get("id") or exists.get("ID")
                 conn.execute(f"""
                     UPDATE {_T()}

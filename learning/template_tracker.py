@@ -155,8 +155,9 @@ def get_template_score(template_name: str) -> float:
 
     if not row:
         return 0.5  # no data
+    row = dict(row)  # ROW SAFETY: normalize OracleRow/sqlite3.Row before .get()
 
-    total = row["total_uses"] or row.get("TOTAL_USES", 0)
+    total = row.get("total_uses") or row.get("TOTAL_USES", 0)
     if total < 3:
         return 0.5
 

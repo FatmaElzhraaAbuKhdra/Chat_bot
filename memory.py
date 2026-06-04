@@ -397,15 +397,16 @@ def load_sessions_from_db(max_load: int = 50) -> int:
                 """, (time.time() - SESSION_TTL, max_load)).fetchall()
 
         for row in rows:
-            uid = row["user_id"] if isinstance(row, dict) else row[1]
+            row = dict(row)  # ROW SAFETY: OracleRow/sqlite3.Row → dict (no row-type assumption)
+            uid = row["user_id"]
             if uid in _sessions:
                 continue  # don't overwrite active session
 
-            turns_json = row["turns_json"] if isinstance(row, dict) else row[2]
-            entities_json = row["entities_json"] if isinstance(row, dict) else row[3]
-            query_count = row["query_count"] if isinstance(row, dict) else row[4]
-            created_at = row["created_at"] if isinstance(row, dict) else row[5]
-            last_active = row["last_active"] if isinstance(row, dict) else row[6]
+            turns_json = row["turns_json"]
+            entities_json = row["entities_json"]
+            query_count = row["query_count"]
+            created_at = row["created_at"]
+            last_active = row["last_active"]
 
             # Rebuild session
             session = UserSession(
