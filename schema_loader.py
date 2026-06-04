@@ -181,6 +181,11 @@ def _maybe_reload_comments() -> None:
             response_cache.invalidate_all()
         except Exception:
             pass
+        try:
+            import normalizer
+            normalizer.invalidate_vocab()
+        except Exception:
+            pass
         log.info(f"[SCHEMA] comments hot-reloaded ({len(new_tc)} tables) — caches invalidated")
     except Exception as e:
         log.warning(f"[SCHEMA] comment hot-reload failed, keeping previous cache: {e}")

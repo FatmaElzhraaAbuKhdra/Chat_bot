@@ -67,9 +67,31 @@ _GATE_TIME_WORDS = (
 
 
 def _template_filter_values(sql_upper: str) -> dict:
-    """Parse simple 'COLUMN = <digit>' equality filters from template SQL."""
-    return {m.group(1): m.group(2)
-            for m in re.finditer(r'\b([A-Z_][A-Z0-9_]*)\s*=\s*(\d+)\b', sql_upper)}
+    """Parse coded filter values from template SQL — handles both literal digits
+    (COLUMN = 1) and comment-first placeholders ({{flag:COLUMN:label}}).
+
+    After Phase-C migration no template contains bare digits in filter conditions;
+    they all use {{flag:…}} placeholders.  Without this function resolving those
+    placeholders the semantic gate's transaction-type check (#3) is permanently
+    blind, so misrouted queries (e.g. a 'مشتريات' question reaching an INVTYPE=بيع
+    template) cannot be caught.  Resolving at gate-time keeps the single source of
+    truth (comments) while restoring the safety net.
+    """
+    result: dict[str, str] = {}
+    # 1. Legacy literal digits
+    for m in re.finditer(r'\b([A-Z_][A-Z0-9_]*)\s*=\s*(\d+)\b', sql_upper):
+        result[m.group(1)] = m.group(2)
+    # 2. Comment-first flag placeholders: {{flag:COLUMN:label}} (uppercase after .upper())
+    for m in re.finditer(r'\{\{FLAG:([A-Z_][A-Z0-9_]*):([^}]+)\}\}', sql_upper):
+        col, label = m.group(1), m.group(2).strip()
+        try:
+            from schema_loader import resolve_flag
+            val = resolve_flag(col, label)
+            if val is not None:
+                result[col] = str(val)
+        except Exception:
+            pass
+    return result
 
 
 def _question_txn(question: str):

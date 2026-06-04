@@ -330,6 +330,17 @@ def classify_intent(question: str, history: list = None) -> Intent:
       Level 3: LLM fallback      → confidence 0.80-0.90
     """
     q = question.strip()
+
+    # Pre-normalize Arabic: collapse repeats, fix informal ة/ه, Levenshtein-1 typos
+    try:
+        from normalizer import normalize_question
+        q_fixed, _corr = normalize_question(q)
+        if _corr:
+            log.info(f"[INTENT] Arabic corrected: {_corr}")
+            q = q_fixed
+    except Exception:
+        pass
+
     q_lower = q.lower()
 
     # ── Greeting ──
