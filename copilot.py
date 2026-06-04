@@ -14,6 +14,11 @@ log = logging.getLogger("copilot")
 # Suggestion Engine — Contextual Follow-up Recommendations
 # ═══════════════════════════════════════════════════════════════════
 
+# P2/F4: map intent-classifier domain names → _DOMAIN_SUGGESTIONS keys
+_DOMAIN_ALIASES = {
+    "invoicing": "sales",
+}
+
 _DOMAIN_SUGGESTIONS = {
     "sales": [
         {"label": "مقارنة مع الشهر الماضي", "query": "مقارنة المبيعات مع الشهر الماضي", "icon": "compare"},
@@ -74,6 +79,23 @@ _INTENT_SUGGESTIONS = {
         {"label": "رسم بياني للمشتريات", "query": "ارسم رسم بياني للمشتريات الشهرية", "icon": "chart"},
         {"label": "مقارنة بالمبيعات", "query": "مقارنة المبيعات مع المشتريات هذا الشهر", "icon": "compare"},
     ],
+    # P2/F4: sub-intents the classifier actually emits (were missing → fell through
+    # to the universal sales-dashboard fallback for every invoicing query).
+    "invoice_count": [
+        {"label": "إجمالي المبيعات", "query": "إجمالي المبيعات", "icon": "finance"},
+        {"label": "فواتير اليوم", "query": "عدد فواتير مبيعات اليوم", "icon": "calendar"},
+        {"label": "أعلى 5 عملاء", "query": "أعلى 5 عملاء في المبيعات", "icon": "ranking"},
+    ],
+    "sales_summary": [
+        {"label": "عدد الفواتير", "query": "عدد فواتير المبيعات", "icon": "detail"},
+        {"label": "أعلى المنتجات مبيعاً", "query": "أعلى 10 منتجات مبيعاً", "icon": "ranking"},
+        {"label": "رسم بياني للمبيعات", "query": "ارسم رسم بياني للمبيعات", "icon": "chart"},
+    ],
+    "purchase_summary": [
+        {"label": "عدد فواتير المشتريات", "query": "عدد فواتير المشتريات", "icon": "detail"},
+        {"label": "أعلى الموردين", "query": "أعلى 5 موردين في المشتريات", "icon": "ranking"},
+        {"label": "رسم بياني للمشتريات", "query": "ارسم رسم بياني للمشتريات الشهرية", "icon": "chart"},
+    ],
     "revenue_expenses": [
         {"label": "رسم بياني خطي", "query": "ارسم رسم بياني للإيرادات والمصروفات", "icon": "chart"},
         {"label": "صافي الربح", "query": "صافي الربح خلال آخر 6 شهور", "icon": "trend"},
@@ -131,8 +153,12 @@ def generate_suggestions(
             })
 
     # 2. Domain suggestions (fill remaining)
-    if domain and domain in _DOMAIN_SUGGESTIONS and len(suggestions) < 4:
-        for s in _DOMAIN_SUGGESTIONS[domain]:
+    # P2/F4: normalize domain → suggestion-set key (intent domain "invoicing"
+    # has its chips under "sales"). Without this, invoicing queries matched no
+    # domain set and fell through to the universal fallback.
+    dom_key = _DOMAIN_ALIASES.get(domain, domain)
+    if dom_key and dom_key in _DOMAIN_SUGGESTIONS and len(suggestions) < 4:
+        for s in _DOMAIN_SUGGESTIONS[dom_key]:
             if len(suggestions) >= 4:
                 break
             if not any(existing["label"] == s["label"] for existing in suggestions):
