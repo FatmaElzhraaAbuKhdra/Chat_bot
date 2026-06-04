@@ -4,6 +4,7 @@ Maintains conversation context for multi-step analytics.
 Enables follow-up queries like "break it down by month" or "show only top 5".
 """
 import json
+import re
 import time
 import logging
 from typing import Optional
@@ -262,6 +263,12 @@ def is_followup(question: str, session_id: str) -> bool:
     ]
     q_lower = question.lower()
     if any(cue in q_lower for cue in followup_cues):
+        return True
+
+    # FIX 3: a detail/instance reference with no new domain is a continuation —
+    # e.g. "تفاصيل فاتورة 10", "اعرضها", "رقم 10" — so it inherits prior context.
+    if re.search(r'(تفاصيل|اعرضها|اعرضه|رقم\s*\d|فاتور[ةه]\s*\d|^\s*\d+\s*$)',
+                 question.strip()):
         return True
 
     return False
