@@ -10,6 +10,7 @@ schema_loader.py
 import re
 import os
 import logging
+import threading
 import oracledb
 from pathlib import Path
 from typing import Optional
@@ -21,6 +22,8 @@ _column_comments: dict[str, dict[str, str]] = {}
 _fk_lines: list[str] = []
 _full_context: Optional[str] = None
 _flag_concept_map: Optional[dict] = None   # derived from comments, lazily built
+_comments_mtime: float = 0.0               # mtime of last-parsed comments file
+_reload_lock = threading.Lock()            # serializes hot-reload swaps
 
 def _get_comments_file() -> Path:
     return Path(__file__).parent / os.getenv("SCHEMA_FILE", "justclick_comments.sql")
@@ -76,13 +79,17 @@ ALWAYS_INCLUDE = {"COMPANIES", "BRANCHES"}
 
 
 async def init_schema_context() -> None:
-    global _table_comments, _column_comments, _fk_lines, _full_context, _flag_concept_map
+    global _table_comments, _column_comments, _fk_lines, _full_context, _flag_concept_map, _comments_mtime
     _flag_concept_map = None   # rebuild from fresh comments
 
     comments_file = _get_comments_file()
     if comments_file.exists():
         sql_text = comments_file.read_text(encoding="utf-8")
         _table_comments, _column_comments = _parse_comments_file(sql_text)
+        try:
+            _comments_mtime = comments_file.stat().st_mtime   # baseline for hot-reload
+        except OSError:
+            _comments_mtime = 0.0
         log.info(f"[SCHEMA] parsed {len(_table_comments)} tables, "
                  f"{sum(len(v) for v in _column_comments.values())} columns from {comments_file.name}")
     else:
@@ -126,12 +133,66 @@ def get_schema_context() -> str:
     return _full_context
 
 
+def _maybe_reload_comments() -> None:
+    """PRIORITY #1: hot-reload justclick_comments.sql when its mtime changes — no
+    restart required.
+
+    - Fast path: one stat() per call (~microseconds); returns immediately if unchanged.
+    - Atomic: parse + build into LOCALS, then swap globals under a lock with
+      `_comments_mtime` set LAST, so any concurrent reader that detects the change
+      blocks on the lock and only proceeds once the full cache is in place — never a
+      partially-rebuilt cache.
+    - Fail-safe: on ANY error (mid-save read, parse failure, 0 tables) the previous
+      cache is kept alive, the error is logged, and requests keep being served.
+    - Invalidates the downstream caches built from the OLD comments (schema_cache,
+      response_cache) so new behaviour appears on the very next request.
+    """
+    global _table_comments, _column_comments, _full_context, _flag_concept_map, _comments_mtime
+    try:
+        f = _get_comments_file()
+        if not f.exists():
+            return
+        m = f.stat().st_mtime
+        if m == _comments_mtime:
+            return  # unchanged
+        with _reload_lock:
+            if m == _comments_mtime:
+                return  # another thread already reloaded
+            text = f.read_text(encoding="utf-8")
+            new_tc, new_cc = _parse_comments_file(text)
+            if not new_tc:
+                log.warning("[SCHEMA] hot-reload parsed 0 tables — keeping previous cache")
+                return
+            # swap comment dicts first so _build_tables_context uses fresh data,
+            # then full context, then mtime LAST (gate stays closed until fully built)
+            _table_comments = new_tc
+            _column_comments = new_cc
+            _flag_concept_map = None                       # rebuilt lazily from new comments
+            _full_context = _build_tables_context(set(new_tc.keys()))
+            _comments_mtime = m
+        # downstream caches were built from the OLD comments — drop them
+        try:
+            from cache import schema_cache
+            schema_cache.invalidate()
+        except Exception:
+            pass
+        try:
+            import response_cache
+            response_cache.invalidate_all()
+        except Exception:
+            pass
+        log.info(f"[SCHEMA] comments hot-reloaded ({len(new_tc)} tables) — caches invalidated")
+    except Exception as e:
+        log.warning(f"[SCHEMA] comment hot-reload failed, keeping previous cache: {e}")
+
+
 def get_relevant_schema(question: str) -> str:
     """Build schema context with only relevant tables for the question.
 
     P0/F1: two-tier by default (primary = full meaning, referenced = name-only).
     Set SCHEMA_TIERED=0 to revert to the flat full-context behaviour.
     """
+    _maybe_reload_comments()   # PRIORITY #1: pick up comment edits without restart
     if not _table_comments:
         raise RuntimeError("Schema context not initialized.")
 
@@ -291,8 +352,9 @@ def get_flag_concept_map() -> dict[str, list[tuple[str, str]]]:
     The comments are the authority for what each coded value MEANS
     (e.g. INVTYPE 0=بيع 1=شراء), so routing/consistency checks read concepts
     from HERE instead of hardcoded keyword lists. Auto-extends as comments grow.
-    Cached after first build.
+    Cached after first build (and rebuilt automatically on comment hot-reload).
     """
+    _maybe_reload_comments()   # PRIORITY #1: pick up comment edits without restart
     global _flag_concept_map
     if _flag_concept_map is not None:
         return _flag_concept_map
