@@ -79,6 +79,7 @@ COMMENT ON COLUMN MAIN_INV.INV_KEY IS
 COMMENT ON COLUMN MAIN_INV.INVID IS
     'رقم الفاتورة المرئي للمستخدم - للعرض فقط.
      ⚠ غير فريد عبر انواع الفواتير (قد يتكرر نفس الرقم في بيع وشراء).
+     ⚠ عند البحث برقم الفاتورة قيّد دائماً بـ INVTYPE.
      ⚠ لا تستخدمه في JOIN';
 
 COMMENT ON COLUMN MAIN_INV.INVTYPE IS
