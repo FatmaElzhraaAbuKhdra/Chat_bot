@@ -21,16 +21,23 @@ Honest boundary (provable, see test_span_resolver.py):
 from __future__ import annotations
 
 import semantic_registry as registry
-from schema_loader import _normalize_concept
-
-UNRESOLVED = "UNRESOLVED_FROM_COMMENTS"
+import lexical_layer
+from lexical_layer import UNRESOLVED
 
 
 def resolve_span(column: str, span: str):
-    """span (verbatim query text) → coded value, via comment meanings ONLY.
-    Returns the int value, or UNRESOLVED_FROM_COMMENTS. Never guesses."""
-    n = _normalize_concept(span)
-    for meaning in registry.meaning_candidates(column):
-        if _normalize_concept(meaning) == n:
-            return registry.resolve(column, meaning)
-    return UNRESOLVED
+    """span (verbatim query text) → coded value through the two comment-derived
+    layers, deterministic, comment-only:
+
+        Layer 1  lexical_layer.normalize_phrase(span) → canonical label
+        Layer 2  registry.resolve(column, canonical)  → value
+
+    Returns the int value, or UNRESOLVED_FROM_COMMENTS at either step. Never guesses.
+    (Canonical labels self-map in Layer 1, so a span that already IS comment
+    vocabulary resolves with or without @lex synonyms.)
+    """
+    canonical = lexical_layer.normalize_phrase(span)
+    if canonical == UNRESOLVED:
+        return UNRESOLVED
+    val = registry.resolve(column, canonical)
+    return val if val is not None else UNRESOLVED

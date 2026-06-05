@@ -67,16 +67,21 @@ sql3 = enforce_and_resolve_spans(
 ok('join col=col preserved; INVTYPE span resolved to 0',
    'cu.CUST_TYPE = m.CUST_TYPE' in sql3 and 'INVTYPE = 0' in sql3 and '{{' not in sql3)
 
-# REAL FINDING: CUST_TYPE has 3 comments with INCONSISTENT label forms; the
-# parenthetical variant won compilation, so the bare span عميل no longer matches.
+# REAL FINDING (display asymmetry, not a resolution failure): CUST_TYPE has 3
+# comments with inconsistent label forms. The registry's normalized INDEX
+# accumulates the clean '0=عميل' from MAIN_INV.CUST_TYPE, so RESOLUTION is correct;
+# only meaning_of(0) (display) shows the parenthetical variant that won value→label.
 print()
-print('=== COMMENT-HYGIENE FINDING (CUST_TYPE) ===')
-cust = resolve_span('CUST_TYPE', 'عميل')
-ok('span عميل -> UNRESOLVED (comment label is "عميل (مستلِم...)" not "عميل")',
-   cust == UNRESOLVED)
-print('  CUST_TYPE has 3 comments (MAIN_INV.CUST_TYPE + CUST.CUST_TYPE x2) with')
-print('  different label forms. Span resolution is only as clean as the comments.')
-print('  Fix lives in comments (make labels consistent), NOT in code.')
+print('=== COMMENT-HYGIENE FINDING (CUST_TYPE display asymmetry) ===')
+import semantic_registry as _reg
+ok('span عميل -> 0 (resolves via clean legend in the index)',
+   resolve_span('CUST_TYPE', 'عميل') == 0)
+ok('but meaning_of(CUST_TYPE,0) shows the parenthetical variant (display only)',
+   '(' in (_reg.meaning_of('CUST_TYPE', 0) or ''))
+print('  Resolution is correct; display label is inconsistent because CUST_TYPE has')
+print('  3 comments with different label forms. Also: justclick_comments.sql:461 has')
+print("  a malformed legend '0 = daa2in = tahseel...' (double =). Both fixes live in")
+print('  COMMENTS, not code -- the comment-first principle.')
 
 print()
 print('=== THE TRUTH THIS PROVES ===')
