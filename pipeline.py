@@ -116,6 +116,47 @@ def _question_txn(question: str):
     return None
 
 
+# Cache of normalized comment words, keyed by comments mtime (rebuilt on edit).
+_comment_words: set[str] = set()
+_comment_words_mtime: float = -1.0
+
+
+def _question_has_comment_word(question: str) -> bool:
+    """True if any token of the question appears in the schema COMMENTS
+    (table/column comment text), after Arabic normalization.
+
+    COMMENT-ONLY: it reads schema_loader._table_comments / _column_comments and
+    does NOT consult keyword tables or synonyms. Picks up comment edits without a
+    restart (mtime-keyed cache via _maybe_reload_comments). Fail-open: on any
+    internal error it returns True so a real question is never wrongly blocked.
+    """
+    global _comment_words, _comment_words_mtime
+    try:
+        import schema_loader
+        from schema_loader import _normalize_concept, _maybe_reload_comments
+        _maybe_reload_comments()
+        if schema_loader._comments_mtime != _comment_words_mtime or not _comment_words:
+            words: set[str] = set()
+            def _add(text: str) -> None:
+                for w in re.findall(r'[؀-ۿA-Za-z]+', text or ''):
+                    n = _normalize_concept(w)
+                    if len(n) >= 3:
+                        words.add(n)
+            for desc in schema_loader._table_comments.values():
+                _add(desc)
+            for cols in schema_loader._column_comments.values():
+                for desc in cols.values():
+                    _add(desc)
+            _comment_words = words
+            _comment_words_mtime = schema_loader._comments_mtime
+        for w in re.findall(r'[؀-ۿA-Za-z]+', question or ''):
+            if _normalize_concept(w) in _comment_words:
+                return True
+        return False
+    except Exception:
+        return True
+
+
 def _template_matches_meaning(template, entities: dict, question: str) -> tuple[bool, str]:
     """Is this fast template consistent with the question's MEANING?
     Returns (consistent, reason_if_not). False ⇒ skip template, use the LLM path.
@@ -728,7 +769,21 @@ async def _handle_data_query(
     else:
         log.info("[PIPELINE] no sub_intent, going to LLM")
 
-    # ── Fallback: controlled LLM SQL generation ──
+    # ── CHANGE 2: gate the no-template fallback on COMMENT vocabulary ──
+    # No usable template was produced. Before handing the question to the LLM,
+    # require that it shares at least one word with the schema comments. If it
+    # does not (and it is not a contextual follow-up that relies on prior turns),
+    # there is no comment-grounded basis to answer → return a clear message
+    # instead of letting the LLM answer from outside the comments.
+    if not _needs_history_context(intent, history) \
+            and not _question_has_comment_word(question):
+        is_arabic = any('؀' <= c <= 'ۿ' for c in question)
+        msg = ("لم أجد تعريفاً لهذا في تعليقات قاعدة البيانات" if is_arabic
+               else "Term not found in database comments.")
+        log.info("[PIPELINE] no comment-vocabulary match -> not-found message (no LLM)")
+        return PipelineResult(answer=msg, method="error", intent=intent)
+
+    # ── Fallback: controlled LLM SQL generation (comments only) ──
     result = await _execute_llm_controlled(
         question=question,
         intent=intent,
@@ -884,28 +939,9 @@ async def _execute_llm_controlled(
         else:
             log.info("[PIPELINE] Schema context cache HIT")
 
-        # Phase 2.5: Business Reasoning Plan — decompose query before any injection
-        _reasoning_plan = None
-        _reasoning_ctx  = ""
-        try:
-            from learning.reasoning import decompose_query, plan_to_context_string
-            _reasoning_plan = decompose_query(
-                question   = question,
-                intent     = intent.sub_intent or intent.category,
-                domain     = intent.domain,
-                sub_intent = intent.sub_intent,
-            )
-            _reasoning_ctx = plan_to_context_string(_reasoning_plan)
-            if _reasoning_plan and _reasoning_plan.confidence > 0.5:
-                log.info(
-                    f"[REASONING] Plan: metric={_reasoning_plan.metric} "
-                    f"agg={_reasoning_plan.aggregation} "
-                    f"dim={_reasoning_plan.dimension_label} "
-                    f"tables={_reasoning_plan.required_tables} "
-                    f"conf={_reasoning_plan.confidence}"
-                )
-        except Exception as _re:
-            log.debug(f"[REASONING] Plan skipped: {_re}")
+        # CHANGE 3: reasoning.decompose_query injection REMOVED. The rule engine no
+        # longer feeds the LLM. Coded-value/metric/filter meaning must come from the
+        # schema comments injected via schema_ctx — not from learning/reasoning.py.
 
         # Phase 3: Inject learned LLM context (knowledge + approved examples)
         learned_context = ""
@@ -937,10 +973,8 @@ async def _execute_llm_controlled(
         except Exception:
             pass
 
-        # Build extra context string — Reasoning Plan first (highest priority)
+        # Build extra context string
         extra_context = ""
-        if _reasoning_ctx:
-            extra_context += f"\n{_reasoning_ctx}\n"
         if followup_context:
             extra_context += f"\n{followup_context}\n"
         if learned_context:
@@ -1109,16 +1143,7 @@ async def _execute_llm_controlled(
 
         log_query(user_id, question, sql, safety, success=True, rows=len(data))
 
-        # Reasoning: validate SQL against plan (non-blocking) + record for adaptive learning
-        if _reasoning_plan:
-            try:
-                from learning.reasoning import validate_sql_against_plan, record_successful_plan
-                _r_warns = validate_sql_against_plan(sql, _reasoning_plan)
-                if _r_warns:
-                    log.info(f"[REASONING] SQL warnings: {_r_warns}")
-                record_successful_plan(question, _reasoning_plan, sql, success=True)
-            except Exception:
-                pass
+        # CHANGE 3: reasoning validate/record REMOVED (no reasoning plan exists now).
 
         # Build chart: explicit request or auto-generate
         chart = None

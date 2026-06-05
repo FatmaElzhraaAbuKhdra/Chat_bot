@@ -207,45 +207,20 @@ def generate_sql(schema_context: str, question: str, company_code: str,
 4. أضف دائماً: FETCH FIRST 200 ROWS ONLY
 5. ⛔ ممنوع تماماً استخدام COMPANY_CODE أو FISCAL_YEAR في أي مكان في الـ SQL — لا في WHERE ولا في JOIN ولا في أي مكان آخر
 6. استخدم الـ JOINs الموجودة في FK فقط — لا تخترع علاقات غير موجودة
-7. إذا كان العمود فيه قيم رقمية لها معاني (مثل 0=ميزانية) استخدم DECODE لعرض النص
+7. إذا كان العمود فيه قيم رقمية لها معاني (موضّحة في تعليقات المخطط) استخدم DECODE لعرض النص
 8. عند البحث بالاسم قسّم الكلمات واستخدم LIKE لكل كلمة
 
-══ قواعد المحاسبة (مهم جداً) ══
-- CHARTS.CHART_TYPE: 0=ميزانية (أصول/خصوم)، 1=قائمة الدخل (إيرادات ومصروفات)
-- الإيرادات والمصروفات = حسابات قائمة الدخل (CHART_TYPE = 1)
-- VOUCHERS_DET.AMOUNT: موجب (+) = مدين، سالب (-) = دائن
-  → المدين = SUM(CASE WHEN AMOUNT > 0 THEN AMOUNT ELSE 0 END)
-  → الدائن = SUM(CASE WHEN AMOUNT < 0 THEN ABS(AMOUNT) ELSE 0 END)
+══ قواعد بناء SQL (syntax فقط) ══
 - ⚠ JOIN بين VOUCHERS و VOUCHERS_DET لازم على العمودين معاً:
   JOIN VOUCHERS v ON v.VOUCHER_CODE = vd.VOUCHER_CODE AND v.VOUCHER_MONTH = vd.VOUCHER_MONTH
 - للفترات الزمنية استخدم ADD_MONTHS:
   → آخر 3 شهور: v.VOUCHER_DATE >= ADD_MONTHS(TRUNC(SYSDATE, 'MM'), -3)
   → آخر سنة: v.VOUCHER_DATE >= ADD_MONTHS(TRUNC(SYSDATE), -12)
 
-══ أمثلة ══
-سؤال: "اعرض كل المخازن"
-SQL: SELECT STORE_CODE, STORE_NAME FROM STORE ORDER BY STORE_NAME FETCH FIRST 200 ROWS ONLY
-
-سؤال: "كم عدد الموظفين"
-SQL: SELECT COUNT(*) AS employee_count FROM EMPLOYEES WHERE EMP_ACTIVE = '1' AND END_SERVICE_FLG = 'N' FETCH FIRST 200 ROWS ONLY
-
-سؤال: "أعلى 5 عملاء في المبيعات"
-SQL: SELECT cu.CUST_NAME, COUNT(m.INV_KEY) AS invoice_count, SUM(m.FINALTOTAL) AS total_sales FROM MAIN_INV m JOIN CUST cu ON cu.CUSTID = m.CUST_ID AND cu.CUST_TYPE = m.CUST_TYPE WHERE m.INVTYPE = 0 AND m.RETURN_FLAG = 0 AND cu.CUST_TYPE = 0 GROUP BY cu.CUST_NAME ORDER BY total_sales DESC FETCH FIRST 5 ROWS ONLY
-
-سؤال: "حسابات تبدا ب 6"
-SQL: SELECT CHART_CODE, CHART_NAME_A, DECODE(CHART_TYPE, 0, 'ميزانية', 1, 'قائمة الدخل') AS CHART_TYPE, DECODE(CHART_NATURE, 0, 'رئيسي', 1, 'فرعي') AS CHART_NATURE FROM CHARTS WHERE CHART_CODE LIKE '6%' ORDER BY CHART_CODE FETCH FIRST 200 ROWS ONLY
-
-سؤال: "إجمالي المبيعات اليوم"
-SQL: SELECT COUNT(*) AS invoice_count, NVL(SUM(FINALTOTAL), 0) AS total_sales FROM MAIN_INV WHERE INVTYPE = 0 AND RETURN_FLAG = 0 AND TRUNC(INVDATE) = TRUNC(SYSDATE) FETCH FIRST 200 ROWS ONLY
-
-سؤال: "رصيد مخزن الأدوات"
-SQL: SELECT s.STORE_NAME, i.ITEMNAME, t.QTY FROM TRANSACTION_TOT t JOIN ITEMS i ON i.ITEMID = t.ITEMID JOIN STORE s ON s.STORE_CODE = t.STORE_CODE WHERE s.STORE_NAME LIKE '%أدوات%' AND t.QTY <> 0 ORDER BY i.ITEMNAME FETCH FIRST 200 ROWS ONLY
-
-سؤال: "الإيرادات والمصروفات خلال آخر 6 شهور"
-SQL: SELECT TO_CHAR(v.VOUCHER_DATE, 'YYYY-MM') AS الشهر, SUM(CASE WHEN vd.AMOUNT > 0 THEN vd.AMOUNT ELSE 0 END) AS المصروفات, SUM(CASE WHEN vd.AMOUNT < 0 THEN ABS(vd.AMOUNT) ELSE 0 END) AS الايرادات, SUM(vd.AMOUNT) AS الصافي FROM VOUCHERS_DET vd JOIN VOUCHERS v ON v.VOUCHER_CODE = vd.VOUCHER_CODE AND v.VOUCHER_MONTH = vd.VOUCHER_MONTH JOIN CHARTS c ON c.CHART_CODE = vd.CHART_CODE WHERE c.CHART_TYPE = 1 AND v.VOUCHER_DATE >= ADD_MONTHS(TRUNC(SYSDATE, 'MM'), -6) GROUP BY TO_CHAR(v.VOUCHER_DATE, 'YYYY-MM') ORDER BY الشهر FETCH FIRST 200 ROWS ONLY
-
-سؤال: "كشف حساب 1101 خلال آخر 3 شهور"
-SQL: SELECT v.VOUCHER_DATE, v.VOUCHER_CODE, v.VOUCHER_DESC, CASE WHEN vd.AMOUNT > 0 THEN vd.AMOUNT ELSE 0 END AS مدين, CASE WHEN vd.AMOUNT < 0 THEN ABS(vd.AMOUNT) ELSE 0 END AS دائن, vd.AMOUNT FROM VOUCHERS_DET vd JOIN VOUCHERS v ON v.VOUCHER_CODE = vd.VOUCHER_CODE AND v.VOUCHER_MONTH = vd.VOUCHER_MONTH WHERE vd.CHART_CODE = '1101' AND v.VOUCHER_DATE >= ADD_MONTHS(TRUNC(SYSDATE, 'MM'), -3) ORDER BY v.VOUCHER_DATE, v.VOUCHER_CODE FETCH FIRST 200 ROWS ONLY
+══ مصدر المعنى الوحيد ══
+استخدم تعليقات المخطط أعلاه فقط لمعرفة معاني الأعمدة والقيم المرمَّزة (مثل قيم 0/1).
+لا تفترض أي قيمة لأي عمود من معرفتك السابقة — اقرأها من التعليقات فقط.
+Use ONLY the schema comments provided above. Do not assume any column values.
 """
 
     # Phase 3/4/5: Inject learned context, JOIN hints, followup context
@@ -299,8 +274,11 @@ def format_answer(question: str, data: list[dict], sql: str,
                   history: list = None, truncated: bool = False,
                   extra_context: str = "") -> str:
 
+    # CHANGE 4: detect the question's language ONCE and apply it to EVERY response,
+    # not just the empty-result message.
+    is_arabic = any('؀' <= c <= 'ۿ' for c in question)
+
     if not data:
-        is_arabic = any('؀' <= c <= 'ۿ' for c in question)
         if is_arabic:
             return "لم أجد بيانات مطابقة لسؤالك. جرّب إعادة صياغة السؤال أو توسيع نطاق البحث."
         return "No matching data found. Try rephrasing your question or broadening the search criteria."
@@ -395,6 +373,15 @@ def format_answer(question: str, data: list[dict], sql: str,
     # is grounded in what each column actually represents — also for the template path.
     if extra_context:
         system_prompt += f"\n\n══ معاني الأعمدة (للفهم فقط — لا تعرضها كأسماء تقنية) ══\n{extra_context}"
+
+    # CHANGE 4: force the answer language to match the question language.
+    if is_arabic:
+        system_prompt += ("\n\n══ لغة الإجابة ══\n"
+                          "سؤال المستخدم بالعربية — أجب بالعربية فقط.")
+    else:
+        system_prompt += ("\n\n== Response Language ==\n"
+                          "The user's question is in English — respond ONLY in English. "
+                          "Translate any Arabic column labels or coded values to English.")
 
     data_str = str(data[:50])
     history_budget = MAX_PROMPT_CHARS - len(system_prompt) - len(data_str) - len(question) - 500
