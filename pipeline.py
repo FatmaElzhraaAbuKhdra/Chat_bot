@@ -121,40 +121,80 @@ _comment_words: set[str] = set()
 _comment_words_mtime: float = -1.0
 
 
-def _question_has_comment_word(question: str) -> bool:
-    """True if any token of the question appears in the schema COMMENTS
-    (table/column comment text), after Arabic normalization.
-
-    COMMENT-ONLY: it reads schema_loader._table_comments / _column_comments and
-    does NOT consult keyword tables or synonyms. Picks up comment edits without a
-    restart (mtime-keyed cache via _maybe_reload_comments). Fail-open: on any
-    internal error it returns True so a real question is never wrongly blocked.
-    """
+def _get_comment_words() -> set[str]:
+    """Normalized word set drawn ONLY from schema comment text (table + column),
+    mtime-cached so comment edits are picked up without a restart. No keyword tables,
+    no synonyms — comment vocabulary is the authority."""
     global _comment_words, _comment_words_mtime
-    try:
-        import schema_loader
-        from schema_loader import _normalize_concept, _maybe_reload_comments
-        _maybe_reload_comments()
-        if schema_loader._comments_mtime != _comment_words_mtime or not _comment_words:
-            words: set[str] = set()
-            def _add(text: str) -> None:
-                for w in re.findall(r'[؀-ۿA-Za-z]+', text or ''):
-                    n = _normalize_concept(w)
-                    if len(n) >= 3:
-                        words.add(n)
-            for desc in schema_loader._table_comments.values():
+    import schema_loader
+    from schema_loader import _normalize_concept, _maybe_reload_comments
+    _maybe_reload_comments()
+    if schema_loader._comments_mtime != _comment_words_mtime or not _comment_words:
+        words: set[str] = set()
+        def _add(text: str) -> None:
+            for w in re.findall(r'[؀-ۿA-Za-z]+', text or ''):
+                n = _normalize_concept(w)
+                if len(n) >= 3:
+                    words.add(n)
+        for desc in schema_loader._table_comments.values():
+            _add(desc)
+        for cols in schema_loader._column_comments.values():
+            for desc in cols.values():
                 _add(desc)
-            for cols in schema_loader._column_comments.values():
-                for desc in cols.values():
-                    _add(desc)
-            _comment_words = words
-            _comment_words_mtime = schema_loader._comments_mtime
+        _comment_words = words
+        _comment_words_mtime = schema_loader._comments_mtime
+    return _comment_words
+
+
+def _question_has_comment_word(question: str) -> bool:
+    """True if any token of the question appears in the schema COMMENTS, after Arabic
+    normalization. Fail-open: on any internal error returns True so a real question is
+    never wrongly blocked."""
+    try:
+        from schema_loader import _normalize_concept
+        cw = _get_comment_words()
         for w in re.findall(r'[؀-ۿA-Za-z]+', question or ''):
-            if _normalize_concept(w) in _comment_words:
+            if _normalize_concept(w) in cw:
                 return True
         return False
     except Exception:
         return True
+
+
+def _foreign_comment_nouns(question: str) -> list[str]:
+    """Return the ال-prefixed NOUN subjects in the question whose normalized root is
+    NOT in the schema comments (nor an existing time word).
+
+    These are words the user is asking ABOUT that the comments do not define. A fast
+    template can match on a PARTIAL phrase (regex) and silently drop such a qualifier
+    — e.g. "عدد فواتير الطقس" matches "عدد فواتير" → sales-count template, ignoring
+    "الطقس" and returning a WRONG count. Detecting a foreign comment-noun lets the
+    caller return not-found instead of a wrong answer.
+
+    Scope is deliberately narrow to avoid false positives:
+      • only ال-prefixed tokens (noun subjects) — request verbs like عايز/اعرض/هات
+        carry no ال and are never flagged;
+      • known = comment vocabulary ∪ the EXISTING _GATE_TIME_WORDS (reused, not a new
+        list) so colloquial time words (النهارده) are not flagged.
+    Fail-open to [] so an internal error never blocks a real query.
+    """
+    try:
+        from schema_loader import _normalize_concept
+        known = set(_get_comment_words())
+        for w in _GATE_TIME_WORDS:
+            n = _normalize_concept(w)
+            if len(n) >= 3:
+                known.add(n)
+        out: list[str] = []
+        for w in re.findall(r'[؀-ۿ]+', question or ''):
+            if not (w.startswith('ال') and len(w) > 4):
+                continue
+            n = _normalize_concept(w)   # strips leading ال
+            if len(n) >= 3 and n not in known:
+                out.append(w)
+        return out
+    except Exception:
+        return []
 
 
 def _template_matches_meaning(template, entities: dict, question: str) -> tuple[bool, str]:
@@ -764,6 +804,19 @@ async def _handle_data_query(
                 )
                 log.info(f"[PIPELINE] template_result={'OK' if result else 'FAILED->LLM fallback'}")
                 if result:
+                    # Q5 fix: a fast template can match on a PARTIAL phrase (regex) and
+                    # silently ignore an unknown qualifier the user asked about
+                    # (e.g. "عدد فواتير الطقس" → sales-count, dropping "الطقس"). If the
+                    # question names an ال-prefixed noun subject absent from the comments,
+                    # the template answer is for the WRONG question → return not-found.
+                    _foreign = _foreign_comment_nouns(question)
+                    if _foreign:
+                        is_arabic = any('؀' <= c <= 'ۿ' for c in question)
+                        msg = ("لم أجد تعريفاً لهذا في تعليقات قاعدة البيانات" if is_arabic
+                               else "Term not found in database comments.")
+                        log.info(f"[PIPELINE] template {template.name} matched but question "
+                                 f"has foreign comment-noun(s) {_foreign} -> not-found")
+                        return PipelineResult(answer=msg, method="error", intent=intent)
                     result.intent = intent
                     return result
     else:
