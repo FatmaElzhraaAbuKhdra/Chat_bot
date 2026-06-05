@@ -223,6 +223,22 @@ def generate_sql(schema_context: str, question: str, company_code: str,
 Use ONLY the schema comments provided above. Do not assume any column values.
 """
 
+    # Q3 fix: elevate ⚠ comment warnings from inline description to MANDATORY
+    # constraints so the LLM cannot ignore them (e.g. INVID not unique across invoice
+    # types → a lookup by INVID must be scoped by INVTYPE). Comment-sourced only.
+    try:
+        from schema_loader import get_comment_constraints
+        _constraints = get_comment_constraints(question)
+    except Exception:
+        _constraints = ""
+    if _constraints:
+        system_prompt += (
+            "\n\n══ قيود إلزامية من الكومنتات (⚠ — التزم بها حرفياً، لا تتجاهلها) ══\n"
+            "تحذيرات من تعليقات الأعمدة يجب احترامها في الـ SQL. مثال: عمود غير فريد عبر "
+            "الأنواع يجب تقييده بالنوع المناسب في WHERE:\n"
+            f"{_constraints}"
+        )
+
     # Phase 3/4/5: Inject learned context, JOIN hints, followup context
     if extra_context:
         system_prompt += f"\n{extra_context}"

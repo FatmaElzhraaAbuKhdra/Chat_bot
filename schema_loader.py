@@ -402,6 +402,39 @@ def resolve_flag(column: str, label: str):
     return None
 
 
+def get_comment_constraints(question: str) -> str:
+    """Collect ⚠ warning clauses from the relevant tables' COLUMN comments and return
+    them as a list of MANDATORY constraints.
+
+    The ⚠ rules already live in the comments (e.g. MAIN_INV.INVID '⚠ غير فريد عبر انواع
+    الفواتير'); the flat schema context delivers them only as inline description, which
+    the LLM may treat as prose and ignore. This lifts every ⚠ clause out so the caller
+    can inject it as a hard constraint. Comment-only; no new rules are invented here —
+    a ⚠ exists iff a comment author wrote it. Returns "" when no warnings apply.
+    """
+    _maybe_reload_comments()
+    if not _column_comments:
+        return ""
+    if os.getenv("SCHEMA_TIERED", "1") != "0":
+        primary, referenced = _select_tables_tiered(question)
+        tables = primary | referenced
+    else:
+        tables = _select_tables(question)
+
+    lines: list[str] = []
+    for tbl in sorted(tables):
+        for col, desc in _column_comments.get(tbl, {}).items():
+            if '⚠' not in desc:
+                continue
+            for part in desc.split('⚠')[1:]:
+                clause = re.sub(r'\s+', ' ', part).strip()
+                # keep the warning sentence; drop trailing prose after first '.'
+                clause = re.split(r'\.\s', clause, 1)[0].strip().rstrip('.').strip()
+                if clause:
+                    lines.append(f"- {tbl}.{col}: ⚠ {clause[:200]}")
+    return "\n".join(lines)
+
+
 def _full_table_block(tbl: str) -> str:
     """Render one table with FULL column business meanings (Semantic Layer)."""
     tbl_desc = _compact_desc(_table_comments[tbl], _TBL_DESC_CAP)
