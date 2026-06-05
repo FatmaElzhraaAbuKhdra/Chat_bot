@@ -943,127 +943,26 @@ async def _execute_llm_controlled(
         # longer feeds the LLM. Coded-value/metric/filter meaning must come from the
         # schema comments injected via schema_ctx — not from learning/reasoning.py.
 
-        # Phase 3: Inject learned LLM context (knowledge + approved examples)
-        learned_context = ""
-        try:
-            from learning.engine import get_llm_context
-            learned_context = get_llm_context(
-                domain=intent.domain,
-                sub_intent=intent.sub_intent,
-                schema_ctx=schema_ctx,   # P1/F3: dedup knowledge already in schema
-            )
-        except Exception:
-            pass
+        # FOLLOW-UP (Phase 3): get_llm_context injection REMOVED. The learning-engine
+        # knowledge base + approved SQL examples are a non-comment meaning source
+        # (its seed facts duplicate coded-value meaning, e.g. 'INVTYPE: 0=بيع'), so it
+        # no longer feeds the LLM. Column/value meaning comes only from schema_ctx.
 
-        # Phase 4: Inject ontology JOIN hints for multi-table queries
-        join_hints = ""
-        try:
-            from learning.engine import get_join_hint
-            from schema_loader import _select_tables
-            tables = list(_select_tables(question) - {"COMPANIES", "BRANCHES"})
-            if len(tables) >= 2:
-                hints = []
-                for i in range(min(len(tables) - 1, 4)):
-                    for j in range(i + 1, min(len(tables), 5)):
-                        hint = get_join_hint(tables[i], tables[j])
-                        if hint:
-                            hints.append(f"{tables[i]} -> {tables[j]}: {hint}")
-                if hints:
-                    join_hints = "\n".join(hints)
-        except Exception:
-            pass
+        # FOLLOW-UP (Phase 4): get_join_hint (ontology) injection REMOVED. JOIN
+        # relationships are described in the comments themselves (FK markers / ⚠ JOIN
+        # notes) and reach the LLM via schema_ctx — the learned ontology layer is a
+        # non-comment source, so it no longer feeds the LLM.
 
         # Build extra context string
         extra_context = ""
         if followup_context:
             extra_context += f"\n{followup_context}\n"
-        if learned_context:
-            extra_context += f"\n{learned_context}\n"
-        if join_hints:
-            extra_context += f"\n== JOIN Hints ==\n{join_hints}\n"
 
-        # Phase 5: Semantic injection from similar trained reports
-        # Includes: intent, entity flow, KPIs, JOINs, reference SQL, explainability
-        try:
-            import json as _json
-            from learning.knowledge_base import (
-                search_knowledge_smart, _parse_semantic_from_entry,
-            )
-            similar = search_knowledge_smart(question, limit=3)
-            report_blocks = []
-            for k in similar[:2]:
-                concept = k.get("concept") or k.get("CONCEPT", "")
-                if not concept.startswith("report_"):
-                    continue
-                desc       = k.get("description_ar") or k.get("DESCRIPTION_AR", "")
-                domain_k   = k.get("domain") or k.get("DOMAIN", "")
-                tables_raw = k.get("tables_json") or k.get("TABLES_JSON", [])
-                if isinstance(tables_raw, str):
-                    try:
-                        tables_raw = _json.loads(tables_raw)
-                    except Exception:
-                        tables_raw = []
-                patterns_raw = k.get("sql_patterns") or k.get("SQL_PATTERNS", [])
-                if isinstance(patterns_raw, str):
-                    try:
-                        patterns_raw = _json.loads(patterns_raw)
-                    except Exception:
-                        patterns_raw = []
-
-                # Parse semantic metadata (new layer)
-                sem = _parse_semantic_from_entry(k)
-
-                lines = [f"[تقرير: {desc}  المجال: {domain_k}]"]
-
-                # Business intent (semantic layer)
-                if sem.get("intent_ar"):
-                    lines.append(f"الهدف: {sem['intent_ar']}")
-
-                # Entity flow (semantic layer)
-                flow = sem.get("entity_flow", [])
-                if flow:
-                    lines.append(f"التدفق: {' ← '.join(str(f) for f in flow[:4])}")
-
-                # Tables
-                if tables_raw:
-                    lines.append(f"الجداول: {', '.join(str(t) for t in tables_raw[:6])}")
-
-                # JOIN conditions (structural layer)
-                if len(patterns_raw) > 1 and str(patterns_raw[1]).startswith("# JOINs:"):
-                    lines.append(str(patterns_raw[1]))
-
-                # KPIs (semantic layer)
-                sem_kpis = sem.get("kpis", [])
-                if sem_kpis:
-                    kpi_strs = [
-                        f"{kp['name']} ({kp['label_ar']})"
-                        for kp in sem_kpis[:3]
-                    ]
-                    lines.append(f"مقاييس: {', '.join(kpi_strs)}")
-
-                # Reference SQL
-                if patterns_raw:
-                    lines.append(f"SQL: {str(patterns_raw[0])[:220]}")
-
-                # Explainability line
-                rels = sem.get("relationships", [])
-                if rels:
-                    rel_labels = list(dict.fromkeys(
-                        r["label_ar"] for r in rels[:3] if r.get("label_ar")
-                    ))
-                    if rel_labels:
-                        lines.append(
-                            f"[سبب الاختيار: يحتوي العلاقات — "
-                            f"{' + '.join(rel_labels)}]"
-                        )
-
-                report_blocks.append("\n".join(lines))
-
-            if report_blocks:
-                hint_block = "\n\n".join(report_blocks)[:900]
-                extra_context += f"\n== تقارير مدرّبة مشابهة ==\n{hint_block}\n"
-        except Exception:
-            pass
+        # FOLLOW-UP (Phase 5): trained-report semantic injection REMOVED.
+        # search_knowledge_smart returns a learned/trained layer (AI_ERP_KNOWLEDGE)
+        # carrying reference SQL with literal coded values, KPIs and entity flows —
+        # all non-comment meaning. It no longer feeds the LLM; the LLM receives only
+        # schema comments (schema_ctx) + the user question (+ followup_context).
 
         sql_raw = generate_sql(
             schema_context=schema_ctx,
