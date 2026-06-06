@@ -401,17 +401,6 @@ CREATE TABLE {_PFX}EMBEDDINGS_CACHE (
     CREATED_AT      TIMESTAMP DEFAULT SYSTIMESTAMP
 )""",
 
-    f"{_PFX}STYLE_PREFS": f"""
-CREATE TABLE {_PFX}STYLE_PREFS (
-    ID              NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    USER_ID         VARCHAR2(100),
-    PREF_KEY        VARCHAR2(50) NOT NULL,
-    PREF_VALUE      NVARCHAR2(500) NOT NULL,
-    USAGE_COUNT     NUMBER DEFAULT 1,
-    LAST_USED       TIMESTAMP DEFAULT SYSTIMESTAMP,
-    CONSTRAINT UQ_STYLE UNIQUE (USER_ID, PREF_KEY)
-)""",
-
     f"{_PFX}EVENTS": f"""
 CREATE TABLE {_PFX}EVENTS (
     ID              NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -638,16 +627,6 @@ CREATE TABLE IF NOT EXISTS embeddings_cache (
     created_at      TEXT DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_emb_cat ON embeddings_cache(category);
-
-CREATE TABLE IF NOT EXISTS style_prefs (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id         TEXT,
-    pref_key        TEXT NOT NULL,
-    pref_value      TEXT NOT NULL,
-    usage_count     INTEGER DEFAULT 1,
-    last_used       TEXT DEFAULT (datetime('now')),
-    UNIQUE(user_id, pref_key)
-);
 
 CREATE TABLE IF NOT EXISTS events (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
