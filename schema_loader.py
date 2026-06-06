@@ -36,6 +36,7 @@ TABLE_GROUPS = {
                     "STORE_TRANS_TYPE"],
     "invoicing":  ["MAIN_INV", "DETAIL_INV", "MAIN_INV_PAYED", "PAYED",
                     "SAL_PURCH_TRANS_TYPE"],
+    "treasury":   ["CASH_TRANS_HEAD", "CASH_TRANS_DETAIL", "CASHES"],
     "customers":  ["CUST", "PRICE_LIST"],
     "hr":         ["EMPLOYEES", "EMPLOYEE_SALARIES", "ATT_EMP", "EMP_LOANS",
                     "EMP_VACATION", "CHARTS_ELEMENTS", "METHOD_SETUP"],
@@ -61,6 +62,10 @@ DOMAIN_KEYWORDS = {
         "مرتجع", "ضريبة", "خصم", "سداد", "تحصيل", "قسط",
         "invoice", "sale", "purchase", "return", "tax", "payment",
         "discount",
+    ],
+    "treasury": [
+        "خزينة", "خزائن", "الخزينة", "حركات الخزينة",
+        "قبض", "صرف", "إيصال", "سند صرف", "cash",
     ],
     "customers": [
         "عميل", "عملاء", "مورد", "موردين", "وكيل", "سعر", "أسعار",
