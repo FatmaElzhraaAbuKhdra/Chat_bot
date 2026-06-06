@@ -51,17 +51,19 @@ class ASTValidationResult:
 
 
 # ── Allowlists ───────────────────────────────────────────────────
-ALLOWED_TABLES = {
-    "MAIN_INV", "DETAIL_INV", "CUST", "ITEMS", "ITEMGROUP", "UNITS",
-    "STORE", "TRANSACTION", "TRANSACTION_TOT", "ITEM_CARD",
-    "CHARTS", "VOUCHERS", "VOUCHERS_DET", "COST_CENTERS",
-    "EMPLOYEES", "EMPLOYEE_SALARIES", "ATT_EMP", "EMP_LOANS",
-    "EMP_VACATION", "CHARTS_ELEMENTS", "METHOD_SETUP",
-    "COMPANIES", "BRANCHES", "LOOK_UP", "LOOK_UP_PARENT",
-    "SAL_PURCH_TRANS_TYPE", "INV_CATEGORIES", "INV_EFFECTS",
-    "INV_EFFECTS_RULES", "PAYED", "MAIN_INV_PAYED", "INST",
-    "PRICE_LIST", "STORE_TRANS_TYPE", "DUAL",
-}
+# Allowed tables are COMMENT-DRIVEN — single source: sql_safety.get_allowed_tables()
+# (every COMMENT ON TABLE in justclick_comments.sql). No hardcoded list here either.
+_STRUCTURAL_TABLES = {"DUAL"}
+
+
+def _default_allowed_tables() -> set:
+    """Comment-driven allowlist from sql_safety. Falls back to structural pseudo-tables
+    only if schema/sql_safety is unavailable."""
+    try:
+        from sql_safety import get_allowed_tables
+        return get_allowed_tables()
+    except Exception:
+        return set(_STRUCTURAL_TABLES)
 
 BLOCKED_FUNCTIONS = re.compile(
     r"\b(DBMS_\w+|UTL_\w+|SYS\.\w+|XMLTYPE|HTTPURITYPE|"
@@ -98,7 +100,7 @@ def validate_sql_ast(sql: str, allowed_tables: set = None,
         ASTValidationResult with violations list
     """
     if allowed_tables is None:
-        allowed_tables = ALLOWED_TABLES
+        allowed_tables = _default_allowed_tables()
     if masked_columns is None:
         masked_columns = []
 
@@ -260,10 +262,11 @@ def _extract_functions(sql: str) -> set[str]:
 def _extract_columns(sql: str) -> set[str]:
     """Extract column references from SQL (best-effort)."""
     columns = set()
+    allowed = _default_allowed_tables()
     # Pattern: table.column or standalone column in SELECT/WHERE
     for match in re.finditer(r'(?:\w+\.)?([A-Z_][A-Z0-9_]*)', sql, re.IGNORECASE):
         col = match.group(1).upper()
-        if len(col) >= 3 and col not in ALLOWED_TABLES:
+        if len(col) >= 3 and col not in allowed:
             columns.add(col)
     return columns
 

@@ -35,18 +35,29 @@ _DANGEROUS_PATTERNS = [
     (re.compile(r"\bV\$\w+", re.IGNORECASE), "V$ performance views access"),
 ]
 
-# ── Allowed tables ────────────────────────────────────────────────
-ALLOWED_TABLES = {
-    "MAIN_INV", "DETAIL_INV", "CUST", "ITEMS", "ITEMGROUP", "UNITS",
-    "STORE", "TRANSACTION", "TRANSACTION_TOT", "ITEM_CARD",
-    "CHARTS", "VOUCHERS", "VOUCHERS_DET", "COST_CENTERS",
-    "EMPLOYEES", "EMPLOYEE_SALARIES", "ATT_EMP", "EMP_LOANS",
-    "EMP_VACATION", "CHARTS_ELEMENTS", "METHOD_SETUP",
-    "COMPANIES", "BRANCHES", "LOOK_UP", "LOOK_UP_PARENT",
-    "SAL_PURCH_TRANS_TYPE", "INV_CATEGORIES", "INV_EFFECTS",
-    "INV_EFFECTS_RULES", "PAYED", "MAIN_INV_PAYED", "INST",
-    "PRICE_LIST", "STORE_TRANS_TYPE",
-}
+# ── Allowed tables (COMMENT-DRIVEN) ───────────────────────────────
+# Any table with a COMMENT ON TABLE in justclick_comments.sql is allowed — no
+# hardcoded list. Adding a comment = table is allowed, no code change. DUAL is an
+# Oracle structural pseudo-table (SELECT 1 FROM DUAL), not a business table.
+_STRUCTURAL_TABLES = {"DUAL"}
+_allowed_cache = None      # type: set | None
+_allowed_mtime = -1.0
+
+
+def get_allowed_tables() -> set:
+    """Comment-driven table allowlist: every COMMENT ON TABLE key from schema_loader
+    (+ structural pseudo-tables). mtime-cached like the other comment-derived caches,
+    so adding a comment makes the table allowed with no code change."""
+    global _allowed_cache, _allowed_mtime
+    try:
+        import schema_loader
+        m = schema_loader._comments_mtime
+        if _allowed_cache is None or m != _allowed_mtime:
+            _allowed_cache = set(schema_loader._table_comments.keys()) | _STRUCTURAL_TABLES
+            _allowed_mtime = m
+        return _allowed_cache
+    except Exception:
+        return set(_STRUCTURAL_TABLES)
 
 # Row limit enforcement
 MAX_ROWS = 500
@@ -56,7 +67,7 @@ ROW_LIMIT_PATTERN = re.compile(r"FETCH\s+FIRST\s+(\d+)\s+ROWS\s+ONLY", re.IGNORE
 def _is_union_injection(sql: str) -> bool:
     """
     Smart UNION ALL SELECT detection.
-    Returns True only if UNION ALL SELECT references tables NOT in ALLOWED_TABLES.
+    Returns True only if UNION ALL SELECT references tables NOT in get_allowed_tables().
     Dashboard widgets legitimately use UNION ALL with allowed tables.
     """
     if not re.search(r"\bUNION\s+(ALL\s+)?SELECT\b", sql, re.IGNORECASE):
@@ -77,7 +88,7 @@ def _is_union_injection(sql: str) -> bool:
         if not tables_in_part:
             continue
 
-        unknown = tables_in_part - ALLOWED_TABLES
+        unknown = tables_in_part - get_allowed_tables()
         if unknown:
             return True
 
@@ -132,7 +143,7 @@ def validate_sql(sql: str) -> SafetyResult:
 
     # ── Check table whitelist ──
     tables_used = _extract_tables(cleaned)
-    unknown_tables = tables_used - ALLOWED_TABLES
+    unknown_tables = tables_used - get_allowed_tables()
     if unknown_tables:
         warnings.append(f"Unknown tables accessed: {', '.join(unknown_tables)}")
 
