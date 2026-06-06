@@ -28,56 +28,11 @@ _reload_lock = threading.Lock()            # serializes hot-reload swaps
 def _get_comments_file() -> Path:
     return Path(__file__).parent / os.getenv("SCHEMA_FILE", "justclick_comments.sql")
 
-# ── Table domain groups ──────────────────────────────────────────────
-TABLE_GROUPS = {
-    "accounting": ["CHARTS", "VOUCHERS", "VOUCHERS_DET", "COST_CENTERS"],
-    "inventory":  ["ITEMS", "ITEMGROUP", "UNITS", "STORE", "TRANSACTION",
-                    "TRANSACTION_TOT", "ITEM_CARD", "INV_CATEGORIES",
-                    "STORE_TRANS_TYPE"],
-    "invoicing":  ["MAIN_INV", "DETAIL_INV", "MAIN_INV_PAYED", "PAYED",
-                    "SAL_PURCH_TRANS_TYPE"],
-    "treasury":   ["CASH_TRANS_HEAD", "CASH_TRANS_DETAIL", "CASHES"],
-    "customers":  ["CUST", "PRICE_LIST"],
-    "hr":         ["EMPLOYEES", "EMPLOYEE_SALARIES", "ATT_EMP", "EMP_LOANS",
-                    "EMP_VACATION", "CHARTS_ELEMENTS", "METHOD_SETUP"],
-    "system":     ["COMPANIES", "BRANCHES", "LOOK_UP", "LOOK_UP_PARENT"],
-}
-
-# Keywords → domain groups (Arabic + English)
-DOMAIN_KEYWORDS = {
-    "accounting": [
-        "حساب", "حسابات", "قيد", "قيود", "مدين", "دائن", "رصيد",
-        "ميزان", "كشف", "يومية", "دفتر", "مركز تكلفة",
-        "account", "balance", "debit", "credit", "voucher", "journal",
-        "chart", "ledger", "statement",
-    ],
-    "inventory": [
-        "صنف", "أصناف", "مخزون", "مخزن", "مخازن", "كارت", "كمية",
-        "وحدة", "وحدات", "رصيد مخزن", "حركة مخزن", "جرد",
-        "item", "stock", "inventory", "store", "warehouse", "quantity",
-        "unit", "card",
-    ],
-    "invoicing": [
-        "فاتورة", "فواتير", "بيع", "شراء", "مبيعات", "مشتريات",
-        "مرتجع", "ضريبة", "خصم", "سداد", "تحصيل", "قسط",
-        "invoice", "sale", "purchase", "return", "tax", "payment",
-        "discount",
-    ],
-    "treasury": [
-        "خزينة", "خزائن", "الخزينة", "حركات الخزينة",
-        "قبض", "صرف", "إيصال", "سند صرف", "cash",
-    ],
-    "customers": [
-        "عميل", "عملاء", "مورد", "موردين", "وكيل", "سعر", "أسعار",
-        "قائمة أسعار",
-        "customer", "supplier", "vendor", "dealer", "price",
-    ],
-    "hr": [
-        "موظف", "موظفين", "راتب", "رواتب", "حضور", "انصراف",
-        "إجازة", "إجازات", "سلفة", "سلف", "بند", "بنود",
-        "employee", "salary", "attendance", "vacation", "leave", "loan",
-    ],
-}
+# ── Table selection is COMMENT-DRIVEN ────────────────────────────────
+# The old TABLE_GROUPS / DOMAIN_KEYWORDS hardcoded maps were removed: relevant
+# tables are now chosen by matching the question against each table's COMMENT ON
+# TABLE text (see _select_tables_tiered / _get_table_tokens). Adding a new table =
+# adding its comment = the system can select it, with no code change here.
 
 # Tables always included (core reference tables)
 ALWAYS_INCLUDE = {"COMPANIES", "BRANCHES"}
@@ -246,51 +201,106 @@ def _parse_comments_file(sql_text: str) -> tuple[dict, dict]:
     return table_comments, column_comments
 
 
-def _select_tables_tiered(question: str) -> tuple[set[str], set[str]]:
-    """P0/F1: split relevant tables into two tiers.
+_MAX_PRIMARY = 12   # cap on comment-matched primary tables (bounds the prompt)
 
-      primary    = ALWAYS_INCLUDE + domain-group matches  → FULL column meaning
-      referenced = FK neighbours of primary (capped)       → name-only, JOIN-able
+_table_tokens: Optional[dict] = None
+_table_tokens_mtime: float = -1.0
+_blocked_tables_cache: Optional[set] = None
+_blocked_tables_mtime: float = -1.0
 
-    The UNION equals the legacy _select_tables() set (minus the referenced cap),
-    so JOIN-ability is preserved while the prompt no longer pays full-description
-    cost for every FK-reachable table.
+
+def _comment_tokens(text: str) -> set[str]:
+    """Normalized Arabic/Latin words (≥3 chars) from a comment string."""
+    out: set[str] = set()
+    for w in re.findall(r'[؀-ۿA-Za-z]+', text or ''):
+        n = _normalize_concept(w)
+        if len(n) >= 3:
+            out.add(n)
+    return out
+
+
+def _get_table_tokens() -> dict[str, set[str]]:
+    """{TABLE: words from its COMMENT ON TABLE text}. Pure projection of comments,
+    rebuilt on comment mtime change. A new commented table becomes selectable
+    automatically — no TABLE_GROUPS / keyword edits ever needed again.
     """
-    q_lower = question.lower()
-    matched_groups = set()
+    global _table_tokens, _table_tokens_mtime
+    if _table_tokens is None or _comments_mtime != _table_tokens_mtime:
+        _table_tokens = {t: _comment_tokens(d) for t, d in _table_comments.items()}
+        _table_tokens_mtime = _comments_mtime
+    return _table_tokens
 
-    for group, keywords in DOMAIN_KEYWORDS.items():
-        for kw in keywords:
-            if kw in q_lower:
-                matched_groups.add(group)
+
+def _get_blocked_tables() -> set[str]:
+    """Tables whose TABLE comment says 'لا تستخدم' or 'NEVER USE' — never selected."""
+    global _blocked_tables_cache, _blocked_tables_mtime
+    if _blocked_tables_cache is None or _comments_mtime != _blocked_tables_mtime:
+        _blocked_tables_cache = {
+            t for t, d in _table_comments.items()
+            if 'لا تستخدم' in (d or '') or 'NEVER USE' in (d or '').upper()
+        }
+        _blocked_tables_mtime = _comments_mtime
+    return _blocked_tables_cache
+
+
+def _fk_neighbours(primary: set[str], all_known: set[str]) -> set[str]:
+    """FK-linked tables of `primary`, BOTH directions, from comment FK markers:
+      forward — a primary column's  'FK → X'  pulls X        (unchanged behaviour)
+      reverse — any table with      'FK → P'  (P in primary) is pulled
+    Reverse is what lets 'أعلى 5 عملاء' (primary=CUST) reach MAIN_INV, whose
+    CUST_ID comment carries 'FK → CUST'.
+    """
+    neigh: set[str] = set()
+    for tbl in primary:                                   # forward
+        for _col, desc in _column_comments.get(tbl, {}).items():
+            m = re.search(r'FK\s*[→→]\s*(\w+)', desc)
+            if m and m.group(1).upper() in all_known:
+                neigh.add(m.group(1).upper())
+    for tbl, cols in _column_comments.items():            # reverse
+        if tbl in primary:
+            continue
+        for _col, desc in cols.items():
+            m = re.search(r'FK\s*[→→]\s*(\w+)', desc)
+            if m and m.group(1).upper() in primary:
+                neigh.add(tbl.upper())
                 break
+    return neigh
 
-    # Phase 9: If no groups matched, try ontology-based table selection
-    if not matched_groups:
-        matched_groups = _ontology_select_groups(question)
 
-    # Final fallback: if still nothing, use accounting + invoicing (most common)
-    if not matched_groups:
-        matched_groups = {"accounting", "invoicing"}
+def _select_tables_tiered(question: str) -> tuple[set[str], set[str]]:
+    """COMMENT-DRIVEN table selection — no hardcoded groups or keyword lists.
 
+      primary    = ALWAYS_INCLUDE + tables whose COMMENT ON TABLE shares a word with
+                   the question (ranked by overlap, capped at _MAX_PRIMARY) → FULL meaning
+      referenced = FK neighbours of primary, BOTH directions (capped)        → name-only
+      fallback   = no comment match → ALL commented tables name-only (primary stays
+                   ALWAYS_INCLUDE only), never hardcoded domain groups
+
+    Tables whose comment says 'لا تستخدم' / 'NEVER USE' are excluded from both tiers.
+    """
     all_known = set(_table_comments.keys())
+    blocked = _get_blocked_tables()
+    idx = _get_table_tokens()
 
-    # PRIMARY: the query's own domain tables (full semantic detail)
-    primary = set(ALWAYS_INCLUDE)
-    for group in matched_groups:
-        primary.update(TABLE_GROUPS.get(group, []))
-    primary &= all_known
+    q_tokens = _comment_tokens(question)
 
-    # REFERENCED: FK neighbours of primary tables (name-only, for JOINs)
-    referenced: set[str] = set()
-    for tbl in primary:
-        for col, desc in _column_comments.get(tbl, {}).items():
-            fk = re.search(r'FK\s*[→→]\s*(\w+)', desc)
-            if fk:
-                ref_tbl = fk.group(1).upper()
-                if ref_tbl in all_known and ref_tbl not in primary:
-                    referenced.add(ref_tbl)
-    referenced = set(sorted(referenced)[:_MAX_REFERENCED])
+    scored = sorted(
+        ((len(q_tokens & toks), t) for t, toks in idx.items()
+         if (q_tokens & toks) and t not in blocked),
+        reverse=True,
+    )
+    matched = [t for _, t in scored[:_MAX_PRIMARY]]
+
+    if matched:
+        primary = ((set(ALWAYS_INCLUDE) | set(matched)) & all_known) - blocked
+        referenced = (_fk_neighbours(primary, all_known) - primary) - blocked
+        referenced = set(sorted(referenced)[:_MAX_REFERENCED])
+    else:
+        # comment-driven fallback: every commented table, name-only (NOT full schema,
+        # NOT hardcoded accounting+invoicing). primary stays minimal so the budget
+        # guard renders the rest compactly.
+        primary = (set(ALWAYS_INCLUDE) & all_known) - blocked
+        referenced = all_known - primary - blocked
 
     return primary, referenced
 
@@ -302,29 +312,6 @@ def _select_tables(question: str) -> set[str]:
     """
     primary, referenced = _select_tables_tiered(question)
     return primary | referenced
-
-
-def _ontology_select_groups(question: str) -> set[str]:
-    """Phase 9: Use ontology to determine domain groups when keywords fail.
-    Queries ontology nodes for table-domain relationships and learned concepts.
-    """
-    try:
-        from learning.ontology import find_related_tables
-        # find_related_tables returns table names from ontology based on question
-        ontology_tables = find_related_tables(question)
-        if not ontology_tables:
-            return set()
-
-        # Map ontology table names back to domain groups
-        groups = set()
-        for group_name, group_tables in TABLE_GROUPS.items():
-            for tbl_name in ontology_tables:
-                if tbl_name.upper() in [t.upper() for t in group_tables]:
-                    groups.add(group_name)
-                    break
-        return groups
-    except Exception:
-        return set()
 
 
 # Schema-context budget (chars). MAX_PROMPT_CHARS in llm_client.py is 28000;
