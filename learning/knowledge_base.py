@@ -76,7 +76,7 @@ _SEED_KNOWLEDGE = [
     },
     {
         "concept": "chart_of_accounts_structure",
-        "description_ar": "شجرة الحسابات: هرمية عبر PARENT_CHART_CODE. CHART_TYPE=0 ميزانية (أصول/خصوم)، CHART_TYPE=1 قائمة الدخل (إيرادات/مصروفات). CHART_NATURE=0 رئيسي، 1 فرعي",
+        "description_ar": "شجرة الحسابات: هرمية عبر PARENT_CHART_CODE. CHART_TYPE=0 ميزانية (أصول/خصوم)، CHART_TYPE=1 قائمة الدخل (إيرادات/مصروفات). CHART_NATURE=0 عام، 1 مساعد",
         "description_en": "Chart of accounts: hierarchical via PARENT_CHART_CODE. Type 0=balance sheet, 1=income statement. Nature 0=main, 1=sub",
         "domain": "accounting",
         "tables_json": '["CHARTS"]',
@@ -84,7 +84,7 @@ _SEED_KNOWLEDGE = [
         "terms_en_json": '["chart of accounts", "account tree", "main account", "sub account"]',
         "sql_patterns": json.dumps([
             "DECODE(CHART_TYPE, 0, 'ميزانية', 1, 'قائمة الدخل')",
-            "DECODE(CHART_NATURE, 0, 'رئيسي', 1, 'فرعي')",
+            "DECODE(CHART_NATURE, 0, 'عام', 1, 'مساعد')",
             "CONNECT BY PRIOR CHART_CODE = PARENT_CHART_CODE للشجرة",
         ]),
     },

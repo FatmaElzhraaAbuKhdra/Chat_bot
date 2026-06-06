@@ -53,7 +53,7 @@ _register(QueryTemplate(
 SELECT c.CHART_CODE,
        c.CHART_NAME_A,
        DECODE(c.CHART_TYPE, 0, 'ميزانية', 1, 'قائمة الدخل') AS CHART_TYPE,
-       DECODE(c.CHART_NATURE, 0, 'رئيسي', 1, 'فرعي') AS CHART_NATURE,
+       DECODE(c.CHART_NATURE, 0, 'عام', 1, 'مساعد') AS CHART_NATURE,
        NVL(SUM(CASE WHEN vd.AMOUNT > 0 THEN vd.AMOUNT ELSE 0 END), 0) AS total_debit,
        NVL(SUM(CASE WHEN vd.AMOUNT < 0 THEN ABS(vd.AMOUNT) ELSE 0 END), 0) AS total_credit,
        NVL(SUM(vd.AMOUNT), 0) AS balance
@@ -78,7 +78,7 @@ SELECT CHART_CODE,
        CHART_NAME_A,
        CHART_NAME_E,
        DECODE(CHART_TYPE, 0, 'ميزانية', 1, 'قائمة الدخل') AS CHART_TYPE,
-       DECODE(CHART_NATURE, 0, 'رئيسي', 1, 'فرعي') AS CHART_NATURE,
+       DECODE(CHART_NATURE, 0, 'عام', 1, 'مساعد') AS CHART_NATURE,
        PARENT_CHART_CODE,
        CHART_LEVEL,
        CHART_OPEN_LOC AS OPENING_BALANCE
@@ -126,7 +126,7 @@ _register(QueryTemplate(
 SELECT CHART_CODE,
        CHART_NAME_A,
        DECODE(CHART_TYPE, 0, 'ميزانية', 1, 'قائمة الدخل') AS CHART_TYPE,
-       DECODE(CHART_NATURE, 0, 'رئيسي', 1, 'فرعي') AS CHART_NATURE,
+       DECODE(CHART_NATURE, 0, 'عام', 1, 'مساعد') AS CHART_NATURE,
        PARENT_CHART_CODE,
        CHART_LEVEL
   FROM CHARTS
