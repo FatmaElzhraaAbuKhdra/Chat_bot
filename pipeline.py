@@ -263,6 +263,7 @@ class PipelineResult:
     intent: Optional[Intent] = None
     template_used: str = ""
     method: str = ""           # template | llm_controlled | greeting | help | error | dashboard | action | workflow | export | navigation | report
+    error: str = ""            # exception text when method == "error" (recorded to AI_EVENTS)
     execution_time_ms: int = 0
     safety_warnings: list[str] = field(default_factory=list)
     chart_data: Optional[dict] = None   # {type, labels, datasets} for Chart.js
@@ -659,6 +660,7 @@ async def process_question(
             user_id=user_id,
             method=result.method,
             session_id=user_id,
+            error=getattr(result, "error", ""),
         )
     except Exception as e:
         log.warning(f"[LEARNING] on_query_complete failed: {e}")
@@ -1144,10 +1146,12 @@ async def _execute_llm_controlled(
             return PipelineResult(
                 answer=f"تم تجاوز حد الاستخدام المجاني — حاول بعد قليل{wait_msg}",
                 method="error",
+                error=err_str,
             )
         return PipelineResult(
             answer="حدث خطأ — حاول إعادة صياغة السؤال بشكل أوضح.",
             method="error",
+            error=err_str,
         )
 
 

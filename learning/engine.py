@@ -230,6 +230,7 @@ def on_query_complete(
     user_id: str = "",
     method: str = "",
     session_id: str = "",
+    error: str = "",
 ) -> None:
     """
     Called after every query execution.
@@ -248,7 +249,7 @@ def on_query_complete(
                 return
 
         # Emit event (handlers do the actual learning)
-        emit(EventType.QUERY_COMPLETED, {
+        _payload = {
             "question": question,
             "sub_intent": sub_intent,
             "domain": domain,
@@ -258,7 +259,10 @@ def on_query_complete(
             "exec_ms": exec_ms,
             "success": success,
             "method": method,
-        }, user_id)
+        }
+        if method == "error" and error:
+            _payload["error"] = error[:500]   # exception text for failed queries
+        emit(EventType.QUERY_COMPLETED, _payload, user_id)
 
         # Update BI context (FIX 1/5: record REAL filters/tables/txn_context so the
         # next query can inherit them — previously hardcoded to {}/[] = no memory)

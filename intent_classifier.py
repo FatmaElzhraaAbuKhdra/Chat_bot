@@ -252,7 +252,7 @@ def _keyword_score_classify(question: str) -> tuple[str, float]:
 
 ENTITY_PATTERNS = {
     "account_code":  r"(?:حساب|حسابات|كود|رقم|account|code|ب)\s*[#]?(\d{1,10})",
-    "invoice_id":    r"(?:فاتور[ةه]|رقم|invoice|inv)?\s*[#]?(\d{5,12})",
+    "invoice_id":    r"(?:فاتور[ةه]|رقم|invoice|inv)?\s*[#]?(\d{1,12})",
     "customer_name": r"(?:عميل|اسم|customer)\s+([^\d\s].{2,30})",
     "date_single":   r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
     # P1: explicit "today" signal (whole word — must NOT match اليومية/journal).
