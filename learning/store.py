@@ -269,8 +269,9 @@ def _init_oracle():
             except Exception:
                 pass  # already exists
 
-    log.info(f"[STORE] Oracle init: {created} new tables, "
-             f"{len(existing)} already existed")
+    if existing:
+        log.debug(f"[STORE] Oracle: {len(existing)} legacy AI_ tables still in DB (unused)")
+    log.info(f"[STORE] Oracle init: {created} new tables")
 
 
 def _init_sqlite():

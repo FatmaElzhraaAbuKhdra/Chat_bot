@@ -1651,9 +1651,10 @@ COMMENT ON TABLE CASH_TRANS_HEAD IS
 ⚠ للبحث باسم الخزينة: JOIN مع CASHES على CASH_ID ثم WHERE c.CASH_NAME LIKE ''%اسم الخزينة كاملاً%'' — لا تستخدم CASH_ID أو STORE_CODE للبحث النصي فهي أرقام.
 ⚠ اسم الخزينة قد يتكون من أكثر من كلمة (مثل "رفائع الجيمش") — اكتبه كاملاً في شرط واحد: c.CASH_NAME LIKE ''%رفائع الجيمش%''. لا تقسّم الاسم إلى شروط AND أو OR منفصلة.
 ⚠ للبحث في البيان/الملاحظات: WHERE h.NOTES LIKE ''%نص%''
-⚠ للبحث في البيان فقط: WHERE h.NOTES LIKE ''%نص%''
 ⚠ لا تضيف WHERE TRANS_TYPE إلا إذا ذكر المستخدم صراحةً (قبض أو صرف أو وارد أو صادر). لا تضيف WHERE VOUCH_POSTED إلا إذا طُلب ذلك.
 ⚠ لا توجد أعمدة AMOUNT ولا AMOUNT_BEFOR_TAX ولا TAX في CASH_TRANS_HEAD — هذه الأعمدة في CASH_TRANS_DETAIL حصراً. للحصول عليها: JOIN CASH_TRANS_DETAIL d ON d.TRANS_ID = h.TRANS_ID ثم SELECT d.AMOUNT, d.AMOUNT_BEFOR_TAX, d.TAX.
+⚠ الأعمدة المطلوبة في SELECT لحركات الخزينة: h.TRANS_DATE, h.TRANS_CODE, h.TRANS_TYPE, h.NOTES, d.AMOUNT, d.AMOUNT_BEFOR_TAX, d.TAX, c.CASH_NAME — لا تختر كل الأعمدة من كل الجداول.
+⚠ CASH_TRANS_DETAIL لا يحتوي عمود CASH_ID — إذا أردت اسم الخزينة استخدم c.CASH_NAME من CASHES فقط.
 @lex حركات الخزينة = CASH_TRANS_HEAD
 @lex ايصالات القبض = CASH_TRANS_HEAD
 @lex سندات الصرف = CASH_TRANS_HEAD
@@ -1820,9 +1821,6 @@ COMMENT ON COLUMN CASH_TRANS_DETAIL.FISCAL_YEAR IS
 
 COMMENT ON COLUMN CASH_TRANS_DETAIL.BRANCH_ID IS
 'كود الفرع';
-
-COMMENT ON COLUMN CASH_TRANS_DETAIL.CASH_ID IS
-'كود الخزينة المرتبطة بالسطر';
 
 -- =============================================
 -- CASHES — الخزائن
