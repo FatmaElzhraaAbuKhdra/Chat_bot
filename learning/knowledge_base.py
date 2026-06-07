@@ -7,11 +7,7 @@ import json
 import logging
 import re
 from typing import Optional
-from .store import get_conn, tbl, is_oracle
-
 log = logging.getLogger("learning.knowledge")
-
-_T = lambda: tbl("erp_knowledge")
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -105,44 +101,8 @@ _SEED_KNOWLEDGE = [
 
 
 def seed_knowledge() -> int:
-    """Load built-in ERP knowledge (run once on init)."""
-    count = 0
-    with get_conn() as conn:
-        for k in _SEED_KNOWLEDGE:
-            try:
-                if is_oracle():
-                    conn.execute(f"""
-                        MERGE INTO {_T()} t
-                        USING (SELECT :1 AS c FROM DUAL) s
-                        ON (t.CONCEPT = s.c)
-                        WHEN NOT MATCHED THEN INSERT
-                            (CONCEPT, DESCRIPTION_AR, DESCRIPTION_EN, DOMAIN,
-                             TABLES_JSON, TERMS_AR_JSON, TERMS_EN_JSON,
-                             SQL_PATTERNS, SOURCE, CONFIDENCE)
-                        VALUES (:2, :3, :4, :5, :6, :7, :8, :9, 'seed', 1.0)
-                    """, (k["concept"], k["concept"],
-                          k["description_ar"], k["description_en"],
-                          k["domain"], k.get("tables_json", "[]"),
-                          k.get("terms_ar_json", "[]"),
-                          k.get("terms_en_json", "[]"),
-                          k.get("sql_patterns", "[]")))
-                else:
-                    conn.execute(f"""
-                        INSERT OR IGNORE INTO {_T()}
-                            (concept, description_ar, description_en, domain,
-                             tables_json, terms_ar_json, terms_en_json,
-                             sql_patterns, source, confidence)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'seed', 1.0)
-                    """, (k["concept"], k["description_ar"], k["description_en"],
-                          k["domain"], k.get("tables_json", "[]"),
-                          k.get("terms_ar_json", "[]"),
-                          k.get("terms_en_json", "[]"),
-                          k.get("sql_patterns", "[]")))
-                count += 1
-            except Exception:
-                pass
-    log.info(f"[LEARNING] Seeded {count} ERP knowledge entries")
-    return count
+    """No-op — ERP knowledge DB removed."""
+    return 0
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -161,152 +121,19 @@ def add_knowledge(
     source: str = "learned",
     confidence: float = 0.8,
 ) -> bool:
-    """Add or update an ERP knowledge entry."""
-    tables_j = json.dumps(tables or [])
-    terms_ar_j = json.dumps(terms_ar or [])
-    terms_en_j = json.dumps(terms_en or [])
-    patterns_j = json.dumps(sql_patterns or [])
-
-    with get_conn() as conn:
-        try:
-            if is_oracle():
-                # ORA-00932 fix: CASE WHEN with CLOB/NCLOB columns requires
-                # TO_CLOB()/TO_NCLOB() on VARCHAR bind variables — Oracle
-                # refuses to coerce VARCHAR2 to CLOB implicitly inside CASE.
-                # DOMAIN is VARCHAR2 so DECODE works without casting.
-                conn.execute(f"""
-                    MERGE INTO {_T()} t
-                    USING (SELECT :concept AS c FROM DUAL) s
-                    ON (t.CONCEPT = s.c)
-                    WHEN MATCHED THEN UPDATE SET
-                        DESCRIPTION_AR = CASE WHEN :desc_ar IS NULL THEN t.DESCRIPTION_AR ELSE TO_NCLOB(:desc_ar2) END,
-                        DESCRIPTION_EN = CASE WHEN :desc_en IS NULL THEN t.DESCRIPTION_EN ELSE TO_CLOB(:desc_en2) END,
-                        DOMAIN         = DECODE(:domain, '', t.DOMAIN, NULL, t.DOMAIN, :domain2),
-                        TABLES_JSON    = CASE WHEN :tables IS NULL THEN t.TABLES_JSON ELSE TO_CLOB(:tables2) END,
-                        TERMS_AR_JSON  = CASE WHEN :terms_ar IS NULL THEN t.TERMS_AR_JSON ELSE TO_NCLOB(:terms_ar2) END,
-                        TERMS_EN_JSON  = CASE WHEN :terms_en IS NULL THEN t.TERMS_EN_JSON ELSE TO_CLOB(:terms_en2) END,
-                        SQL_PATTERNS   = CASE WHEN :patterns IS NULL THEN t.SQL_PATTERNS ELSE TO_CLOB(:patterns2) END,
-                        UPDATED_AT     = SYSTIMESTAMP
-                    WHEN NOT MATCHED THEN INSERT
-                        (CONCEPT, DESCRIPTION_AR, DESCRIPTION_EN, DOMAIN,
-                         TABLES_JSON, TERMS_AR_JSON, TERMS_EN_JSON,
-                         SQL_PATTERNS, SOURCE, CONFIDENCE)
-                    VALUES (:concept2, TO_NCLOB(:desc_ar3), TO_CLOB(:desc_en3), :domain3,
-                            TO_CLOB(:tables3), TO_NCLOB(:terms_ar3), TO_CLOB(:terms_en3),
-                            TO_CLOB(:patterns3), :source, :confidence)
-                """, dict(
-                    concept=concept,
-                    desc_ar=description_ar,   desc_ar2=description_ar,   desc_ar3=description_ar,
-                    desc_en=description_en,   desc_en2=description_en,   desc_en3=description_en,
-                    domain=domain,            domain2=domain,            domain3=domain,
-                    tables=tables_j,          tables2=tables_j,          tables3=tables_j,
-                    terms_ar=terms_ar_j,      terms_ar2=terms_ar_j,      terms_ar3=terms_ar_j,
-                    terms_en=terms_en_j,      terms_en2=terms_en_j,      terms_en3=terms_en_j,
-                    patterns=patterns_j,      patterns2=patterns_j,      patterns3=patterns_j,
-                    concept2=concept,
-                    source=source,
-                    confidence=confidence,
-                ))
-            else:
-                conn.execute(f"""
-                    INSERT INTO {_T()}
-                        (concept, description_ar, description_en, domain,
-                         tables_json, terms_ar_json, terms_en_json,
-                         sql_patterns, source, confidence)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(concept) DO UPDATE SET
-                        description_ar = COALESCE(NULLIF(?, ''), description_ar),
-                        description_en = COALESCE(NULLIF(?, ''), description_en),
-                        domain = COALESCE(NULLIF(?, ''), domain),
-                        tables_json = COALESCE(NULLIF(?, '[]'), tables_json),
-                        terms_ar_json = COALESCE(NULLIF(?, '[]'), terms_ar_json),
-                        terms_en_json = COALESCE(NULLIF(?, '[]'), terms_en_json),
-                        sql_patterns = COALESCE(NULLIF(?, '[]'), sql_patterns),
-                        updated_at = datetime('now')
-                """, (concept, description_ar, description_en, domain,
-                      tables_j, terms_ar_j, terms_en_j, patterns_j,
-                      source, confidence,
-                      description_ar, description_en, domain,
-                      tables_j, terms_ar_j, terms_en_j, patterns_j))
-            return True
-        except Exception as e:
-            import traceback as _tb
-            log.error(f"[LEARNING] Knowledge add failed: {type(e).__name__}: {e}\n{_tb.format_exc()}")
-            raise  # re-raise so callers get the real error (not silent False)
+    """No-op — ERP knowledge DB removed. Logs the concept name."""
+    log.info(f"[KNOWLEDGE] add_knowledge concept={concept} domain={domain} source={source} (no-db)")
+    return True
 
 
 def get_knowledge(domain: str = "") -> list[dict]:
-    """Get knowledge entries, optionally filtered by domain."""
-    with get_conn() as conn:
-        if domain:
-            if is_oracle():
-                rows = conn.execute(
-                    f"SELECT * FROM {_T()} WHERE DOMAIN = :1 ORDER BY CONCEPT",
-                    (domain,)
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    f"SELECT * FROM {_T()} WHERE domain = ? ORDER BY concept",
-                    (domain,)
-                ).fetchall()
-        else:
-            rows = conn.execute(
-                f"SELECT * FROM {_T()} ORDER BY DOMAIN, CONCEPT"
-            ).fetchall()
-
-        results = []
-        for r in rows:
-            d = dict(r)
-            for key in ("tables_json", "terms_ar_json", "terms_en_json",
-                        "sql_patterns", "TABLES_JSON", "TERMS_AR_JSON",
-                        "TERMS_EN_JSON", "SQL_PATTERNS"):
-                if d.get(key):
-                    try:
-                        d[key] = json.loads(d[key])
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-            results.append(d)
-        return results
+    """No DB — returns empty list."""
+    return []
 
 
 def search_knowledge(query: str) -> list[dict]:
-    """Search knowledge base by Arabic or English terms."""
-    q = f"%{query.lower()}%"
-    with get_conn() as conn:
-        if is_oracle():
-            rows = conn.execute(f"""
-                SELECT * FROM {_T()}
-                WHERE LOWER(DESCRIPTION_AR) LIKE :1
-                   OR LOWER(DESCRIPTION_EN) LIKE :2
-                   OR LOWER(TERMS_AR_JSON) LIKE :3
-                   OR LOWER(TERMS_EN_JSON) LIKE :4
-                   OR LOWER(CONCEPT) LIKE :5
-                ORDER BY CONFIDENCE DESC
-            """, (q, q, q, q, q)).fetchall()
-        else:
-            rows = conn.execute(f"""
-                SELECT * FROM {_T()}
-                WHERE LOWER(description_ar) LIKE ?
-                   OR LOWER(description_en) LIKE ?
-                   OR LOWER(terms_ar_json) LIKE ?
-                   OR LOWER(terms_en_json) LIKE ?
-                   OR LOWER(concept) LIKE ?
-                ORDER BY confidence DESC
-            """, (q, q, q, q, q)).fetchall()
-
-        results = []
-        for r in rows:
-            d = dict(r)
-            for key in ("tables_json", "terms_ar_json", "terms_en_json",
-                        "sql_patterns", "TABLES_JSON", "TERMS_AR_JSON",
-                        "TERMS_EN_JSON", "SQL_PATTERNS"):
-                if d.get(key):
-                    try:
-                        d[key] = json.loads(d[key])
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-            results.append(d)
-        return results
+    """No DB — returns empty list."""
+    return []
 
 
 # RC4: canonicalize common table aliases so ontology edges & JOIN hints stay
@@ -1261,81 +1088,8 @@ def get_knowledge_for_llm(domain: str, schema_ctx: str = "") -> str:
 
 
 def backfill_report_terms() -> dict:
-    """
-    Backfill terms_ar/terms_en for trained reports saved before Layer-1 term
-    extraction existed (concept starts with 'report_' and terms are empty).
-    Safe to run multiple times — only updates rows with empty/null terms.
-    """
-    updated = skipped = errors = 0
-
-    with get_conn() as conn:
-        if is_oracle():
-            rows = conn.execute(f"""
-                SELECT CONCEPT, DESCRIPTION_AR, DESCRIPTION_EN, TABLES_JSON
-                FROM {_T()}
-                WHERE CONCEPT LIKE 'report_%'
-                  AND (TERMS_AR_JSON IS NULL
-                       OR TO_CHAR(TERMS_AR_JSON) = '[]'
-                       OR TO_CHAR(TERMS_AR_JSON) = '')
-            """).fetchall()
-        else:
-            rows = conn.execute(f"""
-                SELECT concept, description_ar, description_en, tables_json
-                FROM {_T()}
-                WHERE concept LIKE 'report_%'
-                  AND (terms_ar_json IS NULL
-                       OR terms_ar_json = '[]'
-                       OR terms_ar_json = '')
-            """).fetchall()
-
-    for row in rows:
-        d = dict(row)
-        concept   = d.get("concept")   or d.get("CONCEPT", "")
-        desc_ar   = d.get("description_ar") or d.get("DESCRIPTION_AR", "") or ""
-        desc_en   = d.get("description_en") or d.get("DESCRIPTION_EN", "") or ""
-        tables_raw = d.get("tables_json") or d.get("TABLES_JSON", "[]") or "[]"
-        try:
-            tables = json.loads(tables_raw) if isinstance(tables_raw, str) else (tables_raw or [])
-        except (json.JSONDecodeError, TypeError):
-            tables = []
-
-        report_name = concept.replace("report_", "").replace("_", " ")
-        try:
-            terms_ar, terms_en = _extract_business_terms(
-                report_name, f"{desc_ar} {desc_en}", tables,
-            )
-            if not terms_ar and not terms_en:
-                skipped += 1
-                continue
-
-            terms_ar_j = json.dumps(terms_ar, ensure_ascii=False)
-            terms_en_j = json.dumps(terms_en)
-
-            with get_conn() as wconn:
-                if is_oracle():
-                    wconn.execute(f"""
-                        UPDATE {_T()} SET
-                            TERMS_AR_JSON = TO_NCLOB(:1),
-                            TERMS_EN_JSON = TO_CLOB(:2),
-                            UPDATED_AT    = SYSTIMESTAMP
-                        WHERE CONCEPT = :3
-                    """, (terms_ar_j, terms_en_j, concept))
-                else:
-                    wconn.execute(f"""
-                        UPDATE {_T()} SET
-                            terms_ar_json = ?,
-                            terms_en_json = ?,
-                            updated_at    = datetime('now')
-                        WHERE concept = ?
-                    """, (terms_ar_j, terms_en_j, concept))
-            updated += 1
-            log.info(f"[BACKFILL] {concept}: {len(terms_ar)} ar + {len(terms_en)} en terms")
-        except Exception as e:
-            log.error(f"[BACKFILL] Failed for {concept}: {e}")
-            errors += 1
-
-    log.info(f"[BACKFILL] Report terms done — updated={updated} skipped={skipped} errors={errors}")
-    return {"updated": updated, "skipped": skipped, "errors": errors, "total_found": len(rows)}
+    """No-op — ERP knowledge DB removed."""
+    return {"updated": 0, "skipped": 0, "errors": 0, "total_found": 0}
 
 
 # ═══════════════════════════════════════════════════════════════════

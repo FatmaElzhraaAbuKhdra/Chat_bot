@@ -4,14 +4,20 @@ Maps entity relationships: tables, columns, business concepts, intents.
 Enables intelligent join-path discovery and contextual SQL generation.
 """
 import json
+import re
 import logging
+import threading
 from typing import Optional
-from .store import get_conn, tbl, is_oracle
 
 log = logging.getLogger("learning.ontology")
 
-_T_N = lambda: tbl("ontology_nodes")
-_T_E = lambda: tbl("ontology_edges")
+# ── In-memory graph store ────────────────────────────────────────────
+# _NODES: node_key → {node_type, label_ar, label_en, domain, metadata}
+# _EDGES_OUT/_IN: node_key → list of edge dicts
+_NODES: dict[str, dict] = {}
+_EDGES_OUT: dict[str, list] = {}   # source_key → edges
+_EDGES_IN:  dict[str, list] = {}   # target_key → edges
+_graph_lock = threading.Lock()
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -136,58 +142,25 @@ _SEED_EDGES = [
 
 
 def seed_ontology() -> int:
-    """Load built-in ERP ontology (run once on init)."""
+    """Load built-in ERP ontology into in-memory graph."""
     count = 0
-
-    with get_conn() as conn:
-        # Seed nodes
+    with _graph_lock:
         for key, ntype, label_ar, label_en, domain in _SEED_NODES:
-            try:
-                if is_oracle():
-                    conn.execute(f"""
-                        MERGE INTO {_T_N()} t
-                        USING (SELECT :1 AS nk FROM DUAL) s
-                        ON (t.NODE_KEY = s.nk)
-                        WHEN NOT MATCHED THEN INSERT
-                            (NODE_KEY, NODE_TYPE, LABEL_AR, LABEL_EN, DOMAIN)
-                        VALUES (:2, :3, :4, :5, :6)
-                    """, (key, key, ntype, label_ar, label_en, domain))
-                else:
-                    conn.execute(f"""
-                        INSERT OR IGNORE INTO {_T_N()}
-                            (node_key, node_type, label_ar, label_en, domain)
-                        VALUES (?, ?, ?, ?, ?)
-                    """, (key, ntype, label_ar, label_en, domain))
-                count += 1
-            except Exception:
-                pass
-
-        # Seed edges
+            _NODES[key] = {
+                "node_type": ntype, "label_ar": label_ar,
+                "label_en": label_en, "domain": domain, "metadata": {},
+            }
+            count += 1
         for src, tgt, rel, weight, meta in _SEED_EDGES:
-            try:
-                if is_oracle():
-                    conn.execute(f"""
-                        MERGE INTO {_T_E()} t
-                        USING (SELECT :1 AS sk, :2 AS tk, :3 AS rl FROM DUAL) s
-                        ON (t.SOURCE_KEY = s.sk AND t.TARGET_KEY = s.tk
-                            AND t.RELATION = s.rl)
-                        WHEN NOT MATCHED THEN INSERT
-                            (SOURCE_KEY, TARGET_KEY, RELATION, WEIGHT,
-                             METADATA_JSON)
-                        VALUES (:4, :5, :6, :7, :8)
-                    """, (src, tgt, rel, src, tgt, rel, weight, meta))
-                else:
-                    conn.execute(f"""
-                        INSERT OR IGNORE INTO {_T_E()}
-                            (source_key, target_key, relation, weight,
-                             metadata_json)
-                        VALUES (?, ?, ?, ?, ?)
-                    """, (src, tgt, rel, weight, meta))
-                count += 1
-            except Exception:
-                pass
-
-    log.info(f"[ONTOLOGY] Seeded {count} nodes+edges")
+            edge = {
+                "source_key": src, "target_key": tgt,
+                "relation": rel, "weight": weight,
+                "metadata_json": meta or "{}",
+            }
+            _EDGES_OUT.setdefault(src, []).append(edge)
+            _EDGES_IN.setdefault(tgt, []).append(edge)
+            count += 1
+    log.info(f"[ONTOLOGY] Seeded {count} nodes+edges (in-memory)")
     return count
 
 
@@ -198,185 +171,80 @@ def seed_ontology() -> int:
 def add_node(key: str, node_type: str, label_ar: str = "",
              label_en: str = "", domain: str = "",
              metadata: dict = None) -> bool:
-    """Add or update an ontology node."""
-    meta_json = json.dumps(metadata or {}, ensure_ascii=False)
-    with get_conn() as conn:
-        try:
-            if is_oracle():
-                conn.execute(f"""
-                    MERGE INTO {_T_N()} t
-                    USING (SELECT :1 AS nk FROM DUAL) s
-                    ON (t.NODE_KEY = s.nk)
-                    WHEN MATCHED THEN UPDATE SET
-                        LABEL_AR = COALESCE(NULLIF(:2, ''), t.LABEL_AR),
-                        LABEL_EN = COALESCE(NULLIF(:3, ''), t.LABEL_EN),
-                        DOMAIN = COALESCE(NULLIF(:4, ''), t.DOMAIN),
-                        METADATA_JSON = COALESCE(NULLIF(:5, '{{}}'), t.METADATA_JSON)
-                    WHEN NOT MATCHED THEN INSERT
-                        (NODE_KEY, NODE_TYPE, LABEL_AR, LABEL_EN, DOMAIN,
-                         METADATA_JSON)
-                    VALUES (:6, :7, :8, :9, :10, :11)
-                """, (key, label_ar, label_en, domain, meta_json,
-                      key, node_type, label_ar, label_en, domain, meta_json))
-            else:
-                conn.execute(f"""
-                    INSERT INTO {_T_N()}
-                        (node_key, node_type, label_ar, label_en, domain,
-                         metadata_json)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(node_key) DO UPDATE SET
-                        label_ar = COALESCE(NULLIF(?, ''), label_ar),
-                        label_en = COALESCE(NULLIF(?, ''), label_en),
-                        domain = COALESCE(NULLIF(?, ''), domain),
-                        metadata_json = COALESCE(NULLIF(?, '{{}}'), metadata_json)
-                """, (key, node_type, label_ar, label_en, domain, meta_json,
-                      label_ar, label_en, domain, meta_json))
-            return True
-        except Exception as e:
-            log.warning(f"[ONTOLOGY] Add node failed: {e}")
-            return False
+    """Add or update an ontology node in-memory."""
+    with _graph_lock:
+        existing = _NODES.get(key, {})
+        _NODES[key] = {
+            "node_type": node_type,
+            "label_ar": label_ar or existing.get("label_ar", ""),
+            "label_en": label_en or existing.get("label_en", ""),
+            "domain": domain or existing.get("domain", ""),
+            "metadata": metadata or existing.get("metadata", {}),
+        }
+    return True
 
 
 def add_edge(source: str, target: str, relation: str,
              weight: float = 1.0, metadata: dict = None) -> bool:
-    """Add or update an ontology edge."""
-    meta_json = json.dumps(metadata or {}, ensure_ascii=False)
-    with get_conn() as conn:
-        try:
-            if is_oracle():
-                conn.execute(f"""
-                    MERGE INTO {_T_E()} t
-                    USING (SELECT :1 AS sk, :2 AS tk, :3 AS rl FROM DUAL) s
-                    ON (t.SOURCE_KEY = s.sk AND t.TARGET_KEY = s.tk
-                        AND t.RELATION = s.rl)
-                    WHEN MATCHED THEN UPDATE SET
-                        WEIGHT = :4,
-                        METADATA_JSON = :5
-                    WHEN NOT MATCHED THEN INSERT
-                        (SOURCE_KEY, TARGET_KEY, RELATION, WEIGHT, METADATA_JSON)
-                    VALUES (:6, :7, :8, :9, :10)
-                """, (source, target, relation, weight, meta_json,
-                      source, target, relation, weight, meta_json))
-            else:
-                conn.execute(f"""
-                    INSERT INTO {_T_E()}
-                        (source_key, target_key, relation, weight, metadata_json)
-                    VALUES (?, ?, ?, ?, ?)
-                    ON CONFLICT(source_key, target_key, relation) DO UPDATE SET
-                        weight = ?,
-                        metadata_json = ?
-                """, (source, target, relation, weight, meta_json,
-                      weight, meta_json))
-            return True
-        except Exception as e:
-            log.warning(f"[ONTOLOGY] Add edge failed: {e}")
-            return False
+    """Add or update an ontology edge in-memory."""
+    with _graph_lock:
+        # Check duplicate
+        for edge in _EDGES_OUT.get(source, []):
+            if edge["target_key"] == target and edge["relation"] == relation:
+                edge["weight"] = weight
+                if metadata:
+                    edge["metadata_json"] = json.dumps(metadata, ensure_ascii=False)
+                return True
+        edge = {
+            "source_key": source, "target_key": target,
+            "relation": relation, "weight": weight,
+            "metadata_json": json.dumps(metadata or {}, ensure_ascii=False),
+        }
+        _EDGES_OUT.setdefault(source, []).append(edge)
+        _EDGES_IN.setdefault(target, []).append(edge)
+    return True
 
 
 def get_neighbors(node_key: str, relation: str = "",
                   direction: str = "out") -> list[dict]:
-    """
-    Get neighboring nodes.
-    direction: 'out' (source→target), 'in' (target→source), 'both'
-    """
+    """Get neighboring nodes from in-memory graph."""
     results = []
-    with get_conn() as conn:
+    with _graph_lock:
         if direction in ("out", "both"):
-            if is_oracle():
-                if relation:
-                    rows = conn.execute(f"""
-                        SELECT e.TARGET_KEY, e.RELATION, e.WEIGHT,
-                               e.METADATA_JSON, n.NODE_TYPE,
-                               n.LABEL_AR, n.LABEL_EN, n.DOMAIN
-                        FROM {_T_E()} e
-                        LEFT JOIN {_T_N()} n ON n.NODE_KEY = e.TARGET_KEY
-                        WHERE e.SOURCE_KEY = :1 AND e.RELATION = :2
-                        ORDER BY e.WEIGHT DESC
-                    """, (node_key, relation)).fetchall()
-                else:
-                    rows = conn.execute(f"""
-                        SELECT e.TARGET_KEY, e.RELATION, e.WEIGHT,
-                               e.METADATA_JSON, n.NODE_TYPE,
-                               n.LABEL_AR, n.LABEL_EN, n.DOMAIN
-                        FROM {_T_E()} e
-                        LEFT JOIN {_T_N()} n ON n.NODE_KEY = e.TARGET_KEY
-                        WHERE e.SOURCE_KEY = :1
-                        ORDER BY e.WEIGHT DESC
-                    """, (node_key,)).fetchall()
-            else:
-                if relation:
-                    rows = conn.execute(f"""
-                        SELECT e.target_key, e.relation, e.weight,
-                               e.metadata_json, n.node_type,
-                               n.label_ar, n.label_en, n.domain
-                        FROM {_T_E()} e
-                        LEFT JOIN {_T_N()} n ON n.node_key = e.target_key
-                        WHERE e.source_key = ? AND e.relation = ?
-                        ORDER BY e.weight DESC
-                    """, (node_key, relation)).fetchall()
-                else:
-                    rows = conn.execute(f"""
-                        SELECT e.target_key, e.relation, e.weight,
-                               e.metadata_json, n.node_type,
-                               n.label_ar, n.label_en, n.domain
-                        FROM {_T_E()} e
-                        LEFT JOIN {_T_N()} n ON n.node_key = e.target_key
-                        WHERE e.source_key = ?
-                        ORDER BY e.weight DESC
-                    """, (node_key,)).fetchall()
-            for r in rows:
-                d = dict(r)
-                d["direction"] = "out"
+            for edge in sorted(_EDGES_OUT.get(node_key, []),
+                               key=lambda e: e["weight"], reverse=True):
+                if relation and edge["relation"] != relation:
+                    continue
+                tgt = edge["target_key"]
+                node = _NODES.get(tgt, {})
+                d = {
+                    "target_key": tgt, "relation": edge["relation"],
+                    "weight": edge["weight"], "metadata_json": edge["metadata_json"],
+                    "node_type": node.get("node_type", ""),
+                    "label_ar": node.get("label_ar", ""),
+                    "label_en": node.get("label_en", ""),
+                    "domain": node.get("domain", ""),
+                    "direction": "out",
+                }
                 results.append(d)
 
         if direction in ("in", "both"):
-            if is_oracle():
-                if relation:
-                    rows = conn.execute(f"""
-                        SELECT e.SOURCE_KEY, e.RELATION, e.WEIGHT,
-                               e.METADATA_JSON, n.NODE_TYPE,
-                               n.LABEL_AR, n.LABEL_EN, n.DOMAIN
-                        FROM {_T_E()} e
-                        LEFT JOIN {_T_N()} n ON n.NODE_KEY = e.SOURCE_KEY
-                        WHERE e.TARGET_KEY = :1 AND e.RELATION = :2
-                        ORDER BY e.WEIGHT DESC
-                    """, (node_key, relation)).fetchall()
-                else:
-                    rows = conn.execute(f"""
-                        SELECT e.SOURCE_KEY, e.RELATION, e.WEIGHT,
-                               e.METADATA_JSON, n.NODE_TYPE,
-                               n.LABEL_AR, n.LABEL_EN, n.DOMAIN
-                        FROM {_T_E()} e
-                        LEFT JOIN {_T_N()} n ON n.NODE_KEY = e.SOURCE_KEY
-                        WHERE e.TARGET_KEY = :1
-                        ORDER BY e.WEIGHT DESC
-                    """, (node_key,)).fetchall()
-            else:
-                if relation:
-                    rows = conn.execute(f"""
-                        SELECT e.source_key, e.relation, e.weight,
-                               e.metadata_json, n.node_type,
-                               n.label_ar, n.label_en, n.domain
-                        FROM {_T_E()} e
-                        LEFT JOIN {_T_N()} n ON n.node_key = e.source_key
-                        WHERE e.target_key = ? AND e.relation = ?
-                        ORDER BY e.weight DESC
-                    """, (node_key, relation)).fetchall()
-                else:
-                    rows = conn.execute(f"""
-                        SELECT e.source_key, e.relation, e.weight,
-                               e.metadata_json, n.node_type,
-                               n.label_ar, n.label_en, n.domain
-                        FROM {_T_E()} e
-                        LEFT JOIN {_T_N()} n ON n.node_key = e.source_key
-                        WHERE e.target_key = ?
-                        ORDER BY e.weight DESC
-                    """, (node_key,)).fetchall()
-            for r in rows:
-                d = dict(r)
-                d["direction"] = "in"
+            for edge in sorted(_EDGES_IN.get(node_key, []),
+                               key=lambda e: e["weight"], reverse=True):
+                if relation and edge["relation"] != relation:
+                    continue
+                src = edge["source_key"]
+                node = _NODES.get(src, {})
+                d = {
+                    "source_key": src, "relation": edge["relation"],
+                    "weight": edge["weight"], "metadata_json": edge["metadata_json"],
+                    "node_type": node.get("node_type", ""),
+                    "label_ar": node.get("label_ar", ""),
+                    "label_en": node.get("label_en", ""),
+                    "domain": node.get("domain", ""),
+                    "direction": "in",
+                }
                 results.append(d)
-
     return results
 
 
@@ -487,88 +355,73 @@ def find_related_tables(question: str, limit: int = 8) -> list[str]:
         return []
 
     try:
-        with get_conn() as conn:
-            # Load all concept/table/metric nodes
-            if is_oracle():
-                rows = conn.execute(f"""
-                    SELECT NODE_KEY, NODE_TYPE, LABEL_AR, LABEL_EN, DOMAIN
-                    FROM {_T_N()}
-                    WHERE NODE_TYPE IN ('concept', 'table', 'metric')
-                """).fetchall()
-            else:
-                rows = conn.execute(f"""
-                    SELECT node_key, node_type, label_ar, label_en, domain
-                    FROM {_T_N()}
-                    WHERE node_type IN ('concept', 'table', 'metric')
-                """).fetchall()
+        with _graph_lock:
+            candidate_nodes = [
+                (key, node) for key, node in _NODES.items()
+                if node.get("node_type") in ("concept", "table", "metric")
+            ]
 
-            scored_keys: list[tuple[str, str, float]] = []
+        scored_keys: list[tuple[str, str, float]] = []
 
-            for r in rows:
-                row_dict = dict(r)
-                label_ar = row_dict.get("label_ar") or row_dict.get("LABEL_AR") or ""
-                label_en = row_dict.get("label_en") or row_dict.get("LABEL_EN") or ""
-                node_key = row_dict.get("node_key") or row_dict.get("NODE_KEY") or ""
-                node_type = row_dict.get("node_type") or row_dict.get("NODE_TYPE") or ""
+        for node_key, node in candidate_nodes:
+            label_ar = node.get("label_ar", "")
+            label_en = node.get("label_en", "")
+            node_type = node.get("node_type", "")
 
-                score = 0.0
+            score = 0.0
 
-                # Method 1: Full label substring match (highest confidence)
-                label_ar_norm = _normalize_arabic(label_ar)
-                label_en_lower = label_en.lower()
-                if label_ar_norm and label_ar_norm in q_normalized:
-                    score = 3.0
-                elif label_en_lower and label_en_lower in q_normalized:
-                    score = 2.5
+            # Method 1: Full label substring match (highest confidence)
+            label_ar_norm = _normalize_arabic(label_ar)
+            label_en_lower = label_en.lower()
+            if label_ar_norm and label_ar_norm in q_normalized:
+                score = 3.0
+            elif label_en_lower and label_en_lower in q_normalized:
+                score = 2.5
 
-                # Method 2: Token overlap matching
-                if score == 0.0:
-                    label_tokens = _tokenize_arabic(label_ar)
-                    if label_en:
-                        label_tokens.update(_tokenize_arabic(label_en))
-                    if label_tokens:
-                        overlap = q_tokens & label_tokens
-                        if overlap:
-                            # Score based on proportion of label tokens matched
-                            token_score = len(overlap) / len(label_tokens)
-                            if token_score >= 0.5:  # at least half the label tokens match
-                                score = 1.5 * token_score
+            # Method 2: Token overlap matching
+            if score == 0.0:
+                label_tokens = _tokenize_arabic(label_ar)
+                if label_en:
+                    label_tokens.update(_tokenize_arabic(label_en))
+                if label_tokens:
+                    overlap = q_tokens & label_tokens
+                    if overlap:
+                        token_score = len(overlap) / len(label_tokens)
+                        if token_score >= 0.5:
+                            score = 1.5 * token_score
 
-                # Method 3: Arabic root/stem partial matching (strict)
-                # Only match if root is 4+ chars and covers >60% of the token
-                if score == 0.0 and label_ar_norm:
-                    label_words = label_ar_norm.split()
-                    for lw in label_words:
-                        if len(lw) >= 4:
-                            root = lw[:4]
-                            for qt in q_tokens:
-                                if len(qt) >= 4 and qt.startswith(root):
-                                    # Root must be >60% of query token to avoid noise
-                                    if len(root) / len(qt) >= 0.6:
-                                        score = max(score, 0.8)
-                                        break
+            # Method 3: Arabic root/stem partial matching (strict)
+            if score == 0.0 and label_ar_norm:
+                label_words = label_ar_norm.split()
+                for lw in label_words:
+                    if len(lw) >= 4:
+                        root = lw[:4]
+                        for qt in q_tokens:
+                            if len(qt) >= 4 and qt.startswith(root):
+                                if len(root) / len(qt) >= 0.6:
+                                    score = max(score, 0.8)
+                                    break
 
-                if score > 0:
-                    scored_keys.append((node_key, node_type, score))
+            if score > 0:
+                scored_keys.append((node_key, node_type, score))
 
-            # Sort by score descending, filter low-confidence matches
-            scored_keys = [(k, t, s) for k, t, s in scored_keys if s >= 1.0]
-            scored_keys.sort(key=lambda x: -x[2])
+        # Sort by score descending, filter low-confidence matches
+        scored_keys = [(k, t, s) for k, t, s in scored_keys if s >= 1.0]
+        scored_keys.sort(key=lambda x: -x[2])
 
-            for key, ntype, score in scored_keys[:8]:
-                if ntype == "table" and key.startswith("tbl:"):
-                    tbl_name = key.replace("tbl:", "")
-                    matched_tables[tbl_name] = max(matched_tables.get(tbl_name, 0), score)
-                elif ntype in ("concept", "metric"):
-                    # Get tables connected to this concept
-                    neighbors = get_neighbors(key, relation=Relation.USED_BY, direction="out")
-                    for n in neighbors:
-                        target = n.get("target_key") or n.get("TARGET_KEY", "")
-                        if target.startswith("tbl:"):
-                            tbl_name = target.replace("tbl:", "")
-                            matched_tables[tbl_name] = max(
-                                matched_tables.get(tbl_name, 0), score * 0.9
-                            )
+        for key, ntype, score in scored_keys[:8]:
+            if ntype == "table" and key.startswith("tbl:"):
+                tbl_name = key.replace("tbl:", "")
+                matched_tables[tbl_name] = max(matched_tables.get(tbl_name, 0), score)
+            elif ntype in ("concept", "metric"):
+                neighbors = get_neighbors(key, relation=Relation.USED_BY, direction="out")
+                for n in neighbors:
+                    target = n.get("target_key", "")
+                    if target.startswith("tbl:"):
+                        tbl_name = target.replace("tbl:", "")
+                        matched_tables[tbl_name] = max(
+                            matched_tables.get(tbl_name, 0), score * 0.9
+                        )
 
     except Exception as e:
         log.debug(f"[ONTOLOGY] find_related_tables failed: {e}")
@@ -579,22 +432,20 @@ def find_related_tables(question: str, limit: int = 8) -> list[str]:
 
 
 def get_ontology_stats() -> dict:
-    """Get ontology graph statistics."""
-    with get_conn() as conn:
-        nodes_row = conn.execute(f"""
-            SELECT COUNT(*) AS total_nodes,
-                   COUNT(DISTINCT node_type) AS node_types,
-                   COUNT(DISTINCT domain) AS domains
-            FROM {_T_N()}
-        """).fetchone()
-
-        edges_row = conn.execute(f"""
-            SELECT COUNT(*) AS total_edges,
-                   COUNT(DISTINCT relation) AS relation_types
-            FROM {_T_E()}
-        """).fetchone()
-
-        return {
-            "nodes": dict(nodes_row) if nodes_row else {},
-            "edges": dict(edges_row) if edges_row else {},
-        }
+    """Get ontology graph statistics from in-memory graph."""
+    with _graph_lock:
+        node_types = {n.get("node_type", "") for n in _NODES.values()}
+        domains = {n.get("domain", "") for n in _NODES.values()}
+        all_edges = [e for edges in _EDGES_OUT.values() for e in edges]
+        relations = {e["relation"] for e in all_edges}
+    return {
+        "nodes": {
+            "total_nodes": len(_NODES),
+            "node_types": len(node_types),
+            "domains": len(domains),
+        },
+        "edges": {
+            "total_edges": len(all_edges),
+            "relation_types": len(relations),
+        },
+    }

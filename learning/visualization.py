@@ -3,15 +3,10 @@ learning/visualization.py — AI Visualization Intelligence
 Learns optimal chart types based on data shape, domain, user feedback.
 Provides smart chart recommendations for any query result.
 """
-import json
-import hashlib
 import logging
 from typing import Optional
-from .store import get_conn, tbl, is_oracle
 
 log = logging.getLogger("learning.viz")
-
-_T = lambda: tbl("viz_rules")
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -116,17 +111,7 @@ def recommend_chart(
     """
     data_shape = analyze_data_shape(rows, sub_intent)
 
-    # 1. Check learned rules
-    learned = _get_learned_rule(domain, sub_intent, data_shape)
-    if learned and learned.get("score", 0) >= 3.0:
-        return {
-            "chart_type": learned["best_chart"],
-            "data_shape": data_shape,
-            "source": "learned",
-            "confidence": min(1.0, learned["score"] / 10),
-        }
-
-    # 2. Default by data shape
+    # Default by data shape
     chart_type = _DEFAULT_CHARTS.get(data_shape, "table")
 
     # Domain-specific overrides
@@ -142,24 +127,6 @@ def recommend_chart(
         "source": "default",
         "confidence": 0.6,
     }
-
-
-def _get_learned_rule(domain: str, sub_intent: str,
-                      data_shape: str) -> dict | None:
-    """Get learned visualization rule."""
-    rule_key = _make_rule_key(domain, sub_intent, data_shape)
-    with get_conn() as conn:
-        if is_oracle():
-            row = conn.execute(f"""
-                SELECT BEST_CHART, SCORE, USAGE_COUNT, FEEDBACK_SCORE
-                FROM {_T()} WHERE RULE_KEY = :1
-            """, (rule_key,)).fetchone()
-        else:
-            row = conn.execute(f"""
-                SELECT best_chart, score, usage_count, feedback_score
-                FROM {_T()} WHERE rule_key = ?
-            """, (rule_key,)).fetchone()
-        return dict(row) if row else None
 
 
 def _make_rule_key(domain: str, sub_intent: str, data_shape: str) -> str:
@@ -178,59 +145,10 @@ def record_chart_selection(
     chart_type: str,
     feedback_score: float = 0.0,
 ) -> None:
-    """Record that a chart type was used/selected for a data shape."""
-    rule_key = _make_rule_key(domain, sub_intent, data_shape)
-
-    with get_conn() as conn:
-        if is_oracle():
-            conn.execute(f"""
-                MERGE INTO {_T()} t
-                USING (SELECT :1 AS rk FROM DUAL) s
-                ON (t.RULE_KEY = s.rk)
-                WHEN MATCHED THEN UPDATE SET
-                    BEST_CHART = CASE
-                        WHEN :2 > t.FEEDBACK_SCORE THEN :3
-                        ELSE t.BEST_CHART END,
-                    SCORE = t.SCORE + 1 + :4,
-                    USAGE_COUNT = t.USAGE_COUNT + 1,
-                    FEEDBACK_SCORE = GREATEST(t.FEEDBACK_SCORE, :5),
-                    UPDATED_AT = SYSTIMESTAMP
-                WHEN NOT MATCHED THEN INSERT
-                    (RULE_KEY, DOMAIN, SUB_INTENT, DATA_SHAPE, BEST_CHART,
-                     SCORE, USAGE_COUNT, FEEDBACK_SCORE)
-                VALUES (:6, :7, :8, :9, :10, 1 + :11, 1, :12)
-            """, (rule_key, feedback_score, chart_type, feedback_score,
-                  feedback_score,
-                  rule_key, domain, sub_intent, data_shape, chart_type,
-                  feedback_score, feedback_score))
-        else:
-            conn.execute(f"""
-                INSERT INTO {_T()}
-                    (rule_key, domain, sub_intent, data_shape, best_chart,
-                     score, usage_count, feedback_score)
-                VALUES (?, ?, ?, ?, ?, 1 + ?, 1, ?)
-                ON CONFLICT(rule_key) DO UPDATE SET
-                    best_chart = CASE
-                        WHEN ? > feedback_score THEN ?
-                        ELSE best_chart END,
-                    score = score + 1 + ?,
-                    usage_count = usage_count + 1,
-                    feedback_score = MAX(feedback_score, ?),
-                    updated_at = datetime('now')
-            """, (rule_key, domain, sub_intent, data_shape, chart_type,
-                  feedback_score, feedback_score,
-                  feedback_score, chart_type,
-                  feedback_score, feedback_score))
+    """No-op — chart selection learning removed (no DB)."""
+    pass
 
 
 def get_viz_stats() -> dict:
-    """Get visualization learning statistics."""
-    with get_conn() as conn:
-        row = conn.execute(f"""
-            SELECT COUNT(*) AS total_rules,
-                   COUNT(DISTINCT data_shape) AS data_shapes,
-                   COUNT(DISTINCT best_chart) AS chart_types,
-                   SUM(usage_count) AS total_selections
-            FROM {_T()}
-        """).fetchone()
-        return dict(row) if row else {}
+    """Stub — no DB."""
+    return {}

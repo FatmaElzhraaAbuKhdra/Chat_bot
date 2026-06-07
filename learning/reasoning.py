@@ -601,43 +601,10 @@ def record_successful_plan(
     sql:      str,
     success:  bool = True,
 ) -> None:
-    """
-    Persist a successful plan→SQL execution for adaptive learning.
-    Stored in AI_LEARNED_PATTERNS (written path) as a structured pattern.
-    Future: feed back into _detect_metric / _detect_dimension improvement.
-    """
+    """Log a successful plan — no DB persistence (tables removed)."""
     if not success or not plan.metric:
         return
-    try:
-        from .store import get_conn, tbl, is_oracle
-        _t = tbl("learned_patterns")
-        pattern = json.dumps({
-            'question':  question[:200],
-            'intent':    plan.intent,
-            'metric':    plan.metric,
-            'dimension': plan.dimension,
-            'agg':       plan.aggregation,
-            'tables':    plan.required_tables,
-            'confidence':plan.confidence,
-        }, ensure_ascii=False)
-
-        with get_conn() as conn:
-            if is_oracle():
-                conn.execute(f"""
-                    INSERT INTO {_t}
-                        (QUESTION, SUB_INTENT, DOMAIN, ENTITIES_JSON,
-                         CONFIDENCE, SOURCE, USAGE_COUNT, SUCCESS_COUNT)
-                    VALUES (:1, :2, :3, :4, :5, 'reasoning_engine', 1, 1)
-                """, (question[:200], plan.intent or 'general',
-                      plan.domain or '', pattern, plan.confidence))
-            else:
-                conn.execute(f"""
-                    INSERT INTO {_t}
-                        (question, sub_intent, domain, entities_json,
-                         confidence, source, usage_count, success_count)
-                    VALUES (?, ?, ?, ?, ?, 'reasoning_engine', 1, 1)
-                """, (question[:200], plan.intent or 'general',
-                      plan.domain or '', pattern, plan.confidence))
-        log.debug(f"[REASONING] Recorded plan: {plan.intent}/{plan.metric}")
-    except Exception as e:
-        log.debug(f"[REASONING] record_successful_plan: {e}")
+    log.info(
+        f"[REASONING] plan metric={plan.metric} intent={plan.intent} "
+        f"domain={plan.domain} confidence={plan.confidence:.2f}"
+    )

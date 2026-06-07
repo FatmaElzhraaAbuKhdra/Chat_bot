@@ -1,18 +1,22 @@
 """
 learning/conversation_bi.py — Conversational BI Context Engine
 Maintains conversation context for multi-step analytics.
-Enables follow-up queries like "break it down by month" or "show only top 5".
+Context stored in-memory (no DB persistence).
 """
-import json
 import re
-import time
+import json
 import logging
+import threading
 from typing import Optional
-from .store import get_conn, tbl, is_oracle
 
 log = logging.getLogger("learning.bi")
 
-_T = lambda: tbl("bi_context")
+# ═══════════════════════════════════════════════════════════════════
+# In-memory store
+# ═══════════════════════════════════════════════════════════════════
+
+_BI_STORE: dict[str, dict] = {}
+_bi_lock = threading.Lock()
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -28,117 +32,44 @@ def _empty_context() -> dict:
         "last_domain": None,
         "last_tables": [],
         "last_filters": {},
-        "txn_context": {},          # FIX: comment-derived txn flags (e.g. {"INVTYPE": 0})
-        "last_entity": None,        # FIX: primary entity/table of the last query
-        # ── Conversational-BI state (current business object the user is on) ──
+        "txn_context": {},          # comment-derived txn flags (e.g. {"INVTYPE": 0})
+        "last_entity": None,        # primary entity/table of the last query
+        # ── Conversational-BI state ──
         "current_entity": None,        # business object type: invoice|customer|supplier|item|account
         "current_record": None,        # {"entity":..., "id":...} — STICKY across reference turns
-        "current_customer_id": None,   # captured when a query is scoped to a specific customer
-        "current_supplier_id": None,   # captured when scoped to a specific supplier
-        "current_drill_path": [],      # breadcrumb of {"entity","id"} as the user drills
+        "current_customer_id": None,
+        "current_supplier_id": None,
+        "current_drill_path": [],
         "last_columns": [],
         "last_row_count": 0,
         "last_chart_type": None,
-        "drill_stack": [],          # stack of previous contexts for drill-up
-        "applied_modifiers": [],    # "top 5", "by month", "ascending"
+        "drill_stack": [],
+        "applied_modifiers": [],
         "conversation_turns": 0,
     }
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Context CRUD
+# Context CRUD — in-memory
 # ═══════════════════════════════════════════════════════════════════
 
 def get_context(session_id: str) -> dict:
     """Get or create BI context for a session."""
-    with get_conn() as conn:
-        if is_oracle():
-            row = conn.execute(f"""
-                SELECT CONTEXT_JSON FROM {_T()}
-                WHERE SESSION_ID = :1
-                ORDER BY UPDATED_AT DESC
-                FETCH FIRST 1 ROW ONLY
-            """, (session_id,)).fetchone()
-        else:
-            row = conn.execute(f"""
-                SELECT context_json FROM {_T()}
-                WHERE session_id = ?
-                ORDER BY updated_at DESC LIMIT 1
-            """, (session_id,)).fetchone()
-
-    if row:
-        # FIX: SQLite returns a bare sqlite3.Row (no .get); normalize to dict first
-        d = dict(row)
-        raw = d.get("context_json") or d.get("CONTEXT_JSON", "{}")
-        try:
-            return json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
-            pass
-
-    return _empty_context()
+    with _bi_lock:
+        return dict(_BI_STORE.get(session_id, _empty_context()))
 
 
 def save_context(session_id: str, context: dict,
                  user_id: str = "") -> None:
-    """Save BI context for a session."""
-    ctx_json = json.dumps(context, ensure_ascii=False, default=str)
-
-    with get_conn() as conn:
-        if is_oracle():
-            # Check if exists
-            exists = conn.execute(f"""
-                SELECT ID FROM {_T()} WHERE SESSION_ID = :1
-                FETCH FIRST 1 ROW ONLY
-            """, (session_id,)).fetchone()
-
-            if exists:
-                exists = dict(exists)  # ROW SAFETY: normalize before .get()
-                eid = exists.get("id") or exists.get("ID")
-                conn.execute(f"""
-                    UPDATE {_T()}
-                    SET CONTEXT_JSON = :1, UPDATED_AT = SYSTIMESTAMP
-                    WHERE ID = :2
-                """, (ctx_json, eid))
-            else:
-                conn.execute(f"""
-                    INSERT INTO {_T()}
-                        (SESSION_ID, USER_ID, CONTEXT_JSON,
-                         EXPIRES_AT)
-                    VALUES (:1, :2, :3,
-                            SYSTIMESTAMP + INTERVAL '24' HOUR)
-                """, (session_id, user_id, ctx_json))
-        else:
-            exists = conn.execute(f"""
-                SELECT id FROM {_T()} WHERE session_id = ? LIMIT 1
-            """, (session_id,)).fetchone()
-
-            if exists:
-                conn.execute(f"""
-                    UPDATE {_T()}
-                    SET context_json = ?, updated_at = datetime('now')
-                    WHERE id = ?
-                """, (ctx_json, exists["id"]))
-            else:
-                conn.execute(f"""
-                    INSERT INTO {_T()}
-                        (session_id, user_id, context_json,
-                         expires_at)
-                    VALUES (?, ?, ?,
-                            datetime('now', '+24 hours'))
-                """, (session_id, user_id, ctx_json))
+    """Save BI context for a session (in-memory)."""
+    with _bi_lock:
+        _BI_STORE[session_id] = dict(context)
 
 
 def clear_context(session_id: str) -> None:
     """Clear BI context for a session."""
-    with get_conn() as conn:
-        if is_oracle():
-            conn.execute(f"""
-                DELETE FROM {_T()} WHERE SESSION_ID = :1
-            """, (session_id,))
-        else:
-            conn.execute(f"""
-                DELETE FROM {_T()} WHERE session_id = ?
-            """, (session_id,))
+    with _bi_lock:
+        _BI_STORE.pop(session_id, None)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -176,9 +107,8 @@ def update_context_after_query(
         }
         stack = ctx.get("drill_stack", [])
         stack.append(drill_entry)
-        ctx["drill_stack"] = stack[-5:]  # keep last 5
+        ctx["drill_stack"] = stack[-5:]
 
-    # Update with new query info
     ctx["last_query"] = question
     ctx["last_sql"] = sql
     ctx["last_intent"] = sub_intent
@@ -188,19 +118,12 @@ def update_context_after_query(
     ctx["last_columns"] = columns
     ctx["last_row_count"] = row_count
     ctx["last_chart_type"] = chart_type
-    # FIX 5: txn_context / last_entity are sticky — NEVER auto-reset. They change
-    # only when the new query carries its own (explicit switch), per the context rule.
     if txn_context:
         ctx["txn_context"] = txn_context
     if last_entity:
         ctx["last_entity"] = last_entity
-    # ── Conversational-BI state ──
-    # current_entity tracks the focus type; updated when known.
     if current_entity:
         ctx["current_entity"] = current_entity
-    # current_record is STICKY: only replaced when THIS query establishes a new
-    # record. A bare reference turn ("العميل", "رقمه") carries no record, so the
-    # previous one persists → no need to re-ask the invoice number.
     if current_record and current_record.get("id"):
         ctx["current_record"] = current_record
         path = ctx.get("current_drill_path", []) or []
@@ -212,7 +135,7 @@ def update_context_after_query(
     if current_supplier_id:
         ctx["current_supplier_id"] = current_supplier_id
     ctx["conversation_turns"] = ctx.get("conversation_turns", 0) + 1
-    ctx["applied_modifiers"] = []  # reset modifiers for new query
+    ctx["applied_modifiers"] = []
 
     save_context(session_id, ctx, user_id)
     return ctx
@@ -223,7 +146,6 @@ def update_context_after_query(
 # ═══════════════════════════════════════════════════════════════════
 
 _MODIFIER_PATTERNS = {
-    # Arabic + English patterns for query modifiers
     "top_n": [
         r"اعلي\s+(\d+)", r"اعلى\s+(\d+)", r"أعلى\s+(\d+)",
         r"top\s+(\d+)", r"اول\s+(\d+)", r"أول\s+(\d+)",
@@ -252,7 +174,6 @@ _MODIFIER_PATTERNS = {
 
 def detect_modifier(question: str) -> dict | None:
     """Detect if a question is a modifier on the previous query."""
-    import re
     question_lower = question.lower().strip()
 
     for mod_type, patterns in _MODIFIER_PATTERNS.items():
@@ -270,20 +191,15 @@ def detect_modifier(question: str) -> dict | None:
 
 
 def is_followup(question: str, session_id: str) -> bool:
-    """
-    Determine if a question is a follow-up to the previous query.
-    Returns True if the question references the previous context.
-    """
+    """Determine if a question is a follow-up to the previous query."""
     ctx = get_context(session_id)
     if not ctx.get("last_query"):
-        return False  # no previous context
+        return False
 
-    # Short questions (< 5 words) with modifiers are likely follow-ups
     words = question.strip().split()
     if len(words) <= 5 and detect_modifier(question):
         return True
 
-    # Pronouns and references
     followup_cues = [
         "هؤلاء", "هذه", "هذا", "دول", "اللي فاتت", "السابق",
         "نفس", "بتاعهم", "بتاعت", "the same", "these", "those",
@@ -293,16 +209,10 @@ def is_followup(question: str, session_id: str) -> bool:
     if any(cue in q_lower for cue in followup_cues):
         return True
 
-    # FIX 3: a detail/instance reference with no new domain is a continuation —
-    # e.g. "تفاصيل فاتورة 10", "اعرضها", "رقم 10" — so it inherits prior context.
     if re.search(r'(تفاصيل|اعرضها|اعرضه|رقم\s*\d|فاتور[ةه]\s*\d|^\s*\d+\s*$)',
                  question.strip()):
         return True
 
-    # Conversational-BI reference: a SHORT attribute/pronoun query about the
-    # CURRENT record (العميل / رقمه / العنوان / الهاتف / آخر دفعة / هو) is a
-    # follow-up. Gated on an existing current_record so plural/list queries
-    # ("العملاء", "المخازن", "عدد الموظفين") never match.
     if ctx.get("current_record"):
         qn = question.strip()
         _ref = (r'(^|\s)(هو|هي|هم|بياناته|بياناتها|رقمه|رقمها|عنوانه|عنوانها|'
@@ -321,8 +231,6 @@ def build_followup_context(session_id: str) -> str:
         return ""
 
     parts = ["══ سياق المحادثة السابق ══"]
-    # Conversational-BI: inject the CURRENT record deterministically (from session
-    # state, not guessed) so references resolve to it without re-asking its number.
     cur = ctx.get("current_record")
     if cur and cur.get("id"):
         line = f"السجل الحالي محل النقاش: {cur.get('entity')} رقم {cur.get('id')}"
@@ -338,7 +246,6 @@ def build_followup_context(session_id: str) -> str:
     if ctx.get("last_tables"):
         parts.append(f"الجداول: {', '.join(ctx['last_tables'])}")
     if ctx.get("last_sql"):
-        # Truncate long SQL
         sql = ctx["last_sql"][:300]
         parts.append(f"SQL السابق: {sql}")
     if ctx.get("last_filters"):
@@ -348,23 +255,9 @@ def build_followup_context(session_id: str) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Cleanup
+# Cleanup stub
 # ═══════════════════════════════════════════════════════════════════
 
 def cleanup_expired() -> int:
-    """Remove expired BI contexts."""
-    with get_conn() as conn:
-        if is_oracle():
-            cur = conn.execute(f"""
-                DELETE FROM {_T()}
-                WHERE EXPIRES_AT IS NOT NULL AND EXPIRES_AT < SYSTIMESTAMP
-            """)
-        else:
-            cur = conn.execute(f"""
-                DELETE FROM {_T()}
-                WHERE expires_at IS NOT NULL AND expires_at < datetime('now')
-            """)
-        deleted = cur.rowcount
-        if deleted:
-            log.info(f"[BI] Cleaned up {deleted} expired contexts")
-        return deleted
+    """No-op — in-memory contexts expire naturally when the process restarts."""
+    return 0

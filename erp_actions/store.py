@@ -182,58 +182,20 @@ def _cleanup():
                 del _actions[k]
 
 
-# ── DB Persistence (best-effort) ─────────────────────────────────
+# ── DB Persistence removed — action_log / action_audit tables dropped ──
 
 def _persist_action(plan: ActionPlan):
-    """Persist action to learning DB for crash recovery."""
-    try:
-        from learning.store import get_conn, tbl, is_oracle
-        data_json = json.dumps(plan.to_dict(), ensure_ascii=False, default=str)
-        with get_conn() as conn:
-            if is_oracle():
-                conn.execute(f"""
-                    MERGE INTO {tbl('action_log')} t
-                    USING (SELECT :1 AS ACTION_ID FROM DUAL) s
-                    ON (t.ACTION_ID = s.ACTION_ID)
-                    WHEN MATCHED THEN UPDATE SET
-                        ACTION_DATA = :2, STATUS = :3, UPDATED_AT = SYSTIMESTAMP
-                    WHEN NOT MATCHED THEN INSERT
-                        (ACTION_ID, ACTION_TYPE, STATUS, USER_ID, ACTION_DATA)
-                    VALUES (:4, :5, :6, :7, :8)
-                """, (plan.id, data_json, plan.status,
-                      plan.id, plan.action_type, plan.status, plan.user_id, data_json))
-            else:
-                conn.execute(f"""
-                    INSERT OR REPLACE INTO {tbl('action_log')}
-                        (action_id, action_type, status, user_id, action_data)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (plan.id, plan.action_type, plan.status, plan.user_id, data_json))
-    except Exception:
-        pass  # Best-effort; in-memory is the primary store
+    """Log action plan — no DB (tables removed)."""
+    log.info(
+        f"[ACTION] id={plan.id} type={plan.action_type} "
+        f"status={plan.status} user={plan.user_id}"
+    )
 
 
 def _persist_audit(entry: AuditEntry):
-    """Persist audit entry to DB."""
-    try:
-        from learning.store import get_conn, tbl, is_oracle
-        with get_conn() as conn:
-            if is_oracle():
-                conn.execute(f"""
-                    INSERT INTO {tbl('action_audit')}
-                        (AUDIT_ID, ACTION_ID, USER_ID, ACTION_TYPE,
-                         STATUS_FROM, STATUS_TO, DETAIL, SQL_EXECUTED)
-                    VALUES (:1, :2, :3, :4, :5, :6, :7, :8)
-                """, (entry.id, entry.action_id, entry.user_id, entry.action_type,
-                      entry.status_from, entry.status_to, entry.detail,
-                      entry.sql_executed[:500] if entry.sql_executed else ""))
-            else:
-                conn.execute(f"""
-                    INSERT INTO {tbl('action_audit')}
-                        (audit_id, action_id, user_id, action_type,
-                         status_from, status_to, detail, sql_executed)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (entry.id, entry.action_id, entry.user_id, entry.action_type,
-                      entry.status_from, entry.status_to, entry.detail,
-                      entry.sql_executed[:500] if entry.sql_executed else ""))
-    except Exception:
-        pass
+    """Log audit entry — no DB (tables removed)."""
+    log.info(
+        f"[AUDIT] id={entry.id} action={entry.action_id} "
+        f"user={entry.user_id} {entry.status_from}->{entry.status_to} "
+        f"detail={str(entry.detail)[:120]}"
+    )

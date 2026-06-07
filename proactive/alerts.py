@@ -216,79 +216,14 @@ class AlertStore:
 
     # ── Persistence (DB-backed crash recovery) ───────────────────
     def persist_to_db(self):
-        """Save current active alerts to DB for crash recovery."""
-        try:
-            from learning.store import get_conn, tbl, is_oracle
-            alerts_data = []
-            with self._lock:
-                for a in self._active.values():
-                    alerts_data.append(a.to_dict())
-
-            data_json = json.dumps(alerts_data, ensure_ascii=False, default=str)
-
-            with get_conn() as conn:
-                if is_oracle():
-                    # Upsert: delete old snapshot, insert new
-                    conn.execute(f"DELETE FROM {tbl('alert_snapshot')} WHERE SNAPSHOT_KEY = :1", ("active",))
-                    conn.execute(f"""
-                        INSERT INTO {tbl('alert_snapshot')} (SNAPSHOT_KEY, SNAPSHOT_DATA)
-                        VALUES (:1, :2)
-                    """, ("active", data_json))
-                else:
-                    conn.execute(f"DELETE FROM {tbl('alert_snapshot')} WHERE snapshot_key = ?", ("active",))
-                    conn.execute(f"""
-                        INSERT INTO {tbl('alert_snapshot')} (snapshot_key, snapshot_data)
-                        VALUES (?, ?)
-                    """, ("active", data_json))
-            log.debug(f"[ALERTS] Persisted {len(alerts_data)} alerts to DB")
-        except Exception as e:
-            log.debug(f"[ALERTS] Persist failed (non-critical): {e}")
+        """No-op — alert_snapshot table removed; alerts are in-memory only."""
+        with self._lock:
+            count = len(self._active)
+        log.debug(f"[ALERTS] {count} alerts in memory (no DB persistence)")
 
     def restore_from_db(self):
-        """Restore active alerts from DB snapshot after restart."""
-        try:
-            from learning.store import get_conn, tbl, is_oracle
-            with get_conn() as conn:
-                if is_oracle():
-                    row = conn.execute(
-                        f"SELECT SNAPSHOT_DATA FROM {tbl('alert_snapshot')} WHERE SNAPSHOT_KEY = :1",
-                        ("active",)
-                    ).fetchone()
-                else:
-                    row = conn.execute(
-                        f"SELECT snapshot_data FROM {tbl('alert_snapshot')} WHERE snapshot_key = ?",
-                        ("active",)
-                    ).fetchone()
-
-            if not row:
-                return
-
-            data_json = dict(row).get("snapshot_data", dict(row).get("SNAPSHOT_DATA", "[]"))
-            alerts_data = json.loads(data_json)
-
-            with self._lock:
-                for ad in alerts_data:
-                    alert = Alert(
-                        id=ad.get("id", uuid.uuid4().hex[:12]),
-                        category=ad.get("category", ""),
-                        severity=ad.get("severity", "info"),
-                        title=ad.get("title", ""),
-                        message=ad.get("message", ""),
-                        impact=ad.get("impact", ""),
-                        recommendation=ad.get("recommendation", ""),
-                        value=float(ad.get("value", 0)),
-                        change_pct=float(ad.get("change_pct", 0)),
-                        timestamp=float(ad.get("timestamp", time.time())),
-                        resolved=ad.get("resolved", False),
-                        acknowledged=ad.get("acknowledged", False),
-                        check_key=ad.get("category", "") + "_" + ad.get("title", "")[:20],
-                    )
-                    if not alert.resolved:
-                        self._active[alert.check_key] = alert
-
-            log.info(f"[ALERTS] Restored {len(self._active)} alerts from DB")
-        except Exception as e:
-            log.debug(f"[ALERTS] Restore failed (non-critical, starting fresh): {e}")
+        """No-op — alert_snapshot table removed; start fresh each process."""
+        log.debug("[ALERTS] restore_from_db: no DB (starting fresh)")
 
 
 # Global singleton
