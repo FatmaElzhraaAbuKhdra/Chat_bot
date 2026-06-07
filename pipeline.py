@@ -1111,6 +1111,10 @@ async def _execute_llm_controlled(
         data, err = await _try_execute(sql)
 
         # Auto-fix loop: if SQL failed, ask LLM to fix
+        # TPM budget: classify_intent (~700 tok) + generate_sql (~3000 tok) already consumed.
+        # Passing schema_ctx again (~2200 tok) would push auto-fix over Groq 6000 TPM/min.
+        # The failed SQL itself carries the schema structure the LLM needs to fix syntax —
+        # schema_context="" keeps auto-fix under ~1000 tokens so total stays ≤ 6000 TPM.
         if err:
             log.info(f"[PIPELINE] LLM SQL failed, auto-fixing: {err[:150]}")
             fix_question = (
@@ -1120,7 +1124,7 @@ async def _execute_llm_controlled(
                 f"أعد كتابة SQL صحيح يجيب على السؤال. أرجع SQL فقط."
             )
             sql_raw = generate_sql(
-                schema_context=schema_ctx,
+                schema_context="",   # TPM budget: failed SQL already has schema; no full ctx needed
                 question=fix_question,
                 company_code="",
                 fiscal_year="",
