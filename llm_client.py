@@ -221,6 +221,8 @@ def generate_sql(schema_context: str, question: str, company_code: str,
 9. ممنوع تكرار نفس العمود في SELECT أكثر من مرة
 10. ⛔ ممنوع تحويل اسم عربي (خزينة/عميل/مورّد) إلى كود رمزي — الاسم يُبحث بـ LIKE على عمود الاسم النصي حصراً
 11. ⛔ لا تضف WHERE على VOUCH_POSTED أو TRANS_TYPE أو STATUS إلا إذا طلبها المستخدم صراحةً
+    ❌ خطأ: WHERE c.CASH_NAME LIKE '%X%' AND h.VOUCH_POSTED = 1 AND h.TRANS_TYPE = 0
+    ✅ صح:  WHERE c.CASH_NAME LIKE '%X%'
 
 ══ قواعد بناء SQL (syntax فقط) ══
 - ⚠ JOIN بين VOUCHERS و VOUCHERS_DET لازم على العمودين معاً:
@@ -228,6 +230,19 @@ def generate_sql(schema_context: str, question: str, company_code: str,
 - للفترات الزمنية استخدم ADD_MONTHS:
   → آخر 3 شهور: v.VOUCHER_DATE >= ADD_MONTHS(TRUNC(SYSDATE, 'MM'), -3)
   → آخر سنة: v.VOUCHER_DATE >= ADD_MONTHS(TRUNC(SYSDATE), -12)
+
+══ مثال صحيح لاستعلام حركات الخزينة ══
+سؤال: "حركات الخزينة على رفائع الجيمش"
+SQL الصح:
+SELECT h.TRANS_DATE, h.TRANS_CODE, h.TRANS_TYPE, h.NOTES,
+       d.AMOUNT, d.AMOUNT_BEFOR_TAX, d.TAX, c.CASH_NAME
+FROM CASH_TRANS_HEAD h
+JOIN CASH_TRANS_DETAIL d ON d.TRANS_ID = h.TRANS_ID
+JOIN CASHES c ON c.CASH_ID = h.CASH_ID
+WHERE c.CASH_NAME LIKE '%رفائع الجيمش%'
+FETCH FIRST 200 ROWS ONLY
+
+لاحظ: لا يوجد VOUCH_POSTED ولا TRANS_TYPE لأن المستخدم لم يطلبهما.
 
 ══ مصدر المعنى الوحيد ══
 استخدم تعليقات المخطط أعلاه فقط لمعرفة معاني الأعمدة والقيم المرمَّزة (مثل قيم 0/1).
