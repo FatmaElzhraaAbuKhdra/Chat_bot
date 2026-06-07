@@ -1678,7 +1678,8 @@ COMMENT ON COLUMN CASH_TRANS_HEAD.CASH_ID IS
 ⚠ للبحث باسم الخزينة استخدم JOIN مع CASHES على CASH_ID';
 
 COMMENT ON COLUMN CASH_TRANS_HEAD.CHART_CODE IS
-'كود الحساب الرئيسي: مرتبط بـ CHARTS.CHART_CODE';
+'كود الحساب الرئيسي: مرتبط بـ CHARTS.CHART_CODE.
+⚠ CHART_CODE كود محاسبي رمزي (مثل 1010 أو ACC01) — لا تضع اسماً عربياً كقيمته أبداً ولا تستخدمه للبحث عن خزينة أو عميل بالاسم.';
 
 COMMENT ON COLUMN CASH_TRANS_HEAD.COST_CODE IS
 'كود مركز التكلفة: مرتبط بـ COST_CENTERS';
@@ -1832,8 +1833,9 @@ COMMENT ON COLUMN CASHES.CASH_ID IS
 'رقم الخزينة: المفتاح الأساسي';
 
 COMMENT ON COLUMN CASHES.CASH_NAME IS
-'اسم الخزينة بالعربي.
-⚠ عند البحث بالاسم استخدم LIKE دائماً: CASH_NAME LIKE ''%كلمة%'' — لا تستخدم المطابقة التامة لأن المستخدم قد يكتب الاسم بشكل مختلف قليلاً';
+'اسم الخزينة بالعربي — هذا هو الحقل الوحيد للبحث النصي عن الخزينة.
+⚠ أي اسم خزينة مذكور في السؤال يُبحث حصراً بـ CASH_NAME LIKE ''%كلمة%'' (قسّم الاسم واستخدم LIKE لكل كلمة).
+⚠ لا تستخدم CHART_CODE أو STORE_CODE أو CASH_ID كبديل عن CASH_NAME للبحث النصي — هذه أرقام وأكواد وليست نصوصاً.';
 
 COMMENT ON COLUMN CASHES.CASH_NAME_E IS
 'اسم الخزينة بالإنجليزي';
