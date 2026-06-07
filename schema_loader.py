@@ -201,7 +201,11 @@ def _parse_comments_file(sql_text: str) -> tuple[dict, dict]:
     return table_comments, column_comments
 
 
-_MAX_PRIMARY = 12   # cap on comment-matched primary tables (bounds the prompt)
+_MAX_PRIMARY = 3    # cap on comment-matched primary tables — llama-3.1-8b-instant
+                    # Arabic tokenizes at ~1-2 chars/tok; 9-table primary (6169 chars)
+                    # ≈ 3000-6000 tokens overwhelms the 8B model → ORA-00923 (SQL
+                    # truncated before FROM). 3 tables = ~3000 chars = ~1500 tokens,
+                    # leaving the model enough budget to generate correct SQL.
 
 _table_tokens: Optional[dict] = None
 _table_tokens_mtime: float = -1.0
@@ -385,8 +389,8 @@ _SCHEMA_CTX_BUDGET = 4000   # Groq TPM=6000/min — classify_intent ~700 tok +
                              # primary budget=4000 + referenced cap=5 tables → ~5200 chars.
 _COL_DESC_CAP = 160     # per-column cap (median real desc = 47, avg = 58)
 _TBL_DESC_CAP = 300     # per-table cap (was 120 — RC2)
-_MAX_REFERENCED = 5     # P0/F1: FK-referenced (name-only) — reduced from 18 to cap
-                         # total schema context ≤ ~5200 chars for Groq TPM budget
+_MAX_REFERENCED = 3     # FK-referenced (name-only) — reduced from 5; with _MAX_PRIMARY=3
+                         # total schema context targets ~2500-3500 chars for Groq TPM budget
 
 
 def _compact_desc(text: str, cap: int) -> str:

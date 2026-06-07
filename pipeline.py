@@ -1117,7 +1117,8 @@ async def _execute_llm_controlled(
         # The failed SQL itself carries the schema structure the LLM needs to fix syntax —
         # schema_context="" keeps auto-fix under ~1000 tokens so total stays ≤ 6000 TPM.
         if err:
-            log.info(f"[PIPELINE] LLM SQL failed, auto-fixing: {err[:150]}")
+            _sql_ascii = sql[:400].encode("unicode_escape").decode()
+            log.warning(f"[PIPELINE] LLM SQL failed | SQL={_sql_ascii} | ERR={err[:120]}")
             fix_question = (
                 f"الاستعلام التالي فشل:\n{sql}\n\n"
                 f"الخطأ: {err[:300]}\n\n"
