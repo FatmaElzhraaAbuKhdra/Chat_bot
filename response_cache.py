@@ -40,16 +40,24 @@ class CacheEntry:
         return time.time() - self.created_at > self.ttl
 
 
-def _make_key(question: str, company_code: str = "1", fiscal_year: str = "2024") -> str:
-    """Generate cache key from question + context."""
+def _make_key(question: str, company_code: str = "1", fiscal_year: str = "2024",
+              session_ctx: str = "") -> str:
+    """Generate cache key from question + context + session state.
+
+    session_ctx carries session-dependent values (e.g. txn_context INVTYPE) so that
+    the same question with different session states gets different cache entries.
+    This prevents invoice_detail queries from returning a cached cold-session result
+    when the current session has an established INVTYPE.
+    """
     normalized = question.strip().lower()
-    raw = f"{normalized}|{company_code}|{fiscal_year}"
+    raw = f"{normalized}|{company_code}|{fiscal_year}|{session_ctx}"
     return hashlib.md5(raw.encode()).hexdigest()
 
 
-def get(question: str, company_code: str = "1", fiscal_year: str = "2024") -> Optional[CacheEntry]:
+def get(question: str, company_code: str = "1", fiscal_year: str = "2024",
+        session_ctx: str = "") -> Optional[CacheEntry]:
     """Get cached response if valid."""
-    key = _make_key(question, company_code, fiscal_year)
+    key = _make_key(question, company_code, fiscal_year, session_ctx)
     entry = _cache.get(key)
     if entry and not entry.is_expired:
         entry.hit_count += 1
@@ -64,13 +72,14 @@ def put(question: str, company_code: str, fiscal_year: str,
         answer: str, sql: str = "", row_count: int = 0,
         method: str = "", chart_data: dict = None,
         suggestions: list = None, insights: list = None,
-        template_used: str = "", ttl: float = _DEFAULT_TTL):
+        template_used: str = "", ttl: float = _DEFAULT_TTL,
+        session_ctx: str = ""):
     """Cache a pipeline response."""
     # Don't cache errors or empty results
     if method == "error" or not answer:
         return
 
-    key = _make_key(question, company_code, fiscal_year)
+    key = _make_key(question, company_code, fiscal_year, session_ctx)
     _cache[key] = CacheEntry(
         key=key,
         answer=answer,

@@ -185,10 +185,28 @@ def _foreign_comment_nouns(question: str) -> list[str]:
             n = _normalize_concept(w)
             if len(n) >= 3:
                 known.add(n)
+
+        # If the question already contains at least one recognized schema word,
+        # any remaining unknown ال-nouns are data values (proper names like customer/
+        # cashier/branch names), not unknown schema concepts — don't flag them.
+        # Example: "حركات الخزينة على رفائع الجيمش"
+        #   → "الخزينة" is a schema word → "رفائع" is a search value, not flagged.
+        # Example: "عدد فواتير الطقس"
+        #   → "فواتير" is a schema word BUT "الطقس" is ال-prefixed and unknown
+        #   → still flagged because it follows a count pattern with no name context.
+        #
+        # Simpler safe rule: if ANY ال-prefixed word in the question IS in known,
+        # the question is schema-grounded → skip the foreign-noun check entirely.
+        al_words = [w for w in re.findall(r'[؀-ۿ]+', question or '')
+                    if w.startswith('ال') and len(w) > 4]
+        has_schema_al_word = any(
+            _normalize_concept(w) in known for w in al_words
+        )
+        if has_schema_al_word:
+            return []
+
         out: list[str] = []
-        for w in re.findall(r'[؀-ۿ]+', question or ''):
-            if not (w.startswith('ال') and len(w) > 4):
-                continue
+        for w in al_words:
             n = _normalize_concept(w)   # strips leading ال
             if len(n) >= 3 and n not in known:
                 out.append(w)
@@ -374,9 +392,20 @@ async def process_question(
         _user_perms = None
 
     # ── Response cache check (skip for action/workflow questions) ──
+    # session_ctx: encode session-dependent state so different sessions get distinct
+    # cache entries (e.g. invoice_detail INVTYPE=0 vs cold-session no-INVTYPE).
+    _session_ctx = ""
+    try:
+        from learning.conversation_bi import get_context as _bi_get_ctx
+        _sc = _bi_get_ctx(user_id).get("txn_context") or {}
+        if _sc:
+            import json as _json
+            _session_ctx = _json.dumps(_sc, sort_keys=True)
+    except Exception:
+        pass
     try:
         import response_cache
-        cached = response_cache.get(question, company_code, fiscal_year)
+        cached = response_cache.get(question, company_code, fiscal_year, session_ctx=_session_ctx)
         if cached:
             return PipelineResult(
                 answer=cached.answer,
@@ -721,6 +750,7 @@ async def process_question(
                 suggestions=result.suggestions,
                 insights=result.insights,
                 template_used=result.template_used,
+                session_ctx=_session_ctx,
             )
         except Exception:
             pass
