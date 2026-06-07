@@ -232,12 +232,27 @@ def _get_table_tokens() -> dict[str, set[str]]:
 
 
 def _get_blocked_tables() -> set[str]:
-    """Tables whose TABLE comment says 'لا تستخدم' or 'NEVER USE' — never selected."""
+    """Tables whose TABLE comment explicitly marks THIS table as off-limits.
+
+    Trigger phrases (must refer to the table itself, not to another table):
+      Arabic : 'لا تستخدم هذا الجدول'  — "do not use THIS table"
+      English: 'NEVER USE' at word-boundary
+
+    Deliberately NOT matching bare 'لا تستخدم' because a warning like
+    '⚠ لا تستخدم VOUCHERS لـ...' in a treasury-table comment would otherwise
+    accidentally block the treasury table itself (false-positive self-block).
+    """
     global _blocked_tables_cache, _blocked_tables_mtime
     if _blocked_tables_cache is None or _comments_mtime != _blocked_tables_mtime:
+        import re as _re
+        _BLOCK_RE = _re.compile(
+            r'لا\s+تستخدم\s+هذا\s+الجدول'   # Arabic: "do not use this table"
+            r'|(?<!\w)NEVER\s+USE(?!\w)',      # English: "NEVER USE" whole-word
+            _re.IGNORECASE,
+        )
         _blocked_tables_cache = {
             t for t, d in _table_comments.items()
-            if 'لا تستخدم' in (d or '') or 'NEVER USE' in (d or '').upper()
+            if _BLOCK_RE.search(d or '')
         }
         _blocked_tables_mtime = _comments_mtime
     return _blocked_tables_cache
