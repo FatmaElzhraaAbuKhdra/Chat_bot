@@ -1093,6 +1093,7 @@ async def _execute_llm_controlled(
             extra_context=extra_context,
         )
 
+
         # Safety validation
         safety = validate_sql(sql_raw)
         if not safety.is_safe:

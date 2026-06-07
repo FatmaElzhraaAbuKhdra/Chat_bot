@@ -1669,7 +1669,8 @@ COMMENT ON COLUMN CASH_TRANS_HEAD.TRANS_DATE IS
 COMMENT ON COLUMN CASH_TRANS_HEAD.TRANS_TYPE IS
 'نوع الحركة:
 0 = وارد / قبض / تحصيل
-1 = صادر / صرف / دفع';
+1 = صادر / صرف / دفع
+⚠ لا تعمل JOIN مع STORE_TRANS_TYPE — TRANS_TYPE هنا قيم 0/1 فقط وليس له علاقة بجدول أنواع حركات المخزن.';
 
 COMMENT ON COLUMN CASH_TRANS_HEAD.CASH_ID IS
 'كود الخزينة: مرتبط بـ CASHES.CASH_ID
