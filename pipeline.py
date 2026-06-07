@@ -260,6 +260,30 @@ def _template_matches_meaning(template, entities: dict, question: str) -> tuple[
     except Exception:
         pass
 
+    # 4. Table-domain mismatch — comment-matched primary tables must overlap with
+    #    the template's FROM/JOIN tables. Prevents an accounting-journal template
+    #    from answering a treasury question (or vice-versa) when the intent
+    #    classifier guessed the wrong sub_intent.
+    #    Only applied when we have *real* comment-matched tables — i.e., primary
+    #    contains at least one table beyond ALWAYS_INCLUDE (COMPANIES/BRANCHES).
+    #    If no real match, skip to avoid blocking on a fully ambiguous question.
+    try:
+        from schema_loader import _select_tables_tiered, ALWAYS_INCLUDE as _AI
+        import re as _re4
+        _primary, _ = _select_tables_tiered(q)
+        real_primary = [t for t in _primary if t not in _AI]
+        if real_primary:
+            tmpl_tables = set(_re4.findall(
+                r'\b(?:FROM|JOIN)\s+([A-Z][A-Z_0-9]+)', sql_u
+            ))
+            if tmpl_tables and not any(t in tmpl_tables for t in real_primary):
+                return False, (
+                    f"comment-matched tables {real_primary[:3]} "
+                    f"have no overlap with template tables {sorted(tmpl_tables)}"
+                )
+    except Exception:
+        pass
+
     return True, ""
 
 
