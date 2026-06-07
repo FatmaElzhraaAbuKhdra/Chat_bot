@@ -214,6 +214,7 @@ def generate_sql(schema_context: str, question: str, company_code: str,
 6. استخدم الـ JOINs الموجودة في FK فقط — لا تخترع علاقات غير موجودة
 7. إذا كان العمود فيه قيم رقمية لها معاني (موضّحة في تعليقات المخطط) استخدم DECODE لعرض النص
 8. عند البحث بالاسم قسّم الكلمات واستخدم LIKE لكل كلمة
+9. ممنوع تكرار نفس العمود في SELECT أكثر من مرة
 
 ══ قواعد بناء SQL (syntax فقط) ══
 - ⚠ JOIN بين VOUCHERS و VOUCHERS_DET لازم على العمودين معاً:
@@ -266,7 +267,7 @@ Use ONLY the schema comments provided above. Do not assume any column values.
         pass
 
     start_t = time.time()
-    result = _call_llm(messages, temperature=0, max_tokens=1500)
+    result = _call_llm(messages, temperature=0, max_tokens=2000)
     elapsed_ms = int((time.time() - start_t) * 1000)
 
     # Record result for A/B tracking
