@@ -415,6 +415,17 @@ async def process_question(
     except Exception:
         _user_perms = None
 
+    # ── Hot-reload comments BEFORE cache check ──
+    # _maybe_reload_comments() detects mtime changes in justclick_comments.sql and
+    # immediately calls response_cache.invalidate_all() + schema_cache.invalidate().
+    # Must run here — before the response_cache.get() — so a comment edit takes effect
+    # on the very next request instead of waiting for the 5-min response-cache TTL.
+    try:
+        from schema_loader import _maybe_reload_comments
+        _maybe_reload_comments()
+    except Exception:
+        pass
+
     # ── Response cache check (skip for action/workflow questions) ──
     # session_ctx: encode session-dependent state so different sessions get distinct
     # cache entries (e.g. invoice_detail INVTYPE=0 vs cold-session no-INVTYPE).

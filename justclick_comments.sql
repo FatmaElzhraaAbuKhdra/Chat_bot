@@ -1799,7 +1799,9 @@ COMMENT ON COLUMN CASH_TRANS_DETAIL.FRACTION_PAYED IS
 'المبلغ المدفوع كجزء من الاشتراك';
 
 COMMENT ON COLUMN CASH_TRANS_DETAIL.INV_KEY IS
-'مفتاح الفاتورة المرتبطة بالسطر';
+'مفتاح الفاتورة المرتبطة بالسطر — اختياري، قد يكون NULL.
+⚠ لا تستخدم JOIN مع MAIN_INV إلا لو السؤال يطلب بيانات الفاتورة صراحةً.
+⚠ لاستعراض حركات الخزينة لا تحتاج JOIN مع MAIN_INV.';
 
 COMMENT ON COLUMN CASH_TRANS_DETAIL.COMPANY_CODE IS
 'كود الشركة';
