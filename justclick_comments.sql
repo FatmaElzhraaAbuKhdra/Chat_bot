@@ -1648,7 +1648,7 @@ COMMENT ON TABLE CASH_TRANS_HEAD IS
 'حركات الخزينة النقدية — قبض وصرف الأموال من وإلى الخزائن.
 ⚠ هذا هو الجدول الصحيح الوحيد لأي سؤال عن حركات الخزينة أو القبض أو الصرف النقدي.
 ⚠ VOUCHERS مخصص للقيود المحاسبية فقط — الخزينة النقدية هنا حصراً.
-⚠ للبحث باسم الخزينة: JOIN مع CASHES على CASH_ID ثم WHERE CASHES.CASH_NAME LIKE ''%اسم%''
+⚠ للبحث باسم الخزينة: JOIN مع CASHES على CASH_ID ثم WHERE CASHES.CASH_NAME LIKE ''%اسم%'' — لا تستخدم CASH_ID أو STORE_CODE للبحث النصي فهي أرقام.
 ⚠ للبحث في البيان: WHERE NOTES LIKE ''%نص%''
 @lex حركات الخزينة = CASH_TRANS_HEAD
 @lex ايصالات القبض = CASH_TRANS_HEAD
@@ -1723,7 +1723,9 @@ COMMENT ON COLUMN CASH_TRANS_HEAD.OLD_TRANS_CODE IS
 'رقم المستند القديم (للحركات المحوّلة من نظام سابق)';
 
 COMMENT ON COLUMN CASH_TRANS_HEAD.STORE_CODE IS
-'كود المخزن المرتبط بالحركة';
+'كود المخزن المرتبط بالحركة — رقم (NUMBER) فقط.
+⚠ STORE_CODE رقم صحيح — لا تستخدم عليه LIKE أو مقارنة نصية أبداً.
+⚠ للبحث بالاسم استخدم CASHES.CASH_NAME LIKE عبر JOIN على CASH_ID وليس STORE_CODE.';
 
 COMMENT ON COLUMN CASH_TRANS_HEAD.SESSION_ID IS
 'رقم جلسة النظام عند إنشاء الحركة';
