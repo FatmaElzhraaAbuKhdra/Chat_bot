@@ -289,53 +289,6 @@ def _init_sqlite():
 # ═══════════════════════════════════════════════════════════════════
 
 _ORACLE_TABLES = {
-    f"{_PFX}FEEDBACK": f"""
-CREATE TABLE {_PFX}FEEDBACK (
-    ID              NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    CREATED_AT      TIMESTAMP DEFAULT SYSTIMESTAMP,
-    USER_ID         VARCHAR2(100) NOT NULL,
-    QUESTION        NVARCHAR2(2000) NOT NULL,
-    CATEGORY        VARCHAR2(50),
-    DOMAIN          VARCHAR2(50),
-    SUB_INTENT      VARCHAR2(100),
-    TEMPLATE_USED   VARCHAR2(100),
-    SQL_GENERATED   CLOB,
-    AI_RESPONSE     NCLOB,
-    FEEDBACK_TYPE   VARCHAR2(20) NOT NULL,
-    CORRECTED_RESPONSE NCLOB,
-    CORRECTED_SQL   CLOB,
-    USER_REPHRASED  NVARCHAR2(2000),
-    RATING          NUMBER(1),
-    NOTES           NVARCHAR2(1000)
-)""",
-
-    f"{_PFX}TEMPLATE_STATS": f"""
-CREATE TABLE {_PFX}TEMPLATE_STATS (
-    TEMPLATE_NAME   VARCHAR2(100) PRIMARY KEY,
-    TOTAL_USES      NUMBER DEFAULT 0,
-    SUCCESS_COUNT   NUMBER DEFAULT 0,
-    FAILURE_COUNT   NUMBER DEFAULT 0,
-    ZERO_RESULT_COUNT NUMBER DEFAULT 0,
-    AVG_EXEC_MS     NUMBER(10,2) DEFAULT 0,
-    LAST_USED       TIMESTAMP,
-    USER_APPROVALS  NUMBER DEFAULT 0,
-    USER_REJECTIONS NUMBER DEFAULT 0
-)""",
-
-    f"{_PFX}SYNONYMS": f"""
-CREATE TABLE {_PFX}SYNONYMS (
-    ID              NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    TERM            NVARCHAR2(200) NOT NULL,
-    CANONICAL       VARCHAR2(200) NOT NULL,
-    DOMAIN          VARCHAR2(50),
-    SUB_INTENT      VARCHAR2(100),
-    CONFIDENCE      NUMBER(3,2) DEFAULT 0.8,
-    SOURCE          VARCHAR2(30) DEFAULT 'learned',
-    CREATED_AT      TIMESTAMP DEFAULT SYSTIMESTAMP,
-    USAGE_COUNT     NUMBER DEFAULT 0,
-    CONSTRAINT UQ_SYN UNIQUE (TERM, CANONICAL)
-)""",
-
     f"{_PFX}LEARNED_PATTERNS": f"""
 CREATE TABLE {_PFX}LEARNED_PATTERNS (
     ID              NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -348,28 +301,6 @@ CREATE TABLE {_PFX}LEARNED_PATTERNS (
     CREATED_AT      TIMESTAMP DEFAULT SYSTIMESTAMP,
     USAGE_COUNT     NUMBER DEFAULT 0,
     SUCCESS_COUNT   NUMBER DEFAULT 0
-)""",
-
-    f"{_PFX}ANALYTICS_PREFS": f"""
-CREATE TABLE {_PFX}ANALYTICS_PREFS (
-    ID              NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    USER_ID         VARCHAR2(100),
-    QUERY_TYPE      VARCHAR2(100) NOT NULL,
-    PREFERRED_CHART VARCHAR2(30),
-    PREFERRED_LIMIT NUMBER,
-    USAGE_COUNT     NUMBER DEFAULT 1,
-    LAST_USED       TIMESTAMP DEFAULT SYSTIMESTAMP,
-    CONSTRAINT UQ_APREFS UNIQUE (USER_ID, QUERY_TYPE)
-)""",
-
-    f"{_PFX}WORKFLOW_PATTERNS": f"""
-CREATE TABLE {_PFX}WORKFLOW_PATTERNS (
-    ID              NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    SEQUENCE_JSON   CLOB NOT NULL,
-    SEQUENCE_HASH   VARCHAR2(64) UNIQUE,
-    FREQUENCY       NUMBER DEFAULT 1,
-    AVG_GAP_SECONDS NUMBER(10,2),
-    LAST_SEEN       TIMESTAMP DEFAULT SYSTIMESTAMP
 )""",
 
     f"{_PFX}ERP_KNOWLEDGE": f"""
@@ -498,10 +429,6 @@ CREATE TABLE {_PFX}ACTION_AUDIT (
 }
 
 _ORACLE_INDEXES = [
-    f"CREATE INDEX IDX_{_PFX}FB_SUB ON {_PFX}FEEDBACK(SUB_INTENT)",
-    f"CREATE INDEX IDX_{_PFX}FB_TYPE ON {_PFX}FEEDBACK(FEEDBACK_TYPE)",
-    f"CREATE INDEX IDX_{_PFX}FB_DATE ON {_PFX}FEEDBACK(CREATED_AT)",
-    f"CREATE INDEX IDX_{_PFX}SYN_TERM ON {_PFX}SYNONYMS(TERM)",
     f"CREATE INDEX IDX_{_PFX}LP_SUB ON {_PFX}LEARNED_PATTERNS(SUB_INTENT)",
     f"CREATE INDEX IDX_{_PFX}EMB_CAT ON {_PFX}EMBEDDINGS_CACHE(CATEGORY)",
     f"CREATE INDEX IDX_{_PFX}EVT_TYPE ON {_PFX}EVENTS(EVENT_TYPE, PROCESSED)",
@@ -519,53 +446,6 @@ _ORACLE_INDEXES = [
 # ═══════════════════════════════════════════════════════════════════
 
 _SQLITE_SCHEMA = """
-CREATE TABLE IF NOT EXISTS feedback (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    created_at      TEXT DEFAULT (datetime('now')),
-    user_id         TEXT NOT NULL,
-    question        TEXT NOT NULL,
-    category        TEXT,
-    domain          TEXT,
-    sub_intent      TEXT,
-    template_used   TEXT,
-    sql_generated   TEXT,
-    ai_response     TEXT,
-    feedback_type   TEXT NOT NULL,
-    corrected_response TEXT,
-    corrected_sql   TEXT,
-    user_rephrased  TEXT,
-    rating          INTEGER,
-    notes           TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_feedback_sub ON feedback(sub_intent);
-CREATE INDEX IF NOT EXISTS idx_feedback_type ON feedback(feedback_type);
-
-CREATE TABLE IF NOT EXISTS template_stats (
-    template_name   TEXT PRIMARY KEY,
-    total_uses      INTEGER DEFAULT 0,
-    success_count   INTEGER DEFAULT 0,
-    failure_count   INTEGER DEFAULT 0,
-    zero_result_count INTEGER DEFAULT 0,
-    avg_exec_ms     REAL DEFAULT 0,
-    last_used       TEXT,
-    user_approvals  INTEGER DEFAULT 0,
-    user_rejections INTEGER DEFAULT 0
-);
-
-CREATE TABLE IF NOT EXISTS synonyms (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    term            TEXT NOT NULL,
-    canonical       TEXT NOT NULL,
-    domain          TEXT,
-    sub_intent      TEXT,
-    confidence      REAL DEFAULT 0.8,
-    source          TEXT DEFAULT 'learned',
-    created_at      TEXT DEFAULT (datetime('now')),
-    usage_count     INTEGER DEFAULT 0,
-    UNIQUE(term, canonical)
-);
-CREATE INDEX IF NOT EXISTS idx_syn_term ON synonyms(term);
-
 CREATE TABLE IF NOT EXISTS learned_patterns (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     question        TEXT NOT NULL,
@@ -579,26 +459,6 @@ CREATE TABLE IF NOT EXISTS learned_patterns (
     success_count   INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_lp_sub ON learned_patterns(sub_intent);
-
-CREATE TABLE IF NOT EXISTS analytics_prefs (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id         TEXT,
-    query_type      TEXT NOT NULL,
-    preferred_chart TEXT,
-    preferred_limit INTEGER,
-    usage_count     INTEGER DEFAULT 1,
-    last_used       TEXT DEFAULT (datetime('now')),
-    UNIQUE(user_id, query_type)
-);
-
-CREATE TABLE IF NOT EXISTS workflow_patterns (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    sequence_json   TEXT NOT NULL,
-    sequence_hash   TEXT UNIQUE,
-    frequency       INTEGER DEFAULT 1,
-    avg_gap_seconds REAL,
-    last_seen       TEXT DEFAULT (datetime('now'))
-);
 
 CREATE TABLE IF NOT EXISTS erp_knowledge (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,

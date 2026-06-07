@@ -126,19 +126,7 @@ def recommend_chart(
             "confidence": min(1.0, learned["score"] / 10),
         }
 
-    # 2. Check user preference
-    if user_id:
-        from .analytics_tracker import get_preferred_chart
-        pref = get_preferred_chart(user_id, sub_intent or data_shape)
-        if pref:
-            return {
-                "chart_type": pref,
-                "data_shape": data_shape,
-                "source": "user_preference",
-                "confidence": 0.85,
-            }
-
-    # 3. Default by data shape
+    # 2. Default by data shape
     chart_type = _DEFAULT_CHARTS.get(data_shape, "table")
 
     # Domain-specific overrides

@@ -10,18 +10,6 @@ from typing import Optional
 from dataclasses import dataclass, field
 
 from .store import init_learning_db, get_conn, get_backend
-from .feedback import (
-    record_feedback, get_feedback_stats, get_approved_responses,
-    get_common_rejections,
-)
-from .template_tracker import (
-    track_template_use, get_template_stats, get_best_templates,
-    get_worst_templates, get_template_score,
-)
-from .synonym_learner import (
-    seed_synonyms, learn_synonym, find_synonyms,
-    suggest_intent_from_synonyms, get_synonym_stats,
-)
 from .knowledge_base import (
     seed_knowledge, add_knowledge, get_knowledge,
     search_knowledge, get_knowledge_for_llm,
@@ -29,11 +17,6 @@ from .knowledge_base import (
 from .embeddings import (
     get_embedding, find_similar, find_similar_intent,
     index_question, get_embedding_stats,
-)
-from .analytics_tracker import (
-    track_chart_preference, get_user_preferences,
-    predict_next_intent, track_workflow, seed_workflow_patterns,
-    get_popular_queries, get_common_workflows,
 )
 from .events import emit, EventType, on as on_event, get_event_stats
 from .ontology import (
@@ -80,10 +63,8 @@ async def init_learning_engine() -> None:
     init_learning_db()
 
     # 2. Seed initial data
-    seed_synonyms()
     seed_knowledge()
     seed_ontology()
-    seed_workflow_patterns()
 
     # 3. Register internal event handlers
     _register_event_handlers()
@@ -106,10 +87,6 @@ def _register_event_handlers():
             success = data.get("success", False)
             row_count = data.get("row_count", 0)
             exec_ms = data.get("exec_ms", 0)
-
-            # Track template performance
-            if template:
-                track_template_use(template, success, row_count, exec_ms)
 
             # Record query metrics
             record_metric(MetricName.QUERY_LATENCY_MS, exec_ms,
@@ -298,28 +275,14 @@ def on_query_complete(
             except Exception:
                 pass
 
-        # Phase 7 fix: Incrementally track workflow patterns from session intents
-        # This feeds predict_next_intent() — without it, workflow_patterns stays empty
-        if session_id and sub_intent and success:
-            try:
-                from memory import get_session as _get_mem_session
-                mem_session = _get_mem_session(session_id)
-                recent_intents = [t.intent for t in mem_session.turns[-6:]
-                                  if t.intent and t.role == "user"]
-                if len(recent_intents) >= 3:
-                    track_workflow(recent_intents[-4:])
-            except Exception:
-                pass
-
     except Exception as e:
         log.debug(f"[LEARNING] on_query_complete error: {e}")
 
 
 def on_session_end(user_id: str, intent_sequence: list[str]) -> None:
-    """Called when a user session ends — track workflow patterns."""
+    """Called when a user session ends."""
     try:
         if len(intent_sequence) >= 2:
-            track_workflow(intent_sequence)
             emit(EventType.SESSION_ENDED, {
                 "intent_sequence": intent_sequence,
                 "length": len(intent_sequence),
@@ -338,15 +301,7 @@ def enhance_intent(question: str, current_intent: str,
         return current_intent, confidence
 
     try:
-        # 1. Try synonym-based suggestion
-        syn_intent = suggest_intent_from_synonyms(question)
-        if syn_intent and syn_intent != current_intent:
-            log.info(f"[LEARNING] Synonym suggests: {syn_intent} "
-                     f"(was {current_intent})")
-            record_metric(MetricName.SYNONYM_HIT_RATE, 1.0, "")
-            return syn_intent, max(confidence, 0.80)
-
-        # 2. Try embedding similarity
+        # Try embedding similarity
         similar = find_similar_intent(question, top_k=1)
         if similar and similar[0]["score"] >= 0.85:
             meta = similar[0].get("metadata", {})
@@ -365,19 +320,9 @@ def enhance_intent(question: str, current_intent: str,
 def should_use_template(template_name: str) -> bool:
     """
     Should we trust this template or fallback to LLM?
-    Based on historical performance data.
+    Template scoring removed — always trust template selection.
     """
-    try:
-        score = get_template_score(template_name)
-        if score < 0.3:
-            log.info(f"[LEARNING] Template {template_name} "
-                     f"score={score:.2f} — suggesting LLM fallback")
-            record_metric(MetricName.TEMPLATE_SUCCESS_RATE, score,
-                          template_name)
-            return False
-        return True
-    except Exception:
-        return True
+    return True
 
 
 def _get_learned_patterns(domain: str, sub_intent: str, limit: int = 3) -> list[dict]:
@@ -440,18 +385,6 @@ def get_llm_context(domain: str, sub_intent: str = "", schema_ctx: str = "") -> 
         knowledge = get_knowledge_for_llm(domain, schema_ctx)
         if knowledge:
             parts.append(knowledge)
-
-        # Add approved SQL examples for this intent
-        if sub_intent:
-            approved = get_approved_responses(sub_intent, limit=3)
-            if approved:
-                parts.append(f"\n══ أمثلة معتمدة لـ {sub_intent} ══")
-                for ex in approved:
-                    q = ex.get('question') or ex.get('QUESTION', '')
-                    sql = ex.get('sql_generated') or ex.get('SQL_GENERATED', '')
-                    parts.append(f"سؤال: {q}")
-                    if sql:
-                        parts.append(f"SQL: {sql[:200]}")
 
         # Inject learned patterns from AI_LEARNED_PATTERNS (adaptive memory)
         patterns = _get_learned_patterns(domain, sub_intent, limit=3)
@@ -560,21 +493,11 @@ def get_learning_dashboard() -> dict:
     try:
         return {
             "backend": get_backend(),
-            "feedback": get_feedback_stats(),
-            "templates": {
-                "best": get_best_templates(5),
-                "worst": get_worst_templates(5),
-                "all": get_template_stats(),
-            },
-            "synonyms": get_synonym_stats(),
             "embeddings": get_embedding_stats(),
             "ontology": get_ontology_stats(),
             "visualization": get_viz_stats(),
             "events": get_event_stats(),
             "health": get_health_report(),
-            "popular_queries": get_popular_queries(10),
-            "common_workflows": get_common_workflows(5),
-            "common_rejections": get_common_rejections(5),
         }
     except Exception as e:
         log.error(f"[LEARNING] Dashboard error: {e}")

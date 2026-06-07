@@ -13,24 +13,10 @@ from learning.engine import (
     get_learning_dashboard, get_llm_context,
     get_chart_recommendation, check_followup,
 )
-from learning.feedback import (
-    record_feedback, get_feedback_stats, get_approved_responses,
-    get_common_rejections, get_feedback_by_intent,
-)
-from learning.template_tracker import (
-    get_template_stats, get_best_templates, get_worst_templates,
-)
-from learning.synonym_learner import (
-    learn_synonym, find_synonyms, get_synonym_stats,
-)
 from learning.knowledge_base import (
     add_knowledge, get_knowledge, search_knowledge, backfill_report_terms,
 )
 from learning.embeddings import get_embedding_stats
-from learning.analytics_tracker import (
-    get_user_preferences, get_popular_queries, get_common_workflows,
-    predict_next_intent,
-)
 from learning.events import get_event_stats, get_unprocessed, cleanup_old_events
 from learning.ontology import (
     get_ontology_stats, find_join_path, get_tables_for_concept,
@@ -44,7 +30,7 @@ from learning.conversation_bi import (
     cleanup_expired as cleanup_bi_expired,
 )
 from learning.safety import (
-    is_safe_sql, is_safe_knowledge, validate_feedback,
+    is_safe_sql, is_safe_knowledge,
 )
 from learning.metrics import (
     get_health_report, get_all_metric_summaries,
@@ -98,141 +84,6 @@ def require_learning_read(request: Request) -> str:
 def require_learning_admin(request: Request) -> str:
     """Dependency: require admin access for write/delete/cleanup operations."""
     return _check_learning_auth(request, require_admin=True)
-
-
-# ═══════════════════════════════════════════════════════════════════
-# Feedback Endpoints
-# ═══════════════════════════════════════════════════════════════════
-
-class FeedbackRequest(BaseModel):
-    user_id: str
-    question: str
-    feedback_type: str
-
-    @field_validator("feedback_type")
-    @classmethod
-    def validate_type(cls, v):
-        if v not in ("approve", "reject", "correct", "rephrase"):
-            raise ValueError("feedback_type must be: approve|reject|correct|rephrase")
-        return v
-
-    category: str = ""
-    domain: str = ""
-    sub_intent: str = ""
-    template_used: str = ""
-    sql_generated: str = ""
-    ai_response: str = ""
-    corrected_response: str = ""
-    corrected_sql: str = ""
-    user_rephrased: str = ""
-    rating: int = 0
-    notes: str = ""
-
-
-@router.post("/feedback")
-async def submit_feedback(req: FeedbackRequest, _role: str = Depends(require_learning_read)):
-    """Submit user feedback on an AI response."""
-    # Safety validation
-    valid, reason = validate_feedback(
-        req.feedback_type, req.question,
-        req.corrected_sql, req.user_id
-    )
-    if not valid:
-        raise HTTPException(400, reason)
-
-    feedback_id = record_feedback(
-        user_id=req.user_id,
-        question=req.question,
-        feedback_type=req.feedback_type,
-        category=req.category,
-        domain=req.domain,
-        sub_intent=req.sub_intent,
-        template_used=req.template_used,
-        sql_generated=req.sql_generated,
-        ai_response=req.ai_response,
-        corrected_response=req.corrected_response,
-        corrected_sql=req.corrected_sql,
-        user_rephrased=req.user_rephrased,
-        rating=req.rating,
-        notes=req.notes,
-    )
-    return {"status": "recorded", "feedback_id": feedback_id}
-
-
-@router.get("/feedback/stats")
-async def feedback_stats(_role: str = Depends(require_learning_read)):
-    return get_feedback_stats()
-
-
-@router.get("/feedback/rejections")
-async def feedback_rejections(_role: str = Depends(require_learning_read)):
-    return get_common_rejections()
-
-
-@router.get("/feedback/approved")
-async def feedback_approved(sub_intent: str = "", limit: int = 20, _role: str = Depends(require_learning_read)):
-    return get_approved_responses(sub_intent, limit)
-
-
-@router.get("/feedback/by-intent/{sub_intent}")
-async def feedback_by_intent(sub_intent: str, limit: int = 20, _role: str = Depends(require_learning_read)):
-    return get_feedback_by_intent(sub_intent, limit)
-
-
-# ═══════════════════════════════════════════════════════════════════
-# Template Stats
-# ═══════════════════════════════════════════════════════════════════
-
-@router.get("/templates/stats")
-async def template_stats(_role: str = Depends(require_learning_read)):
-    return get_template_stats()
-
-
-@router.get("/templates/best")
-async def templates_best(limit: int = 10, _role: str = Depends(require_learning_read)):
-    return get_best_templates(limit)
-
-
-@router.get("/templates/worst")
-async def templates_worst(limit: int = 10, _role: str = Depends(require_learning_read)):
-    return get_worst_templates(limit)
-
-
-# ═══════════════════════════════════════════════════════════════════
-# Synonyms & Terminology
-# ═══════════════════════════════════════════════════════════════════
-
-class SynonymRequest(BaseModel):
-    term: str
-    canonical: str
-    domain: str = ""
-    sub_intent: str = ""
-    confidence: float = 0.8
-
-
-@router.post("/synonyms")
-async def add_synonym(req: SynonymRequest, _role: str = Depends(require_learning_admin)):
-    from learning.safety import is_safe_synonym
-    safe, reason = is_safe_synonym(req.term, req.canonical)
-    if not safe:
-        raise HTTPException(400, reason)
-
-    ok = learn_synonym(
-        term=req.term, canonical=req.canonical,
-        domain=req.domain, sub_intent=req.sub_intent,
-        confidence=req.confidence, source="manual",
-    )
-    return {"status": "added" if ok else "failed"}
-
-
-@router.get("/synonyms/search")
-async def search_synonyms(q: str, _role: str = Depends(require_learning_read)):
-    return find_synonyms(q)
-
-
-@router.get("/synonyms/stats")
-async def synonym_stats(_role: str = Depends(require_learning_read)):
-    return get_synonym_stats()
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -446,31 +297,6 @@ async def bi_cleanup(_role: str = Depends(require_learning_admin)):
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Analytics & Workflows
-# ═══════════════════════════════════════════════════════════════════
-
-@router.get("/analytics/popular")
-async def popular_queries(_role: str = Depends(require_learning_read)):
-    return get_popular_queries()
-
-
-@router.get("/analytics/workflows")
-async def common_workflows(_role: str = Depends(require_learning_read)):
-    return get_common_workflows()
-
-
-@router.get("/analytics/predict")
-async def predict_next(intents: str, _role: str = Depends(require_learning_read)):
-    intent_list = [i.strip() for i in intents.split(",") if i.strip()]
-    return predict_next_intent(intent_list)
-
-
-@router.get("/analytics/preferences/{user_id}")
-async def user_preferences(user_id: str, _role: str = Depends(require_learning_read)):
-    return get_user_preferences(user_id)
-
-
-# ═══════════════════════════════════════════════════════════════════
 # Events
 # ═══════════════════════════════════════════════════════════════════
 
@@ -551,7 +377,5 @@ async def learning_status(_role: str = Depends(require_learning_read)):
     """Quick status check for the learning engine."""
     return {
         "backend": get_backend(),
-        "feedback": get_feedback_stats(),
-        "synonyms": get_synonym_stats(),
         "ontology": get_ontology_stats(),
     }

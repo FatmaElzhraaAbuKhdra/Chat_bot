@@ -729,46 +729,6 @@ async def process_question(
     except Exception as e:
         log.warning(f"[LEARNING] on_query_complete failed: {e}")
 
-    # ── Phase 7: Predict next intent — merge with existing suggestions ──
-    if result.method not in ("error", "greeting", "help") and intent.sub_intent:
-        try:
-            from learning.analytics_tracker import predict_next_intent
-            session = get_session(user_id)
-            recent_intents = [t.intent for t in session.turns[-6:] if t.intent]
-            if recent_intents:
-                predictions = predict_next_intent(recent_intents, top_k=3)
-                if predictions:
-                    # Convert predictions to unified suggestion format
-                    predicted_suggestions = []
-                    for p in predictions[:3]:
-                        intent_name = p["intent"]
-                        predicted_suggestions.append({
-                            "label": _intent_to_label(intent_name),
-                            "query": _intent_to_query(intent_name),
-                            "icon": "predict",
-                            "source": "prediction",
-                        })
-                    existing = result.suggestions or []
-                    # Tag existing suggestions with source if not tagged
-                    for s in existing:
-                        if isinstance(s, dict) and "source" not in s:
-                            s["source"] = "copilot"
-                    # Merge: existing first, then predicted (deduplicated by query)
-                    seen_queries = set()
-                    merged = []
-                    for s in existing + predicted_suggestions:
-                        if isinstance(s, dict):
-                            q = s.get("query", "")
-                        else:
-                            q = str(s)
-                            s = {"label": q, "query": q, "icon": "suggest", "source": "copilot"}
-                        if q and q not in seen_queries:
-                            seen_queries.add(q)
-                            merged.append(s)
-                    result.suggestions = merged[:6]
-        except Exception:
-            pass
-
     # ── Store in response cache (for repeated questions) ──
     if result.method not in ("error", "greeting", "help", "action"):
         try:
