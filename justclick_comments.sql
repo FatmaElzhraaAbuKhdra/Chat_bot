@@ -79,7 +79,7 @@ COMMENT ON COLUMN MAIN_INV.INV_KEY IS
 COMMENT ON COLUMN MAIN_INV.INVID IS
     'رقم الفاتورة المرئي للمستخدم - للعرض فقط.
      ⚠ غير فريد عبر انواع الفواتير (قد يتكرر نفس الرقم في بيع وشراء).
-     ⚠ عند البحث برقم الفاتورة قيّد دائماً بـ INVTYPE.
+     ⚠ INVID غير فريد عبر أنواع الفواتير — لو المستخدم حدد النوع قيّد بـ INVTYPE، لو ما حددش اعرض كل الأنواع أو نبّه المستخدم.
      ⚠ لا تستخدمه في JOIN';
 
 COMMENT ON COLUMN MAIN_INV.INVTYPE IS
@@ -362,7 +362,8 @@ COMMENT ON COLUMN CUST.CUST_TYPE IS
 ⚠ جزء من المفتاح الأساسي — لا تتجاهله في أي JOIN.';
 
 COMMENT ON COLUMN CUST.CUST_NAME IS
-'الاسم بالعربي — Arabic name (العملاء والموردين).';
+'الاسم بالعربي — Arabic name (العملاء والموردين).
+⚠ عند البحث بالاسم استخدم LIKE دائماً: CUST_NAME LIKE ''%كلمة%'' — لا تستخدم المطابقة التامة لأن المستخدم قد يكتب الاسم بشكل مختلف قليلاً';
 
 COMMENT ON COLUMN CUST.CUST_NAME_E IS
 'الاسم بالإنجليزي — English name.';
@@ -559,7 +560,8 @@ COMMENT ON COLUMN ITEMS.ITEMID IS
 'كود الصنف الفريد — Unique item/product code.';
 
 COMMENT ON COLUMN ITEMS.ITEMNAME IS
-'اسم الصنف بالعربي — Arabic item name.';
+'اسم الصنف بالعربي — Arabic item name.
+⚠ عند البحث بالاسم استخدم LIKE دائماً: ITEMNAME LIKE ''%كلمة%'' — لا تستخدم المطابقة التامة';
 
 COMMENT ON COLUMN ITEMS.ITEM_NAME_E IS
 'اسم الصنف بالإنجليزي — English item name.';
@@ -823,7 +825,8 @@ COMMENT ON COLUMN CHARTS.CHART_CODE IS
 'كود الحساب — Account code (unique).';
 
 COMMENT ON COLUMN CHARTS.CHART_NAME_A IS
-'اسم الحساب بالعربي — Arabic account name.';
+'اسم الحساب بالعربي — Arabic account name.
+⚠ عند البحث بالاسم استخدم LIKE دائماً: CHART_NAME_A LIKE ''%كلمة%'' — لا تستخدم المطابقة التامة';
 
 COMMENT ON COLUMN CHARTS.CHART_NAME_E IS
 'اسم الحساب بالإنجليزي — English account name.';
@@ -876,9 +879,10 @@ NULL = مركز جذر / Root cost center.';
 --  VOUCHERS — رأس القيد المحاسبي
 -- ------------------------------------------------------------
 COMMENT ON TABLE VOUCHERS IS
-'رأس القيد المحاسبي (اليومية).
+'رأس القيد المحاسبي (اليومية) — للقيود المحاسبية فقط.
 ⚠ تفاصيل الحسابات المدينة والدائنة في VOUCHERS_DET.
 ⚠ JOIN مع VOUCHERS_DET على (VOUCHER_MONTH, VOUCHER_CODE) معاً — لازم العمودين.
+⚠ هذا الجدول للقيود والمحاسبة فقط — استخدم CASH_TRANS_HEAD للمعاملات النقدية.
 Journal entry header. Details in VOUCHERS_DET.
 JOIN: ON vd.voucher_code = v.voucher_code AND vd.voucher_month = v.voucher_month';
 
@@ -966,7 +970,8 @@ COMMENT ON COLUMN EMPLOYEES.EMP_ID IS
 'كود الموظف الفريد — Unique employee ID.';
 
 COMMENT ON COLUMN EMPLOYEES.EMP_NAME_AR IS
-'اسم الموظف بالعربي — Arabic employee name.';
+'اسم الموظف بالعربي — Arabic employee name.
+⚠ عند البحث بالاسم استخدم LIKE دائماً: EMP_NAME_AR LIKE ''%كلمة%'' — لا تستخدم المطابقة التامة';
 
 COMMENT ON COLUMN EMPLOYEES.EMP_NAME_EN IS
 'اسم الموظف بالإنجليزي — English employee name.';
@@ -1634,6 +1639,217 @@ COMMENT ON COLUMN COST_CENTERS.COST_NAME_E IS
     'اسم مركز التكلفة باللغة الإنجليزية';
 
 
+
+
+-- =============================================
+-- CASH_TRANS_HEAD — رأس حركات الخزينة
+-- =============================================
+COMMENT ON TABLE CASH_TRANS_HEAD IS
+'حركات الخزينة النقدية — قبض وصرف الأموال من وإلى الخزائن.
+⚠ هذا هو الجدول الصحيح الوحيد لأي سؤال عن حركات الخزينة أو القبض أو الصرف النقدي.
+⚠ لا تستخدم VOUCHERS لحركات الخزينة — استخدم هذا الجدول.
+⚠ للبحث باسم الخزينة: JOIN مع CASHES على CASH_ID ثم WHERE CASHES.CASH_NAME LIKE ''%اسم%''
+⚠ للبحث في البيان: WHERE NOTES LIKE ''%نص%''
+@lex حركات الخزينة = CASH_TRANS_HEAD
+@lex ايصالات القبض = CASH_TRANS_HEAD
+@lex سندات الصرف = CASH_TRANS_HEAD
+@lex قبض نقدي = CASH_TRANS_HEAD
+@lex صرف نقدي = CASH_TRANS_HEAD';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.TRANS_ID IS
+'رقم الحركة: المفتاح الأساسي الفريد للمعاملة النقدية';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.TRANS_CODE IS
+'رقم المستند: الرقم المرئي للمستخدم (رقم الإيصال)';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.TRANS_DATE IS
+'تاريخ المستند / تاريخ الحركة';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.TRANS_TYPE IS
+'نوع الحركة:
+0 = وارد / قبض / تحصيل
+1 = صادر / صرف / دفع';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.CASH_ID IS
+'كود الخزينة: مرتبط بـ CASHES.CASH_ID
+⚠ للبحث باسم الخزينة استخدم JOIN مع CASHES على CASH_ID';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.CHART_CODE IS
+'كود الحساب الرئيسي: مرتبط بـ CHARTS.CHART_CODE';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.COST_CODE IS
+'كود مركز التكلفة: مرتبط بـ COST_CENTERS';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.PAY_METHOD IS
+'طريقة الدفع:
+0 = كاش
+1 = شيك
+2 = فيزا
+3 = تحويل بنكي';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.NOTES IS
+'ملاحظات على الحركة النقدية';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.INV_KEY IS
+'مفتاح الفاتورة المرتبطة: مرتبط بـ MAIN_INV.INV_KEY';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.INV_CAT IS
+'تصنيف الفاتورة المرتبطة';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.REQUEST_TRANS_ID IS
+'رقم اذن الصرف / الاضافة المرتبط';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.VOUCH_POSTED IS
+'حالة الترحيل للقيد المحاسبي:
+0 = غير مرحّل
+1 = مرحّل';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.USER_NAME IS
+'اسم المستخدم / أمين الخزينة الذي أجرى الحركة';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.COMPANY_CODE IS
+'كود الشركة: مرتبط بـ COMPANIES';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.FISCAL_YEAR IS
+'السنة المالية';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.BRANCH_ID IS
+'كود الفرع: مرتبط بـ BRANCHES';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.CHILD_CASH_ID IS
+'كود الخزينة الفرعية (لو الحركة بين خزينتين)';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.OLD_TRANS_CODE IS
+'رقم المستند القديم (للحركات المحوّلة من نظام سابق)';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.STORE_CODE IS
+'كود المخزن المرتبط بالحركة';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.SESSION_ID IS
+'رقم جلسة النظام عند إنشاء الحركة';
+
+-- =============================================
+-- CASH_TRANS_DETAIL — تفاصيل حركات الخزينة
+-- =============================================
+COMMENT ON TABLE CASH_TRANS_DETAIL IS
+'تفاصيل حركات الخزينة: سطر لكل حساب أو توجيه في الحركة النقدية';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.SERIAL IS
+'رقم السطر التسلسلي: المفتاح الأساسي للسطر';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.TRANS_ID IS
+'رقم الحركة: مرتبط بـ CASH_TRANS_HEAD.TRANS_ID';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.ID IS
+'معرف السطر الداخلي';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.FLAG IS
+'نوع التوجيه:
+0 = مدين / دائن عادي
+1 = سطر خاص (اشتراكات / عقود)';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.AMOUNT IS
+'مبلغ السطر';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.AMOUNT_BEFOR_TAX IS
+'المبلغ قبل الضريبة';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.TAX IS
+'قيمة الضريبة على السطر';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.CHART_CODE IS
+'كود الحساب في هذا السطر: مرتبط بـ CHARTS.CHART_CODE';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.CHART_CODE_NEXT IS
+'كود الحساب المقابل (الطرف الآخر من القيد)';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.COST_CODE IS
+'كود مركز التكلفة للسطر';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.COST_CODE_NEXT IS
+'كود مركز التكلفة للحساب المقابل';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.NOTES_DETAIL IS
+'ملاحظات السطر';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.SELLER IS
+'كود البائع / المندوب المرتبط بالسطر';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.CONTRACT_CODE IS
+'رقم العقد المرتبط بالسطر';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.MEMBER_ST_DATE IS
+'تاريخ بداية الاشتراك (للسطور من نوع اشتراك)';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.MEMBER_END_DATE IS
+'تاريخ نهاية الاشتراك';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.MEMBER_ST_MO IS
+'شهر بداية الاشتراك';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.MEMBER_END_MO IS
+'شهر نهاية الاشتراك';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.DIFF_MO IS
+'عدد الأشهر بين بداية ونهاية الاشتراك';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.FRACTION_PAYED IS
+'المبلغ المدفوع كجزء من الاشتراك';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.INV_KEY IS
+'مفتاح الفاتورة المرتبطة بالسطر';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.COMPANY_CODE IS
+'كود الشركة';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.FISCAL_YEAR IS
+'السنة المالية';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.BRANCH_ID IS
+'كود الفرع';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.CASH_ID IS
+'كود الخزينة المرتبطة بالسطر';
+
+-- =============================================
+-- CASHES — الخزائن
+-- =============================================
+COMMENT ON TABLE CASHES IS
+'جدول الخزائن: يحتوي على جميع الخزائن النقدية والبنكية
+@lex الخزينة = CASHES
+@lex الخزائن = CASHES';
+
+COMMENT ON COLUMN CASHES.CASH_ID IS
+'رقم الخزينة: المفتاح الأساسي';
+
+COMMENT ON COLUMN CASHES.CASH_NAME IS
+'اسم الخزينة بالعربي.
+⚠ عند البحث بالاسم استخدم LIKE دائماً: CASH_NAME LIKE ''%كلمة%'' — لا تستخدم المطابقة التامة لأن المستخدم قد يكتب الاسم بشكل مختلف قليلاً';
+
+COMMENT ON COLUMN CASHES.CASH_NAME_E IS
+'اسم الخزينة بالإنجليزي';
+
+COMMENT ON COLUMN CASHES.OPEN_BALANCE IS
+'الرصيد الافتتاحي للخزينة';
+
+COMMENT ON COLUMN CASHES.OPEN_BALANCE_DATE IS
+'تاريخ الرصيد الافتتاحي';
+
+COMMENT ON COLUMN CASHES.CHART_CODE IS
+'كود الحساب المرتبط بالخزينة في شجرة الحسابات: مرتبط بـ CHARTS.CHART_CODE';
+
+COMMENT ON COLUMN CASHES.PARENT_CASH_ID IS
+'رقم الخزينة الأب: للخزائن الفرعية
+⚠ لو PARENT_CASH_ID فيه قيمة يبقى الخزينة فرعية';
+
+COMMENT ON COLUMN CASHES.BANK_ACC_NO IS
+'رقم الحساب البنكي (للخزائن البنكية)';
+
+COMMENT ON COLUMN CASHES.BRANCH_ID IS
+'كود الفرع: مرتبط بـ BRANCHES';
+
+COMMENT ON COLUMN CASHES.COMPANY_CODE IS
+'كود الشركة: مرتبط بـ COMPANIES'; 
 -- =============================================================================
 -- End of Comments Script - Page 20 (STORE_TRANSACTION_FORM)
 -- =============================================================================
