@@ -273,18 +273,34 @@ async def cache_stats():
 
 
 class CacheInvalidateRequest(BaseModel):
-    tier: str = "all"  # all | sql | dashboard
+    tier: str = "all"  # all | sql | dashboard | response
 
 
 @router.post("/cache/invalidate")
 async def cache_invalidate(req: CacheInvalidateRequest):
-    """إبطال الكاش — يمسح البيانات المخزنة مؤقتاً."""
+    """إبطال الكاش — يمسح البيانات المخزنة مؤقتاً.
+    tier=all      → sql + dashboard + response caches
+    tier=sql      → SQL results only
+    tier=dashboard → dashboard cache only
+    tier=response → pipeline response cache (question→answer pairs, 5-min TTL)
+    """
     if req.tier == "all":
         counts = invalidate_all()
+        try:
+            import response_cache as _rc
+            counts["response"] = _rc.invalidate_all()
+        except Exception:
+            pass
     elif req.tier == "sql":
         counts = {"sql_results": sql_cache.invalidate()}
     elif req.tier == "dashboard":
         counts = {"dashboards": dash_cache.invalidate()}
+    elif req.tier == "response":
+        try:
+            import response_cache as _rc
+            counts = {"response": _rc.invalidate_all()}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
     else:
         raise HTTPException(status_code=400, detail=f"Unknown tier: {req.tier}")
 
