@@ -1039,6 +1039,56 @@ async def _execute_template(
         return None
 
 
+# ── Named-entity extraction ────────────────────────────────────────────────
+# Arabic prepositions "على" / "لـ" / "خاص بـ" introduce the subject entity.
+# Extracting it BEFORE the LLM call prevents code hallucinations like
+# CHART_CODE='RFGM' (observed when LLM encoded 'رفائع الجيمش' as an account code)
+# or STORE_CODE=1 (LLM guessed a numeric code instead of using CASH_NAME LIKE).
+_ENTITY_PREP_RE = re.compile(
+    r'(?:خاص\s+بـ?|لـ\s*|على\s+)'          # prepositions that introduce the entity
+    r'(.+?)'                                  # entity name (non-greedy)
+    r'(?:\s+(?:من|في|خلال|لسنة|لشهر|بين|حتى|إلى|منذ|عن)\b|$)',  # stop at scope preps
+    re.UNICODE,
+)
+
+
+def _extract_search_entity(question: str) -> str:
+    """Detect named entity after Arabic prepositions (على / لـ / خاص بـ) and
+    return a hard SQL constraint block for injection into extra_context.
+
+    Example: 'حركات الخزينة على رفائع الجيمش'
+      → entity = 'رفائع الجيمش'
+      → constraint: 'ابحث بـ LIKE على عمود الاسم النصي المناسب من المخطط'
+
+    The LLM receives the exact name with explicit instructions:
+      USE: c.CASH_NAME LIKE '%رفائع%' AND c.CASH_NAME LIKE '%الجيمش%'
+      NOT: CHART_CODE='RFGM'   ← invented symbolic code
+      NOT: STORE_CODE=1         ← wrong numeric column
+
+    Returns "" when no prep-entity is detected or entity is purely numeric
+    (e.g. "على 2024" is a year, not a name).
+    """
+    m = _ENTITY_PREP_RE.search(question or "")
+    if not m:
+        return ""
+    name = m.group(1).strip()
+    # Require at least one Arabic letter — skip pure dates/numbers ("على 2024")
+    if len(name) < 2 or not re.search(r'[؀-ۿ]', name):
+        return ""
+    # Cap at 4 words — longer captures are likely sentence fragments, not names
+    words = [w for w in name.split() if w][:4]
+    name = " ".join(words)
+    like_parts = " AND ".join(f"عمود_الاسم LIKE '%{w}%'" for w in words)
+    return (
+        "\n══ اسم مستخرج من السؤال ══\n"
+        f"الاسم المطلوب في السؤال: «{name}»\n"
+        f"ابحث عنه في WHERE باستخدام LIKE على عمود الاسم النصي المناسب:\n"
+        f"  {like_parts}\n"
+        f"⛔ لا تُحوِّل «{name}» إلى كود رمزي"
+        f" (✖ CHART_CODE='...' ✖ STORE_CODE=رقم)\n"
+    )
+
+
 async def _execute_llm_controlled(
     question: str,
     intent: Intent,
@@ -1083,6 +1133,14 @@ async def _execute_llm_controlled(
         # carrying reference SQL with literal coded values, KPIs and entity flows —
         # all non-comment meaning. It no longer feeds the LLM; the LLM receives only
         # schema comments (schema_ctx) + the user question (+ followup_context).
+
+        # Named-entity injection: extract name from prepositions (على/لـ/خاص بـ)
+        # and inject as a hard LIKE constraint so the LLM never encodes the name
+        # as a symbolic code.  E.g. 'على رفائع الجيمش' → prevents CHART_CODE='RFGM'.
+        _entity_hint = _extract_search_entity(question)
+        if _entity_hint:
+            extra_context += _entity_hint
+            log.info(f"[PIPELINE] entity hint injected: {question.split('على')[-1][:40].strip()!r}")
 
         sql_raw = generate_sql(
             schema_context=schema_ctx,
@@ -1131,6 +1189,7 @@ async def _execute_llm_controlled(
                 company_code="",
                 fiscal_year="",
                 history=history,
+                extra_context=extra_context,  # entity hint persists to auto-fix (e.g. LIKE constraint)
             )
             safety = validate_sql(sql_raw)
             if safety.is_safe:
