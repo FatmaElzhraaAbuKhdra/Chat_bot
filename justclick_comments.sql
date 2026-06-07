@@ -1650,6 +1650,7 @@ COMMENT ON TABLE CASH_TRANS_HEAD IS
 ⚠ VOUCHERS مخصص للقيود المحاسبية فقط — الخزينة النقدية هنا حصراً.
 ⚠ للبحث باسم الخزينة: JOIN مع CASHES على CASH_ID ثم WHERE CASHES.CASH_NAME LIKE ''%اسم%'' — لا تستخدم CASH_ID أو STORE_CODE للبحث النصي فهي أرقام.
 ⚠ للبحث في البيان: WHERE NOTES LIKE ''%نص%''
+⚠ لا يوجد عمود AMOUNT في CASH_TRANS_HEAD — المبلغ في CASH_TRANS_DETAIL.AMOUNT حصراً. للحصول على المبلغ: JOIN CASH_TRANS_DETAIL d ON d.TRANS_ID = h.TRANS_ID ثم SELECT d.AMOUNT.
 @lex حركات الخزينة = CASH_TRANS_HEAD
 @lex ايصالات القبض = CASH_TRANS_HEAD
 @lex سندات الصرف = CASH_TRANS_HEAD
