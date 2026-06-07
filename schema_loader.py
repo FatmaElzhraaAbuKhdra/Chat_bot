@@ -379,10 +379,14 @@ def _select_tables(question: str) -> set[str]:
 # Use 10 000 for a safe margin.  _build_tiered_context now processes primary tables in
 # RELEVANCE order (most-matched first), so the most important tables always get full
 # descriptions before the budget is exhausted.
-_SCHEMA_CTX_BUDGET = 9000
+_SCHEMA_CTX_BUDGET = 4000   # Groq TPM=6000/min — classify_intent ~700 tok +
+                             # generate_sql budget: at 1.5 chars/tok the schema
+                             # must stay ≤ 5000 chars total (primary + referenced).
+                             # primary budget=4000 + referenced cap=5 tables → ~5200 chars.
 _COL_DESC_CAP = 160     # per-column cap (median real desc = 47, avg = 58)
 _TBL_DESC_CAP = 300     # per-table cap (was 120 — RC2)
-_MAX_REFERENCED = 18    # P0/F1: bound FK-referenced (name-only) tables
+_MAX_REFERENCED = 5     # P0/F1: FK-referenced (name-only) — reduced from 18 to cap
+                         # total schema context ≤ ~5200 chars for Groq TPM budget
 
 
 def _compact_desc(text: str, cap: int) -> str:
