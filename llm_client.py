@@ -111,7 +111,9 @@ def _get_groq_client():
 
 
 def _get_groq_model():
-    return os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    # Default: llama-3.1-8b-instant — the only Groq model enabled on this account.
+    # Override via GROQ_MODEL env var when the org admin enables other models.
+    return os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
 
 
 def _call_groq(messages: list, temperature: float, max_tokens: int) -> str:
@@ -128,7 +130,10 @@ def _call_groq(messages: list, temperature: float, max_tokens: int) -> str:
         return resp.choices[0].message.content.strip()
     except Exception as e:
         err = str(e)
-        if ("413" in err or "too large" in err.lower()) and len(messages) > 2:
+        # Retry by stripping history only for payload-size 413 (not TPM-based 413
+        # which contains "rate_limit" — stripping history won't help there).
+        is_size_413 = ("413" in err or "too large" in err.lower()) and "rate_limit" not in err.lower()
+        if is_size_413 and len(messages) > 2:
             resp = _get_groq_client().chat.completions.create(
                 model=_get_groq_model(),
                 messages=[messages[0], messages[-1]],
