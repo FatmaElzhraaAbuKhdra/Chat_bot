@@ -209,12 +209,38 @@ _blocked_tables_cache: Optional[set] = None
 _blocked_tables_mtime: float = -1.0
 
 
+# Arabic prepositions / conjunctions that survive the ≥3-char filter but carry
+# NO domain meaning — filtering them prevents spurious table matches.
+# Example: "على" (3 chars, normalises to "علي") appears in almost every
+# Arabic comment as a grammatical preposition, causing unrelated tables to
+# share a token with any question that contains "على" (e.g. "حركات الخزينة
+# على رفائع الجيمش" → VOUCHERS matched only on "على" → wrong primary table).
+_COMMENT_STOPWORDS: frozenset[str] = frozenset({
+    'علي',   # على  — on/upon
+    'الي',   # إلى  — to/toward
+    'عبر',   # عبر  — across/via
+    'بين',   # بين  — between
+    'ولا',   # ولا  — and not
+    'لان',   # لأن  — because
+    'لكل',   # لكل  — for each
+    'لاي',   # لأي  — for any
+    'حتي',   # حتى  — until/even
+    'هذا',   # هذا  — this (masc)
+    'هذه',   # هذه  — this (fem)
+    'فقط',   # فقط  — only
+})
+
+
 def _comment_tokens(text: str) -> set[str]:
-    """Normalized Arabic/Latin words (≥3 chars) from a comment string."""
+    """Normalized Arabic/Latin domain words (≥3 chars) from a comment string.
+
+    Common Arabic grammatical words (prepositions, determiners) are filtered
+    out via _COMMENT_STOPWORDS so they don't create false table matches.
+    """
     out: set[str] = set()
     for w in re.findall(r'[؀-ۿA-Za-z]+', text or ''):
         n = _normalize_concept(w)
-        if len(n) >= 3:
+        if len(n) >= 3 and n not in _COMMENT_STOPWORDS:
             out.add(n)
     return out
 
