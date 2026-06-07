@@ -291,7 +291,7 @@ def _init_sqlite():
 # All AI_ tables removed — zero Oracle learning tables.
 # Data paths: logging (events/metrics/actions), in-memory (bi_context/alerts),
 #             in-memory cache (embeddings/ontology).
-}
+_ORACLE_TABLES: dict = {}
 
 _ORACLE_INDEXES: list = []
 
