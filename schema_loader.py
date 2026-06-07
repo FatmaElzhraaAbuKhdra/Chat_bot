@@ -267,14 +267,16 @@ def _fk_neighbours(primary: set[str], all_known: set[str]) -> set[str]:
     return neigh
 
 
-def _select_tables_tiered(question: str) -> tuple[set[str], set[str]]:
+def _select_tables_tiered(question: str) -> tuple[list[str], set[str]]:
     """COMMENT-DRIVEN table selection — no hardcoded groups or keyword lists.
 
-      primary    = ALWAYS_INCLUDE + tables whose COMMENT ON TABLE shares a word with
-                   the question (ranked by overlap, capped at _MAX_PRIMARY) → FULL meaning
-      referenced = FK neighbours of primary, BOTH directions (capped)        → name-only
-      fallback   = no comment match → ALL commented tables name-only (primary stays
-                   ALWAYS_INCLUDE only), never hardcoded domain groups
+      primary    = tables ranked by comment-overlap with the question (highest first),
+                   then ALWAYS_INCLUDE (appended last so relevant tables win the budget).
+                   Capped at _MAX_PRIMARY. Returned as a RANKED LIST so
+                   _build_tiered_context processes the most relevant tables first —
+                   guaranteeing they get full descriptions before the budget is hit.
+      referenced = FK neighbours of primary, BOTH directions (capped)  → name-only
+      fallback   = no comment match → ALL commented tables name-only
 
     Tables whose comment says 'لا تستخدم' / 'NEVER USE' are excluded from both tiers.
     """
@@ -284,25 +286,40 @@ def _select_tables_tiered(question: str) -> tuple[set[str], set[str]]:
 
     q_tokens = _comment_tokens(question)
 
+    # Sort by descending overlap score; ties broken by ascending table name (A→Z)
+    # so MAIN_INV (M) is processed before TRANSACTION (T) and VOUCHERS (V)
+    # when all have the same token overlap — this ensures the more canonical ERP
+    # tables get full descriptions before the budget is exhausted.
     scored = sorted(
-        ((len(q_tokens & toks), t) for t, toks in idx.items()
+        ((-len(q_tokens & toks), t) for t, toks in idx.items()
          if (q_tokens & toks) and t not in blocked),
-        reverse=True,
     )
     matched = [t for _, t in scored[:_MAX_PRIMARY]]
 
     if matched:
-        primary = ((set(ALWAYS_INCLUDE) | set(matched)) & all_known) - blocked
-        referenced = (_fk_neighbours(primary, all_known) - primary) - blocked
+        # Build ranked primary: matched first (relevance order), then ALWAYS_INCLUDE
+        seen: set[str] = set()
+        ranked: list[str] = []
+        for tbl in matched:
+            if tbl in all_known and tbl not in blocked:
+                ranked.append(tbl)
+                seen.add(tbl)
+        for tbl in ALWAYS_INCLUDE:
+            if tbl in all_known and tbl not in blocked and tbl not in seen:
+                ranked.append(tbl)
+                seen.add(tbl)
+        primary_set = set(ranked)
+        referenced = (_fk_neighbours(primary_set, all_known) - primary_set) - blocked
         referenced = set(sorted(referenced)[:_MAX_REFERENCED])
     else:
         # comment-driven fallback: every commented table, name-only (NOT full schema,
         # NOT hardcoded accounting+invoicing). primary stays minimal so the budget
         # guard renders the rest compactly.
-        primary = (set(ALWAYS_INCLUDE) & all_known) - blocked
-        referenced = all_known - primary - blocked
+        ranked = [t for t in ALWAYS_INCLUDE if t in all_known and t not in blocked]
+        primary_set = set(ranked)
+        referenced = all_known - primary_set - blocked
 
-    return primary, referenced
+    return ranked, referenced
 
 
 def _select_tables(question: str) -> set[str]:
@@ -311,14 +328,17 @@ def _select_tables(question: str) -> set[str]:
     the tiered path in get_relevant_schema().
     """
     primary, referenced = _select_tables_tiered(question)
-    return primary | referenced
+    return set(primary) | referenced
 
 
-# Schema-context budget (chars). MAX_PROMPT_CHARS in llm_client.py is 28000;
-# the system-prompt template + examples take ~3.5K, so ~16K leaves ample room
-# for conversation history. Measured: a full domain group of comments ≈ 2–7.5K,
-# so the full Semantic Layer fits comfortably without truncating meaning.
-_SCHEMA_CTX_BUDGET = 16000
+# Schema-context budget (chars). llama-3.1-8b-instant (the only enabled Groq model on
+# this account) has a 6 000 TPM limit. Arabic text tokenises at ≈2.74 chars/token, so:
+#   (budget + constraints_1450 + base_700 + question_30) / 2.74 + max_tokens_1500 < 6000
+#   budget < (4500 × 2.74) − 1450 − 700 − 30 ≈ 10 150
+# Use 10 000 for a safe margin.  _build_tiered_context now processes primary tables in
+# RELEVANCE order (most-matched first), so the most important tables always get full
+# descriptions before the budget is exhausted.
+_SCHEMA_CTX_BUDGET = 9000
 _COL_DESC_CAP = 160     # per-column cap (median real desc = 47, avg = 58)
 _TBL_DESC_CAP = 300     # per-table cap (was 120 — RC2)
 _MAX_REFERENCED = 18    # P0/F1: bound FK-referenced (name-only) tables
@@ -407,13 +427,18 @@ def get_comment_constraints(question: str) -> str:
     _maybe_reload_comments()
     if not _column_comments:
         return ""
+    # Use primary tables only — referenced tables appear name-only in schema context and
+    # their ⚠ JOIN rules are less critical there. Limiting scope keeps the constraint
+    # block small enough to avoid HTTP 413 (Arabic JSON encoding ≈ 3.4× raw chars).
     if os.getenv("SCHEMA_TIERED", "1") != "0":
-        primary, referenced = _select_tables_tiered(question)
-        tables = primary | referenced
+        primary, _ref = _select_tables_tiered(question)
+        tables = primary
     else:
         tables = _select_tables(question)
 
+    _MAX_CONSTRAINTS_CHARS = 1500
     lines: list[str] = []
+    total_chars = 0
     for tbl in sorted(tables):
         for col, desc in _column_comments.get(tbl, {}).items():
             if '⚠' not in desc:
@@ -423,7 +448,11 @@ def get_comment_constraints(question: str) -> str:
                 # keep the warning sentence; drop trailing prose after first '.'
                 clause = re.split(r'\.\s', clause, 1)[0].strip().rstrip('.').strip()
                 if clause:
-                    lines.append(f"- {tbl}.{col}: ⚠ {clause[:200]}")
+                    line = f"- {tbl}.{col}: ⚠ {clause[:200]}"
+                    total_chars += len(line) + 1
+                    if total_chars > _MAX_CONSTRAINTS_CHARS:
+                        return "\n".join(lines)
+                    lines.append(line)
     return "\n".join(lines)
 
 
@@ -482,19 +511,21 @@ def _build_tables_context(tables: set[str]) -> str:
     return "\n".join(parts)
 
 
-def _build_tiered_context(primary: set[str], referenced: set[str]) -> str:
+def _build_tiered_context(primary: "list[str] | set[str]", referenced: set[str]) -> str:
     """P0/F1: two-tier schema context.
 
-    PRIMARY tables (the query's domain) get FULL column meanings and are emitted
-    FIRST so the budget never starves the tables the query actually needs (fixes
-    the alphabetical-ordering degradation, F4). FK-REFERENCED tables follow as
-    compact name-only blocks — enough for the LLM to JOIN, without the token cost
-    of full descriptions.
+    PRIMARY tables get FULL column meanings. They are processed in RELEVANCE ORDER
+    (highest comment-overlap with the question first) so the most important tables
+    always receive their full descriptions before the budget is exhausted. This
+    replaces the old alphabetical ordering that could degrade the most relevant table.
+    FK-REFERENCED tables follow as compact name-only blocks — enough to JOIN.
     """
     parts: list[str] = []
     total = 0
 
-    for tbl in sorted(primary):
+    # primary is a ranked list (most relevant first) from _select_tables_tiered
+    ordered_primary = list(primary) if not isinstance(primary, list) else primary
+    for tbl in ordered_primary:
         if tbl not in _table_comments:
             continue
         block = _full_table_block(tbl)
