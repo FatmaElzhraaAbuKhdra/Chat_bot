@@ -1650,7 +1650,7 @@ COMMENT ON TABLE CASH_TRANS_HEAD IS
 ⚠ VOUCHERS مخصص للقيود المحاسبية فقط — الخزينة النقدية هنا حصراً.
 ⚠ للبحث باسم الخزينة: JOIN مع CASHES على CASH_ID ثم WHERE CASHES.CASH_NAME LIKE ''%اسم%'' — لا تستخدم CASH_ID أو STORE_CODE للبحث النصي فهي أرقام.
 ⚠ للبحث في البيان: WHERE NOTES LIKE ''%نص%''
-⚠ لا يوجد عمود AMOUNT في CASH_TRANS_HEAD — المبلغ في CASH_TRANS_DETAIL.AMOUNT حصراً. للحصول على المبلغ: JOIN CASH_TRANS_DETAIL d ON d.TRANS_ID = h.TRANS_ID ثم SELECT d.AMOUNT.
+⚠ لا توجد أعمدة AMOUNT ولا AMOUNT_BEFOR_TAX ولا TAX في CASH_TRANS_HEAD — هذه الأعمدة في CASH_TRANS_DETAIL حصراً. للحصول عليها: JOIN CASH_TRANS_DETAIL d ON d.TRANS_ID = h.TRANS_ID ثم SELECT d.AMOUNT, d.AMOUNT_BEFOR_TAX, d.TAX.
 @lex حركات الخزينة = CASH_TRANS_HEAD
 @lex ايصالات القبض = CASH_TRANS_HEAD
 @lex سندات الصرف = CASH_TRANS_HEAD
@@ -1670,7 +1670,8 @@ COMMENT ON COLUMN CASH_TRANS_HEAD.TRANS_TYPE IS
 'نوع الحركة:
 0 = وارد / قبض / تحصيل
 1 = صادر / صرف / دفع
-⚠ لا تعمل JOIN مع STORE_TRANS_TYPE — TRANS_TYPE هنا قيم 0/1 فقط وليس له علاقة بجدول أنواع حركات المخزن.';
+⚠ لا تعمل JOIN مع STORE_TRANS_TYPE — TRANS_TYPE هنا قيم 0/1 فقط وليس له علاقة بجدول أنواع حركات المخزن.
+⚠ لا تضيف WHERE TRANS_TYPE إلا إذا ذكر السؤال نوع الحركة صراحةً (وارد أو صادر أو قبض أو صرف).';
 
 COMMENT ON COLUMN CASH_TRANS_HEAD.CASH_ID IS
 'كود الخزينة: مرتبط بـ CASHES.CASH_ID
@@ -1727,7 +1728,8 @@ COMMENT ON COLUMN CASH_TRANS_HEAD.OLD_TRANS_CODE IS
 COMMENT ON COLUMN CASH_TRANS_HEAD.STORE_CODE IS
 'كود المخزن المرتبط بالحركة — رقم (NUMBER) فقط.
 ⚠ STORE_CODE رقم صحيح — لا تستخدم عليه LIKE أو مقارنة نصية أبداً.
-⚠ للبحث بالاسم استخدم CASHES.CASH_NAME LIKE عبر JOIN على CASH_ID وليس STORE_CODE.';
+⚠ للبحث بالاسم استخدم CASHES.CASH_NAME LIKE عبر JOIN على CASH_ID وليس STORE_CODE.
+⚠ لا تضيف WHERE STORE_CODE ما لم يُذكر رقم المخزن صراحةً في السؤال — البحث بالاسم يكون عبر CASHES.CASH_NAME فقط.';
 
 COMMENT ON COLUMN CASH_TRANS_HEAD.SESSION_ID IS
 'رقم جلسة النظام عند إنشاء الحركة';
@@ -1742,7 +1744,8 @@ COMMENT ON COLUMN CASH_TRANS_DETAIL.SERIAL IS
 'رقم السطر التسلسلي: المفتاح الأساسي للسطر';
 
 COMMENT ON COLUMN CASH_TRANS_DETAIL.TRANS_ID IS
-'رقم الحركة: مرتبط بـ CASH_TRANS_HEAD.TRANS_ID';
+'رقم الحركة: مرتبط بـ CASH_TRANS_HEAD.TRANS_ID — JOIN: JOIN CASH_TRANS_DETAIL d ON d.TRANS_ID = h.TRANS_ID.
+⚠ الأعمدة AMOUNT وAMOUNT_BEFOR_TAX وTAX تنتمي لـ CASH_TRANS_DETAIL (alias d) لا CASH_TRANS_HEAD (alias ct أو h) — اكتبها d.AMOUNT لا ct.AMOUNT.';
 
 COMMENT ON COLUMN CASH_TRANS_DETAIL.ID IS
 'معرف السطر الداخلي';
