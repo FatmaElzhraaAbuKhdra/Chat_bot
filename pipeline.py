@@ -1005,9 +1005,9 @@ async def _execute_template(
 # CHART_CODE='RFGM' (observed when LLM encoded 'رفائع الجيمش' as an account code)
 # or STORE_CODE=1 (LLM guessed a numeric code instead of using CASH_NAME LIKE).
 _ENTITY_PREP_RE = re.compile(
-    r'(?:خاص\s+بـ?|لـ\s*|على\s+)'          # prepositions that introduce the entity
-    r'(.+?)'                                  # entity name (non-greedy)
-    r'(?:\s+(?:من|في|خلال|لسنة|لشهر|بين|حتى|إلى|منذ|عن)\b|$)',  # stop at scope preps
+    r'(?:خاص\s+بـ?|لـ\s*|على\s+|خزينة\s+(?!ال))'  # prepositions + bare "خزينة X"
+    r'(.+?)'                                           # entity name (non-greedy)
+    r'(?:\s+(?:من|في|خلال|لسنة|لشهر|بين|حتى|إلى|منذ|عن|اليوم|الأسبوع|الشهر|السنة|هذا|هذه)\b|$)',
     re.UNICODE,
 )
 
@@ -1038,12 +1038,13 @@ def _extract_search_entity(question: str) -> str:
     # Cap at 4 words — longer captures are likely sentence fragments, not names
     words = [w for w in name.split() if w][:4]
     name = " ".join(words)
-    like_parts = " AND ".join(f"عمود_الاسم LIKE '%{w}%'" for w in words)
+    like_hint = f"عمود_الاسم LIKE '%{name}%'"
     return (
         "\n══ اسم مستخرج من السؤال ══\n"
         f"الاسم المطلوب في السؤال: «{name}»\n"
         f"ابحث عنه في WHERE باستخدام LIKE على عمود الاسم النصي المناسب:\n"
-        f"  {like_parts}\n"
+        f"  {like_hint}\n"
+        f"⛔ اكتب الاسم كاملاً «{name}» في شرط LIKE واحد — لا تقسّمه إلى أجزاء بـ AND أو OR\n"
         f"⛔ لا تُحوِّل «{name}» إلى كود رمزي"
         f" (✖ CHART_CODE='...' ✖ STORE_CODE=رقم)\n"
     )
