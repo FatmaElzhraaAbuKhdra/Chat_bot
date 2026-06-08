@@ -250,81 +250,21 @@ def generate_sql(schema_context: str, question: str, company_code: str,
   → آخر 3 شهور: v.VOUCHER_DATE >= ADD_MONTHS(TRUNC(SYSDATE, 'MM'), -3)
   → آخر سنة: v.VOUCHER_DATE >= ADD_MONTHS(TRUNC(SYSDATE), -12)
 
-══ مثال صحيح لاستعلام حركات الخزينة ══
-سؤال: "حركات الخزينة على رفائع الجيمش"
-SQL الصح:
-SELECT h.TRANS_DATE, h.TRANS_CODE, h.TRANS_TYPE, h.NOTES,
-       d.AMOUNT, d.AMOUNT_BEFOR_TAX, d.TAX, c.CASH_NAME
-FROM CASH_TRANS_HEAD h
-JOIN CASH_TRANS_DETAIL d ON d.TRANS_ID = h.TRANS_ID
-JOIN CASHES c ON c.CASH_ID = h.CASH_ID
-WHERE c.CASH_NAME LIKE '%رفائع الجيمش%'
-FETCH FIRST 200 ROWS ONLY
-
-لاحظ: لا يوجد VOUCH_POSTED ولا TRANS_TYPE لأن المستخدم لم يطلبهما.
-
-══ مثال صحيح لاستعلام تفاصيل الفاتورة ══
-سؤال: "تفاصيل الفاتورة رقم 5"
-SQL الصح:
-SELECT m.INVID, m.INVTYPE, i.ITEMNAME,
-       d.QTY, d.PRICE, d.ADD_VAL, d.SUB_VAL,
-       (d.QTY * d.PRICE) + d.ADD_VAL - d.SUB_VAL AS TOTAL_PRICE
-FROM DETAIL_INV d
-JOIN MAIN_INV m ON m.INV_KEY = d.INV_KEY
-JOIN ITEMS i ON i.ITEMID = d.ITEMID
-WHERE m.INVID = 5
-FETCH FIRST 200 ROWS ONLY
-
-سؤال: "فاتورة مبيعات رقم 5"
-SQL الصح:
-SELECT m.INVID, m.INVTYPE, i.ITEMNAME,
-       d.QTY, d.PRICE, d.ADD_VAL, d.SUB_VAL,
-       (d.QTY * d.PRICE) + d.ADD_VAL - d.SUB_VAL AS TOTAL_PRICE
-FROM DETAIL_INV d
-JOIN MAIN_INV m ON m.INV_KEY = d.INV_KEY
-JOIN ITEMS i ON i.ITEMID = d.ITEMID
-WHERE m.INVID = 5 AND m.INVTYPE = 0
-FETCH FIRST 200 ROWS ONLY
-
-لاحظ:
-- WHERE على m.INVID وليس d.INV_KEY — INV_KEY رقم داخلي وليس رقم الفاتورة.
-- لا INNER JOIN على UNITS أو ITEMGROUP — قد تكون NULL فتُحذف كل البنود.
-- INVTYPE: إذا قال المستخدم "مبيعات" → AND m.INVTYPE = 0 | "مشتريات" أو "شراء" → AND m.INVTYPE = 1 | بدون ذكر نوع → بدون فلتر INVTYPE على الإطلاق.
-
-══ مثال صحيح لاستعلام تفاصيل حركة السداد ══
-سؤال: "تفاصيل حركة السداد رقم 20"
-SQL الصح:
-SELECT p.PAYED_ID, p.PAYED_DATE, p.PAYED_AMOUNT, p.NOTES,
-       c.CUST_NAME, mp.SDAD, m.INVID
-FROM PAYED p
-JOIN CUST c ON c.CUSTID = p.CUST_ID AND c.CUST_TYPE = p.SAL_PURCH
-LEFT JOIN MAIN_INV_PAYED mp ON mp.PAYED_ID = p.PAYED_ID AND mp.SDAD_TRANS_TYPE = p.SDAD_TRANS_TYPE
-LEFT JOIN MAIN_INV m ON m.INV_KEY = mp.INV_KEY
-WHERE p.PAYED_ID = 20
-FETCH FIRST 200 ROWS ONLY
-
-سؤال: "تفاصيل حركة السداد عميل رقم السداد 16"
-SQL الصح:
-SELECT p.PAYED_ID, p.PAYED_DATE, p.PAYED_AMOUNT, p.NOTES,
-       c.CUST_NAME, mp.SDAD, m.INVID
-FROM PAYED p
-JOIN CUST c ON c.CUSTID = p.CUST_ID AND c.CUST_TYPE = p.SAL_PURCH
-LEFT JOIN MAIN_INV_PAYED mp ON mp.PAYED_ID = p.PAYED_ID AND mp.SDAD_TRANS_TYPE = p.SDAD_TRANS_TYPE
-LEFT JOIN MAIN_INV m ON m.INV_KEY = mp.INV_KEY
-WHERE p.PAYED_ID = 16 AND p.SAL_PURCH = 0
-FETCH FIRST 200 ROWS ONLY
-
-لاحظ:
-- PAYED هو جدول سداد الديون — وليس CASH_TRANS_HEAD الذي للخزائن النقدية فقط.
-- WHERE على p.PAYED_ID = الرقم — وليس TRANS_CODE في CASH_TRANS_HEAD.
-- JOIN مع MAIN_INV_PAYED على (PAYED_ID + SDAD_TRANS_TYPE) معاً.
-- SAL_PURCH: إذا قال المستخدم "عميل" → SAL_PURCH=0 | "مورد" → SAL_PURCH=1 | "مندوب" → SAL_PURCH=2 | بدون ذكر → بدون فلتر.
-
 ══ مصدر المعنى الوحيد ══
 استخدم تعليقات المخطط أعلاه فقط لمعرفة معاني الأعمدة والقيم المرمَّزة (مثل قيم 0/1).
 لا تفترض أي قيمة لأي عمود من معرفتك السابقة — اقرأها من التعليقات فقط.
 Use ONLY the schema comments provided above. Do not assume any column values.
 """
+
+    # SQL examples — loaded from justclick_comments.sql (@SQL_EXAMPLE_START blocks),
+    # NOT hardcoded here.  Editing the file = change takes effect on next request.
+    try:
+        from schema_loader import get_sql_examples
+        _examples = get_sql_examples()
+    except Exception:
+        _examples = ""
+    if _examples:
+        system_prompt += f"\n\n{_examples}"
 
     # Q3 fix: elevate ⚠ comment warnings from inline description to MANDATORY
     # constraints so the LLM cannot ignore them (e.g. INVID not unique across invoice

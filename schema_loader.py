@@ -625,3 +625,54 @@ async def refresh_schema_context() -> None:
     global _full_context
     await init_schema_context()
     log.info("[SCHEMA] context refreshed")
+
+
+# ── SQL Examples (comment-first, hot-reload) ─────────────────────────────────
+
+_sql_examples_cache: Optional[str] = None
+_sql_examples_mtime: float = -1.0
+
+
+def get_sql_examples() -> str:
+    """Return SQL examples defined in justclick_comments.sql.
+
+    Examples are written as SQL-comment blocks delimited by:
+        -- @SQL_EXAMPLE_START
+        -- ... (each content line prefixed with --)
+        -- @SQL_EXAMPLE_END
+
+    This function is the single reader — llm_client.py injects the result into
+    the system prompt instead of hard-coding examples in Python.  Changing an
+    example in the SQL file takes effect on the next request (mtime hot-reload).
+    """
+    global _sql_examples_cache, _sql_examples_mtime
+    _maybe_reload_comments()          # ensure _comments_mtime is current
+    if _sql_examples_cache is not None and _sql_examples_mtime == _comments_mtime:
+        return _sql_examples_cache
+
+    f = _get_comments_file()
+    if not f.exists():
+        _sql_examples_cache = ""
+        _sql_examples_mtime = _comments_mtime
+        return ""
+
+    text = f.read_text(encoding="utf-8")
+    pattern = re.compile(
+        r'--\s*@SQL_EXAMPLE_START(.*?)--\s*@SQL_EXAMPLE_END',
+        re.DOTALL | re.IGNORECASE,
+    )
+    blocks: list[str] = []
+    for m in pattern.finditer(text):
+        raw = m.group(1)
+        lines = []
+        for line in raw.split('\n'):
+            # Strip the SQL-comment prefix "-- " (one or two dashes + optional space)
+            stripped = re.sub(r'^[ \t]*--[ \t]?', '', line)
+            lines.append(stripped)
+        block = '\n'.join(lines).strip()
+        if block:
+            blocks.append(block)
+
+    _sql_examples_cache = '\n\n'.join(blocks)
+    _sql_examples_mtime = _comments_mtime
+    return _sql_examples_cache
