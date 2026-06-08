@@ -277,10 +277,22 @@ LEFT JOIN MAIN_INV m ON m.INV_KEY = mp.INV_KEY
 WHERE p.PAYED_ID = 20
 FETCH FIRST 200 ROWS ONLY
 
+سؤال: "تفاصيل حركة السداد عميل رقم السداد 16"
+SQL الصح:
+SELECT p.PAYED_ID, p.PAYED_DATE, p.PAYED_AMOUNT, p.NOTES,
+       c.CUST_NAME, mp.SDAD, m.INVID
+FROM PAYED p
+JOIN CUST c ON c.CUSTID = p.CUST_ID AND c.CUST_TYPE = p.SAL_PURCH
+LEFT JOIN MAIN_INV_PAYED mp ON mp.PAYED_ID = p.PAYED_ID AND mp.SDAD_TRANS_TYPE = p.SDAD_TRANS_TYPE
+LEFT JOIN MAIN_INV m ON m.INV_KEY = mp.INV_KEY
+WHERE p.PAYED_ID = 16 AND p.SAL_PURCH = 0
+FETCH FIRST 200 ROWS ONLY
+
 لاحظ:
 - PAYED هو جدول سداد الديون — وليس CASH_TRANS_HEAD الذي للخزائن النقدية فقط.
 - WHERE على p.PAYED_ID = الرقم — وليس TRANS_CODE في CASH_TRANS_HEAD.
 - JOIN مع MAIN_INV_PAYED على (PAYED_ID + SDAD_TRANS_TYPE) معاً.
+- SAL_PURCH: إذا قال المستخدم "عميل" → SAL_PURCH=0 | "مورد" → SAL_PURCH=1 | "مندوب" → SAL_PURCH=2 | بدون ذكر → بدون فلتر.
 
 ══ مصدر المعنى الوحيد ══
 استخدم تعليقات المخطط أعلاه فقط لمعرفة معاني الأعمدة والقيم المرمَّزة (مثل قيم 0/1).
