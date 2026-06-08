@@ -343,22 +343,28 @@ def _select_tables_tiered(question: str) -> tuple[list[str], set[str]]:
     matched = [t for _, t in scored[:_MAX_PRIMARY]]
 
     if matched:
-        # Build ranked primary: matched first (relevance order), then ALWAYS_INCLUDE
+        # Build ranked primary: matched tables in relevance order (≤ _MAX_PRIMARY).
         seen: set[str] = set()
         ranked: list[str] = []
         for tbl in matched:
             if tbl in all_known and tbl not in blocked:
                 ranked.append(tbl)
                 seen.add(tbl)
-        for tbl in ALWAYS_INCLUDE:
-            if tbl in all_known and tbl not in blocked and tbl not in seen:
-                ranked.append(tbl)
-                seen.add(tbl)
+        # NOTE: ALWAYS_INCLUDE (COMPANIES, BRANCHES) is now added to referenced
+        # (name-only) below — not here — to keep primary at ≤_MAX_PRIMARY tables.
         primary_set = set(ranked)
         # Build referenced but sort by FK proximity to highest-ranked primary tables
         # (not alphabetically) so MAIN_INV_PAYED linked to PAYED beats EMPLOYEES
         # linked to CASH_TRANS_DETAIL which happens to start with E < M.
         all_ref = (_fk_neighbours(primary_set, all_known) - primary_set) - blocked
+        # ALWAYS_INCLUDE goes into referenced (name-only), NOT primary.
+        # Adding them to primary was inflating primary count from 4→6 and pushing
+        # the schema context from ~3 700 to ~5 200 chars (Arabic ≈1.5 chars/token
+        # → ~3 500 extra tokens → 413 on Groq's 8 192-token limit).
+        # Name-only is enough for the LLM to write WHERE/JOIN on COMPANY_CODE or BRANCH.
+        for tbl in ALWAYS_INCLUDE:
+            if tbl in all_known and tbl not in blocked and tbl not in primary_set:
+                all_ref.add(tbl)
         # Score each referenced table by the rank-position of its nearest primary
         # parent (lower rank-pos = more relevant primary = higher priority).
         def _ref_score(tbl: str) -> int:
