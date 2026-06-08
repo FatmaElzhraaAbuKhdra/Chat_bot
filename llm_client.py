@@ -275,9 +275,21 @@ JOIN ITEMS i ON i.ITEMID = d.ITEMID
 WHERE m.INVID = 5
 FETCH FIRST 200 ROWS ONLY
 
+سؤال: "فاتورة مبيعات رقم 5"
+SQL الصح:
+SELECT m.INVID, m.INVTYPE, i.ITEMNAME,
+       d.QTY, d.PRICE, d.ADD_VAL, d.SUB_VAL,
+       (d.QTY * d.PRICE) + d.ADD_VAL - d.SUB_VAL AS TOTAL_PRICE
+FROM DETAIL_INV d
+JOIN MAIN_INV m ON m.INV_KEY = d.INV_KEY
+JOIN ITEMS i ON i.ITEMID = d.ITEMID
+WHERE m.INVID = 5 AND m.INVTYPE = 0
+FETCH FIRST 200 ROWS ONLY
+
 لاحظ:
 - WHERE على m.INVID وليس d.INV_KEY — INV_KEY رقم داخلي وليس رقم الفاتورة.
 - لا INNER JOIN على UNITS أو ITEMGROUP — قد تكون NULL فتُحذف كل البنود.
+- INVTYPE: إذا قال المستخدم "مبيعات" → AND m.INVTYPE = 0 | "مشتريات" أو "شراء" → AND m.INVTYPE = 1 | بدون ذكر نوع → بدون فلتر INVTYPE على الإطلاق.
 
 ══ مثال صحيح لاستعلام تفاصيل حركة السداد ══
 سؤال: "تفاصيل حركة السداد رقم 20"
