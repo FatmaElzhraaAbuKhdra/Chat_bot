@@ -260,6 +260,23 @@ FETCH FIRST 200 ROWS ONLY
 - WHERE على m.INVID وليس d.INV_KEY — INV_KEY رقم داخلي وليس رقم الفاتورة.
 - لا INNER JOIN على UNITS أو ITEMGROUP — قد تكون NULL فتُحذف كل البنود.
 
+══ مثال صحيح لاستعلام تفاصيل حركة السداد ══
+سؤال: "تفاصيل حركة السداد رقم 20"
+SQL الصح:
+SELECT p.PAYED_ID, p.PAYED_DATE, p.PAYED_AMOUNT, p.NOTES,
+       c.CUST_NAME, mp.SDAD, m.INVID
+FROM PAYED p
+JOIN CUST c ON c.CUSTID = p.CUST_ID AND c.CUST_TYPE = p.SAL_PURCH
+LEFT JOIN MAIN_INV_PAYED mp ON mp.PAYED_ID = p.PAYED_ID AND mp.SDAD_TRANS_TYPE = p.SDAD_TRANS_TYPE
+LEFT JOIN MAIN_INV m ON m.INV_KEY = mp.INV_KEY
+WHERE p.PAYED_ID = 20
+FETCH FIRST 200 ROWS ONLY
+
+لاحظ:
+- PAYED هو جدول سداد الديون — وليس CASH_TRANS_HEAD الذي للخزائن النقدية فقط.
+- WHERE على p.PAYED_ID = الرقم — وليس TRANS_CODE في CASH_TRANS_HEAD.
+- JOIN مع MAIN_INV_PAYED على (PAYED_ID + SDAD_TRANS_TYPE) معاً.
+
 ══ مصدر المعنى الوحيد ══
 استخدم تعليقات المخطط أعلاه فقط لمعرفة معاني الأعمدة والقيم المرمَّزة (مثل قيم 0/1).
 لا تفترض أي قيمة لأي عمود من معرفتك السابقة — اقرأها من التعليقات فقط.
