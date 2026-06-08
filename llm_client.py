@@ -132,18 +132,32 @@ def _call_groq(messages: list, temperature: float, max_tokens: int) -> str:
         err = str(e)
         # Groq returns 413 for both "payload too large" AND "context too long", and
         # both error bodies contain "rate_limit" — so we cannot exclude rate_limit here.
-        # Detect by HTTP status 413 OR by "too large" / "context" keywords, then retry
-        # without conversation history (system + last user message only).
+        # Detect by HTTP status 413 OR by "too large" / "context" keywords, then retry.
         is_size_413 = ("413" in err or "too large" in err.lower()
                        or "request too large" in err.lower()
                        or ("context" in err.lower() and "limit" in err.lower()))
-        if is_size_413 and len(messages) > 2:
-            log.warning("[LLM] groq 413 payload too large — retrying without history")
+        if is_size_413:
+            if len(messages) > 2:
+                # Conversation history is inflating the payload —
+                # retry with system + last user message only.
+                log.warning("[LLM] groq 413 payload too large — retrying without history")
+                retry_msgs = [messages[0], messages[-1]]
+                retry_max = max_tokens
+            else:
+                # Already minimal (system + user only).  The schema context itself
+                # is pushing past Groq's 8 192-token limit.
+                # Arabic tokenises at ≈1.5 chars/token, so a 10 000-char system prompt
+                # ≈ 6 700 tokens.  With max_tokens=2000 that's 8 700 > 8 192 → 413.
+                # Freeing the output budget to 600 (SQL fits in 400 tokens) drops the
+                # total to ≈7 300, safely under the limit.
+                log.warning("[LLM] groq 413 schema too large — retrying with max_tokens=600")
+                retry_msgs = messages
+                retry_max = 600
             resp = _get_groq_client().chat.completions.create(
                 model=_get_groq_model(),
-                messages=[messages[0], messages[-1]],
+                messages=retry_msgs,
                 temperature=temperature,
-                max_tokens=max_tokens,
+                max_tokens=retry_max,
                 timeout=25.0,
             )
             if resp.usage:
@@ -338,7 +352,11 @@ Use ONLY the schema comments provided above. Do not assume any column values.
         pass
 
     start_t = time.time()
-    result = _call_llm(messages, temperature=0, max_tokens=2000)
+    # max_tokens=800: SQL rarely exceeds 400 tokens; 800 is a generous cap.
+    # Keeping output budget small is critical — Arabic tokenises at ≈1.5 chars/token,
+    # so a 10 000-char system prompt ≈ 6 700 tokens.  With max_tokens=2000 the total
+    # reaches ≈8 700 > Groq's 8 192-token limit → 413.  At 800 it stays at ≈7 500.
+    result = _call_llm(messages, temperature=0, max_tokens=800)
     elapsed_ms = int((time.time() - start_t) * 1000)
 
     # Record result for A/B tracking
