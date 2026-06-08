@@ -101,7 +101,7 @@ DOMAIN_SIGNALS = {
 SUB_INTENT_PATTERNS = {
     # Accounting
     "account_balance":    r"(رصيد\s*(حساب|الحساب)|balance\s*of\s*account|رصيد\s*\d+)",
-    "account_statement":  r"(كشف\s*(حساب|الحساب)|حركات?\s*(حساب|الحساب)|statement|حركة)",
+    "account_statement":  r"(كشف\s*(حساب|الحساب)|حركات?\s*(حساب|الحساب)|statement)",
     "trial_balance":      r"(ميزان\s*المراجعة|trial\s*balance|ميزان)",
     "chart_of_accounts":  r"(شجرة\s*الحسابات|دليل\s*الحسابات|chart\s*of\s*accounts|الحسابات\s*(الفرعية|الرئيسية)|حسابات\s*(تبد[اأ]|اللي\s*تبد[اأ]|بتبد[اأ])\s*ب)",
     "account_info":       r"(نوع\s*(الحساب|حساب)|بيانات?\s*(الحساب|حساب)|معلومات?\s*(الحساب|حساب)|تفاصيل?\s*(الحساب|حساب))",
@@ -114,7 +114,7 @@ SUB_INTENT_PATTERNS = {
     # is read as a COUNT (all-time) and not mis-scored as a today sales summary.
     "invoice_count_purchase": r"(عدد\s*(ال)?فوات[يی]ر\s*(ال)?(مشتريات|شراء)|كم\s*فاتور[ةه]\s*(مشتريات|شراء)|count\s*(of\s*)?purchase\s*invoices?)",
     "invoice_count":          r"(عدد\s*(ال)?فوات[يی]ر|كم\s*(عدد\s*)?(ال)?فوات[يی]ر|كم\s*فاتور[ةه]|count\s*(of\s*)?invoices?|how\s*many\s*invoices?)",
-    "invoice_detail":     r"(تفاصيل?\s*(الفاتور[ةه]|فاتور[ةه])|بيانات?\s*(الفاتور[ةه]|فاتور[ةه])|invoice\s*detail)",
+    "invoice_detail":     r"(تفاصيل?\s*(الفاتور[ةه]|فاتور[ةه])|بيانات?\s*(الفاتور[ةه]|فاتور[ةه])|invoice\s*detail|فاتور[ةه]\s*(رقم|مبيعات|مشتريات)\s*\d+|فاتور[ةه]\s+\d+)",
     "sales_summary":      r"(إجمالي\s*المبيعات|مبيعات\s*(اليوم|الشهر|السنة)|total\s*sales|sales\s*summary|اجمالي\s*المبيعات)",
     "purchase_summary":   r"(إجمالي\s*المشتريات|مشتريات\s*(اليوم|الشهر|السنة)|total\s*purchase|اجمالي\s*المشتريات)",
     "top_customers":      r"(?:ل)?(أكثر|اكثر|أعلى|اعلى|أعلي|اعلي|top)\s*(\d+\s*)?(عمي?لاء|عملاء|customer)",
@@ -301,8 +301,13 @@ def classify_intent(question: str, history: list = None) -> Intent:
     category = _determine_category(q_lower, sub_intent, entities)
 
     # ── Infer domain from sub_intent ──
-    if not domain and sub_intent:
-        domain = _infer_domain_from_sub_intent(sub_intent)
+    # When regex gives a high-confidence match (0.95), sub_intent domain
+    # overrides DOMAIN_SIGNALS keyword detection (e.g. "رصيد المخزن" has
+    # both "رصيد"→accounting and "مخزن"→inventory — sub_intent wins).
+    if sub_intent:
+        inferred = _infer_domain_from_sub_intent(sub_intent)
+        if inferred and (not domain or (source == "regex" and confidence >= 0.95)):
+            domain = inferred
 
     # ── Default domain ──
     if not domain and category == "data_query":

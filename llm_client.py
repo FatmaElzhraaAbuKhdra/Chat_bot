@@ -111,9 +111,9 @@ def _get_groq_client():
 
 
 def _get_groq_model():
-    # Default: llama-3.1-8b-instant — the only Groq model enabled on this account.
-    # Override via GROQ_MODEL env var when the org admin enables other models.
-    return os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+    # llama-3.3-70b-versatile: 128k context, eliminates 413 errors.
+    # Override via GROQ_MODEL env var if needed.
+    return os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 
 def _call_groq(messages: list, temperature: float, max_tokens: int) -> str:
