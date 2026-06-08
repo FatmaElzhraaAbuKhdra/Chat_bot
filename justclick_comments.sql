@@ -1878,23 +1878,444 @@ COMMENT ON COLUMN CASHES.COMPANY_CODE IS
 -- =============================================================================
 -- End of Comments Script - Page 20 (STORE_TRANSACTION_FORM)
 -- =============================================================================
+-- =============================================================================
+-- نظام السداد - Page 30 + Page 46
+-- payed_system_comments.sql
+-- Tables : SAL_PURCH_TRANS_TYPE | PAYED | MAIN_INV_PAYED
+--        | INV_CATEGORIES | DEALER_DATA | INST (additions)
+-- Target Schema : JUSTCLICK2
+-- =============================================================================
 
 
+-- =============================================================================
+-- Page 30 - SAL_PURCH_TRANS_TYPE
+-- تكويد انواع حركات السداد (عملاء / موردون / مندوبون)
+-- =============================================================================
+-- التكامل مع شاشة السداد (Page 46) :
+--   PAYED.SDAD_TRANS_TYPE  → FK → SAL_PURCH_TRANS_TYPE.TRANS_CODE
+--   PAYED.SAL_PURCH        → يطابق SAL_PURCH_TRANS_TYPE.SAL_PURCH
+--   ⚠ الـ JOIN الصح دايما على الحقلين معا :
+--       PAYED.SDAD_TRANS_TYPE = SAL_PURCH_TRANS_TYPE.TRANS_CODE
+--       PAYED.SAL_PURCH       = SAL_PURCH_TRANS_TYPE.SAL_PURCH
+-- =============================================================================
+
+COMMENT ON TABLE SAL_PURCH_TRANS_TYPE IS
+    'تكويد انواع حركات السداد للعملاء والموردين والمندوبين.
+     المفتاح الاساسي المركب : (TRANS_CODE + SAL_PURCH).
+     SAL_PURCH : 0=عملاء , 1=موردون , 2=مندوبون.
+     ⚠ الربط مع PAYED يكون على (TRANS_CODE + SAL_PURCH) معا وليس TRANS_CODE وحده.
+
+     للاجابة على اسئلة التحليل :
+       مستحقات العملاء         : PAYED JOIN هذا الجدول WHERE SAL_PURCH=0 AND DEB_CRD=1
+       تحليل التحصيلات النقدية : WHERE CASH_TRANS_TYPE=1 (نقدي)
+       تحليل التحصيلات الآجلة  : WHERE CASH_TRANS_TYPE=0 (آجل/شيك/تحويل)
+
+     الـ SDAD_TRANS_TYPE المحظور تعديله يدويا في Page 46
+     (يتولد تلقائيا من الفاتورة) :
+       100,101,200,201,310,320,110,111,210,211,311,321
+
+     FORM_ID في APP_SEC :
+       51  = انواع حركات العملاء    (SAL_PURCH=0)
+       655 = انواع حركات الموردين   (SAL_PURCH=1)
+       64  = انواع حركات المندوبين  (SAL_PURCH=2)';
+
+COMMENT ON COLUMN SAL_PURCH_TRANS_TYPE.TRANS_CODE IS
+    'كود نوع حركة السداد - جزء من المفتاح الاساسي.
+     ⚠ ليس فريدا وحده - الفريد هو (TRANS_CODE + SAL_PURCH) معا.
+     يُخزن في PAYED.SDAD_TRANS_TYPE للربط بنوع الحركة.
+     الاكواد المحظور ادخالها يدويا في Page 46 (تولد من الفاتورة) :
+       100,101,200,201,310,320,110,111,210,211,311,321';
+
+COMMENT ON COLUMN SAL_PURCH_TRANS_TYPE.SAL_PURCH IS
+    'نوع الطرف - جزء من المفتاح الاساسي :
+     0 = عملاء / Customers
+     1 = موردون / Suppliers
+     2 = مندوبون / Dealers
+     ⚠ جزء اساسي من شرط JOIN مع PAYED - لا تحذفه.
+     يطابق PAYED.SAL_PURCH في كل الاستعلامات.';
+
+COMMENT ON COLUMN SAL_PURCH_TRANS_TYPE.TRANS_NAME_AR IS
+    'اسم نوع حركة السداد باللغة العربية - للعرض في الواجهة';
+
+COMMENT ON COLUMN SAL_PURCH_TRANS_TYPE.TRANS_NAME_EN IS
+    'اسم نوع حركة السداد باللغة الانجليزية - للعرض في الواجهة';
+
+COMMENT ON COLUMN SAL_PURCH_TRANS_TYPE.DEB_CRD IS
+    'اتجاه الحركة المحاسبي :
+     0 = مدين  / Debit  (العميل مدين للشركة - فاتورة بيع / مرتجع شراء)
+     1 = دائن  / Credit (العميل دائن للشركة - سداد / مرتجع بيع)
+     ⚠ هذا الحقل يحدد جانب القيد المحاسبي - لا تخلط بين قيمه.
+     للاستعلام عن المستحقات (العميل مدين) : WHERE DEB_CRD = 0
+     للاستعلام عن السدادات (العميل يسدد) : WHERE DEB_CRD = 1';
+
+COMMENT ON COLUMN SAL_PURCH_TRANS_TYPE.CASH_TRANS_TYPE IS
+    'تصنيف الحركة من حيث طريقة الدفع :
+     1 = نقدي   / Cash     (تحصيل فوري بالكاش)
+     0 = غير نقدي / Non-Cash (شيك / تحويل بنكي / آجل)
+     ⚠ هذا الحقل هو المفتاح لتحليل التحصيلات النقدية :
+       تحليل التحصيلات النقدية :
+         SELECT p.*, s.TRANS_NAME_AR
+           FROM PAYED p
+           JOIN SAL_PURCH_TRANS_TYPE s
+             ON p.SDAD_TRANS_TYPE = s.TRANS_CODE
+            AND p.SAL_PURCH       = s.SAL_PURCH
+          WHERE s.CASH_TRANS_TYPE = 1
+       تحليل التحصيلات الآجلة / الشيكات :
+         ... WHERE s.CASH_TRANS_TYPE = 0';
+
+COMMENT ON COLUMN SAL_PURCH_TRANS_TYPE.BENFIT_EFFECT IS
+    'تاثير الحركة على الفائدة / العمولة.
+     يحدد ما اذا كانت هذه الحركة تؤثر على حساب الفوائد المستحقة.
+     يُستخدم في حسابات الوكلاء والمندوبين (SAL_PURCH=2).';
+
+COMMENT ON COLUMN SAL_PURCH_TRANS_TYPE.DOC_ID IS
+    'رقم نوع المستند المحاسبي المرتبط بهذه الحركة.
+     يحدد القيد المحاسبي الذي يُنشا تلقائيا عند تسجيل السداد.';
 
 
-
-
--- ============================================================
---  نهاية الملف
---  للتحقق من الـ Comments المكتوبة:
+-- =============================================================================
+-- Page 46 - PayedForm (شاشة السداد)
+-- =============================================================================
+-- العلاقات الاساسية في نظام السداد :
 --
---  SELECT table_name, comments
---    FROM user_tab_comments
---   WHERE comments IS NOT NULL
---   ORDER BY table_name;
+--   PAYED (1) ────────────< MAIN_INV_PAYED (M)
+--     on: PAYED_ID + SDAD_TRANS_TYPE
 --
---  SELECT table_name, column_name, comments
---    FROM user_col_comments
---   WHERE comments IS NOT NULL
---   ORDER BY table_name, column_name;
--- ============================================================
+--   MAIN_INV (1) ─────────< MAIN_INV_PAYED (M)
+--     on: INV_KEY
+--
+--   CUST (1) ─────────────< PAYED (M)
+--     on: CUST_ID = CUSTID AND SAL_PURCH = CUST_TYPE
+--
+--   SAL_PURCH_TRANS_TYPE (1) < PAYED (M)
+--     on: SDAD_TRANS_TYPE = TRANS_CODE AND SAL_PURCH = SAL_PURCH
+--
+-- معادلات التحليل المالي :
+--   المستحق على عميل  = SUM(MAIN_INV.FINALTOTAL) - SUM(MAIN_INV_PAYED.SDAD)
+--                        WHERE INVTYPE=0 AND RETURN_FLAG=0 AND CUST_ID=x
+--   المتبقي على فاتورة = MAIN_INV.FINALTOTAL - SUM(MAIN_INV_PAYED.SDAD WHERE INV_KEY=x)
+--   التحصيلات النقدية  = PAYED JOIN SAL_PURCH_TRANS_TYPE WHERE CASH_TRANS_TYPE=1
+-- =============================================================================
+
+
+-- =============================================================================
+-- 1. PAYED  (راس ايصال السداد)
+-- =============================================================================
+COMMENT ON TABLE PAYED IS
+    'حركات السداد - راس ايصال السداد - كل صف = عملية سداد واحدة (تحصيل من عميل او سداد لمورد).
+     المفتاح الاساسي المركب : (PAYED_ID + SDAD_TRANS_TYPE).
+     SAL_PURCH : 0=عملاء , 1=موردون , 2=مندوبون.
+     DEB_CRD   : 0=مدين (فاتورة بيع / مرتجع شراء) , 1=دائن (سداد / مرتجع بيع).
+     ⚠ الربط مع MAIN_INV_PAYED يكون على (PAYED_ID + SDAD_TRANS_TYPE) معا.
+     ⚠ الربط مع CUST يكون على (CUST_ID=CUSTID AND SAL_PURCH=CUST_TYPE).
+     ⚠ الربط مع SAL_PURCH_TRANS_TYPE يكون على
+         (SDAD_TRANS_TYPE=TRANS_CODE AND SAL_PURCH=SAL_PURCH).
+
+     للاجابة على اسئلة التحليل المالي :
+
+       اكثر 10 عملاء سداد :
+         SELECT c.CUST_NAME, SUM(p.PAYED_AMOUNT) TOTAL
+           FROM PAYED p
+           JOIN CUST c ON c.CUSTID=p.CUST_ID AND c.CUST_TYPE=p.SAL_PURCH
+          WHERE p.SAL_PURCH=0
+          GROUP BY c.CUST_NAME
+          ORDER BY TOTAL DESC FETCH FIRST 10 ROWS ONLY
+
+       تحليل التحصيلات النقدية :
+         SELECT s.TRANS_NAME_AR, SUM(p.PAYED_AMOUNT)
+           FROM PAYED p
+           JOIN SAL_PURCH_TRANS_TYPE s
+             ON s.TRANS_CODE=p.SDAD_TRANS_TYPE AND s.SAL_PURCH=p.SAL_PURCH
+          WHERE s.CASH_TRANS_TYPE=1 AND p.SAL_PURCH=0
+          GROUP BY s.TRANS_NAME_AR';
+
+COMMENT ON COLUMN PAYED.PAYED_ID IS
+    'رقم ايصال السداد - جزء من المفتاح الاساسي.
+     ⚠ ليس فريدا وحده - الفريد هو (PAYED_ID + SDAD_TRANS_TYPE) معا.
+     يتولد تلقائيا : MAX(PAYED_ID)+1 لنفس SDAD_TRANS_TYPE و SAL_PURCH.';
+
+COMMENT ON COLUMN PAYED.SDAD_TRANS_TYPE IS
+    'نوع حركة السداد - جزء من المفتاح الاساسي.
+     FK → SAL_PURCH_TRANS_TYPE.TRANS_CODE (مع SAL_PURCH في الشرط).
+     ⚠ الربط الصح : SDAD_TRANS_TYPE=TRANS_CODE AND SAL_PURCH=SAL_PURCH.
+     الاكواد المحظور ادخالها يدويا (تولد تلقائيا من الفاتورة) :
+       100,101,200,201,310,320,110,111,210,211,311,321.
+     للتمييز بين نقدي وآجل : JOIN مع SAL_PURCH_TRANS_TYPE
+       WHERE CASH_TRANS_TYPE=1 (نقدي) او CASH_TRANS_TYPE=0 (آجل).';
+
+COMMENT ON COLUMN PAYED.CUST_ID IS
+    'كود العميل او المورد او المندوب - FK → CUST.CUSTID.
+     ⚠ الربط الصح : CUST_ID=CUST.CUSTID AND SAL_PURCH=CUST.CUST_TYPE.
+     | الاسم في CUST.CUST_NAME';
+
+COMMENT ON COLUMN PAYED.SAL_PURCH IS
+    'نوع الطرف في عملية السداد :
+     0 = عملاء / Customers  (تحصيل من عميل)
+     1 = موردون / Suppliers  (سداد لمورد)
+     2 = مندوبون / Dealers   (تسوية مع مندوب)
+     ⚠ جزء اساسي من شرط JOIN مع CUST و SAL_PURCH_TRANS_TYPE - لا تحذفه.';
+
+COMMENT ON COLUMN PAYED.PAYED_DATE IS
+    'تاريخ ايصال السداد.
+     للفلترة : WHERE TRUNC(PAYED_DATE) BETWEEN :from_date AND :to_date
+     للتجميع الشهري : TRUNC(PAYED_DATE, ''MM'')';
+
+COMMENT ON COLUMN PAYED.PAYED_AMOUNT IS
+    'اجمالي مبلغ السداد في هذا الايصال.
+     ⚠ هذا الاجمالي قد يُوزَّع على اكثر من فاتورة في MAIN_INV_PAYED.
+     التوزيع التفصيلي : SELECT SUM(SDAD) FROM MAIN_INV_PAYED
+                         WHERE PAYED_ID=x AND SDAD_TRANS_TYPE=y';
+
+COMMENT ON COLUMN PAYED.NOTES IS
+    'ملاحظات ايصال السداد';
+
+COMMENT ON COLUMN PAYED.DEB_CRD IS
+    'اتجاه الحركة المحاسبي :
+     0 = مدين  (العميل مدين للشركة - فاتورة بيع / مرتجع شراء)
+     1 = دائن  (العميل دائن للشركة - سداد من عميل / مرتجع بيع)
+     ⚠ تفسير DEB_CRD يعتمد على SAL_PURCH معا :
+       SAL_PURCH=0 AND DEB_CRD=1 → تحصيل من عميل (بيع آجل)
+       SAL_PURCH=0 AND DEB_CRD=0 → رد مبلغ لعميل (مرتجع بيع)
+       SAL_PURCH=1 AND DEB_CRD=0 → سداد لمورد (شراء آجل)
+       SAL_PURCH=1 AND DEB_CRD=1 → استرداد من مورد (مرتجع شراء)';
+
+COMMENT ON COLUMN PAYED.DEALER_ID IS
+    'كود المندوب المرتبط بعملية السداد - FK → DEALER_DATA.DEALER_ID
+     | الاسم في DEALER_DATA.NAME_AR
+     يُملا عند ربط السداد بمندوب مبيعات محدد.';
+
+COMMENT ON COLUMN PAYED.PARENT_PAYED IS
+    'رقم الايصال الاصلي في حالة التعديل او الالغاء - FK → PAYED.PAYED_ID.
+     يُستخدم لتتبع سلسلة التعديلات على نفس عملية السداد.';
+
+COMMENT ON COLUMN PAYED.INV_CAT IS
+    'تصنيف الفاتورة المرتبط بالسداد - FK → INV_CATEGORIES.INV_CAT
+     | الاسم في INV_CATEGORIES.INV_CAT_NAME_AR.
+     يُستخدم لتصنيف السدادات حسب نوع الفاتورة (نقدي / آجل / إلخ).';
+
+COMMENT ON COLUMN PAYED.STORE_CODE IS
+    'كود المخزن المرتبط بعملية السداد - FK → STORE.STORE_CODE
+     | الاسم في STORE.STORE_NAME';
+
+COMMENT ON COLUMN PAYED.COMPANY_CODE IS
+    'كود الشركة - Tenant identifier (SaaS isolation)';
+
+COMMENT ON COLUMN PAYED.FISCAL_YEAR IS
+    'السنة المالية';
+
+COMMENT ON COLUMN PAYED.BRANCH_ID IS
+    'كود الفرع';
+
+
+-- =============================================================================
+-- 2. MAIN_INV_PAYED  (توزيع السداد على الفواتير)
+-- =============================================================================
+COMMENT ON TABLE MAIN_INV_PAYED IS
+    'توزيع مبلغ السداد على الفواتير - كل صف = جزء من سداد موزَّع على فاتورة واحدة.
+     المفتاح الاساسي المركب : (PAYED_ID + SDAD_TRANS_TYPE + INVID + CHILD_CUSTID).
+     ⚠ JOIN مع PAYED يكون على (PAYED_ID + SDAD_TRANS_TYPE) معا.
+     ⚠ JOIN مع MAIN_INV يكون على INV_KEY (وليس INVID).
+     ⚠ INV_KEY قابل للـ NULL - استخدم LEFT JOIN و NVL عند الجمع.
+
+     لحساب المتبقي على فاتورة :
+       SELECT m.FINALTOTAL - NVL(SUM(mp.SDAD),0) AS REMAIN
+         FROM MAIN_INV m
+         LEFT JOIN MAIN_INV_PAYED mp ON mp.INV_KEY = m.INV_KEY
+        WHERE m.INV_KEY = :inv_key
+        GROUP BY m.FINALTOTAL
+
+     لحساب اجمالي مستحقات العملاء :
+       SELECT m.CUST_ID,
+              SUM(m.FINALTOTAL) - NVL(SUM(mp.SDAD),0) AS OUTSTANDING
+         FROM MAIN_INV m
+         LEFT JOIN MAIN_INV_PAYED mp ON mp.INV_KEY = m.INV_KEY
+        WHERE m.INVTYPE=0 AND m.RETURN_FLAG=0
+        GROUP BY m.CUST_ID
+        ORDER BY OUTSTANDING DESC';
+
+COMMENT ON COLUMN MAIN_INV_PAYED.PAYED_ID IS
+    'رقم ايصال السداد - جزء من المفتاح الاساسي.
+     FK → PAYED.PAYED_ID (مع SDAD_TRANS_TYPE في الشرط).';
+
+COMMENT ON COLUMN MAIN_INV_PAYED.SDAD_TRANS_TYPE IS
+    'نوع حركة السداد - جزء من المفتاح الاساسي.
+     FK → PAYED.SDAD_TRANS_TYPE = SAL_PURCH_TRANS_TYPE.TRANS_CODE.
+     ⚠ جزء اساسي من شرط JOIN مع PAYED - لا تحذفه.';
+
+COMMENT ON COLUMN MAIN_INV_PAYED.INVID IS
+    'رقم الفاتورة للعرض - جزء من المفتاح الاساسي.
+     ⚠ للعرض فقط - استخدم INV_KEY في الـ JOIN مع MAIN_INV.';
+
+COMMENT ON COLUMN MAIN_INV_PAYED.INV_KEY IS
+    'المفتاح الداخلي للفاتورة - FK → MAIN_INV.INV_KEY.
+     ⚠ قابل للـ NULL في بعض الحالات - استخدم LEFT JOIN و NVL.
+     ⚠ استخدم INV_KEY دائما في الـ JOIN مع MAIN_INV وليس INVID.';
+
+COMMENT ON COLUMN MAIN_INV_PAYED.SAL_PURCH IS
+    'نوع الحركة : 0=بيع , 1=شراء.
+     يطابق MAIN_INV.INVTYPE للتحقق من تطابق نوع الفاتورة مع نوع السداد.';
+
+COMMENT ON COLUMN MAIN_INV_PAYED.SDAD IS
+    'المبلغ الموزَّع على هذه الفاتورة تحديدا من اجمالي الايصال.
+     ⚠ SUM(SDAD) WHERE INV_KEY=x = اجمالي ما سُدِّد على الفاتورة.
+     ⚠ MAIN_INV.FINALTOTAL - SUM(SDAD) = المتبقي على الفاتورة.';
+
+COMMENT ON COLUMN MAIN_INV_PAYED.CHILD_CUSTID IS
+    'كود العميل الفرعي - جزء من المفتاح الاساسي.
+     يُستخدم عند السداد باسم عميل فرعي مرتبط بعميل رئيسي
+     (PARENT_CUST_CODE في جدول CUST).
+     FK → CUST.CUSTID';
+
+COMMENT ON COLUMN MAIN_INV_PAYED.COMPANY_CODE IS
+    'كود الشركة - Tenant identifier (SaaS isolation)';
+
+COMMENT ON COLUMN MAIN_INV_PAYED.FISCAL_YEAR IS
+    'السنة المالية';
+
+COMMENT ON COLUMN MAIN_INV_PAYED.BRANCH_ID IS
+    'كود الفرع';
+
+
+-- =============================================================================
+-- 3. INV_CATEGORIES  (تصنيفات الفواتير)
+-- =============================================================================
+COMMENT ON TABLE INV_CATEGORIES IS
+    'تصنيفات الفواتير - يحدد نوع الفاتورة المحاسبي والقيود المرتبطة بها.
+     المفتاح الاساسي : INV_CAT.
+     INV_CAT_TYPE : يصنف التصنيف نفسه (1=مخصص للسداد , غيره=فواتير عادية).
+     يُستخدم في Page 46 لتحديد نوع قيد السداد المحاسبي.';
+
+COMMENT ON COLUMN INV_CATEGORIES.INV_CAT IS
+    'كود تصنيف الفاتورة - المفتاح الاساسي.
+     يُخزن في PAYED.INV_CAT و MAIN_INV.INV_CAT.';
+
+COMMENT ON COLUMN INV_CATEGORIES.INV_CAT_NAME_AR IS
+    'اسم تصنيف الفاتورة باللغة العربية - للعرض في الواجهة';
+
+COMMENT ON COLUMN INV_CATEGORIES.INV_CAT_NAME_EN IS
+    'اسم تصنيف الفاتورة باللغة الانجليزية - للعرض في الواجهة';
+
+COMMENT ON COLUMN INV_CATEGORIES.INV_CAT_TYPE IS
+    'نوع التصنيف :
+     1       = مخصص للسداد (يظهر في LOV شاشة السداد Page 46)
+     غير 1   = تصنيف فواتير عادية (يظهر في LOV شاشة الفواتير Page 52/53)
+     ⚠ عند جلب تصنيفات السداد    : WHERE inv_cat_type = 1
+     ⚠ عند جلب تصنيفات الفواتير  : WHERE inv_cat_type != 1';
+
+COMMENT ON COLUMN INV_CATEGORIES.CHART_CODE IS
+    'كود الحساب المحاسبي المرتبط بهذا التصنيف - FK → CHARTS_ELEMENTS.CHART_CODE
+     يحدد الحساب الذي يُقيَّد فيه عند استخدام هذا التصنيف.';
+
+COMMENT ON COLUMN INV_CATEGORIES.COST_CODE IS
+    'مركز التكلفة المرتبط بهذا التصنيف - FK → COST_CENTERS.COST_CODE
+     | الاسم في COST_CENTERS.COST_NAME';
+
+COMMENT ON COLUMN INV_CATEGORIES.COMPANY_CODE IS
+    'كود الشركة - Tenant identifier (SaaS isolation)';
+
+COMMENT ON COLUMN INV_CATEGORIES.FISCAL_YEAR IS
+    'السنة المالية';
+
+COMMENT ON COLUMN INV_CATEGORIES.BRANCH_ID IS
+    'كود الفرع';
+
+
+-- =============================================================================
+-- 4. DEALER_DATA  (بيانات الوكلاء والمندوبين)
+-- =============================================================================
+COMMENT ON TABLE DEALER_DATA IS
+    'بيانات الوكلاء والمندوبين. كل صف = وكيل او مندوب.
+     المفتاح الاساسي المركب : (DEALER_ID + DEALER_TYPE).
+     ⚠ اي JOIN مع DEALER_DATA لازم يشمل DEALER_TYPE في الشرط.
+     DEALER_TYPE : 0=وكيل مبيعات (يظهر في LOV Page 46)
+                   2=وكيل مرتبط بعميل (في CUST.DEALER_ID و MAIN_INV.DEALER_ID)
+     يُستخدم في شاشة السداد لتحديد المندوب المسؤول عن التحصيل.';
+
+COMMENT ON COLUMN DEALER_DATA.DEALER_ID IS
+    'كود الوكيل / المندوب - جزء من المفتاح الاساسي.
+     ⚠ ليس فريدا وحده - الفريد هو (DEALER_ID + DEALER_TYPE) معا.
+     يُخزن في PAYED.DEALER_ID و MAIN_INV.DEALER_ID و CUST.DEALER_ID.';
+
+COMMENT ON COLUMN DEALER_DATA.DEALER_TYPE IS
+    'نوع الوكيل - جزء من المفتاح الاساسي :
+     0 = وكيل مبيعات / Sales Dealer (يظهر في LOV السداد)
+     2 = وكيل مرتبط بعميل (في بيانات العميل والفاتورة)
+     ⚠ جزء اساسي من شرط JOIN - لا تحذفه ابدا.';
+
+COMMENT ON COLUMN DEALER_DATA.NAME_AR IS
+    'اسم الوكيل / المندوب باللغة العربية - للعرض في الواجهة';
+
+COMMENT ON COLUMN DEALER_DATA.NAME_EN IS
+    'اسم الوكيل / المندوب باللغة الانجليزية - للعرض في الواجهة';
+
+COMMENT ON COLUMN DEALER_DATA.PARENT_DEALER_ID IS
+    'كود الوكيل الاب في التسلسل الهرمي - FK → DEALER_DATA.DEALER_ID';
+
+COMMENT ON COLUMN DEALER_DATA.PARENT_DEALER_TYPE IS
+    'نوع الوكيل الاب - FK → DEALER_DATA.DEALER_TYPE
+     ⚠ لازم يُستخدم مع PARENT_DEALER_ID في الـ JOIN على DEALER_DATA.';
+
+COMMENT ON COLUMN DEALER_DATA.PERCENT IS
+    'نسبة العمولة % للوكيل / المندوب.
+     تُستخدم في حساب عمولات المبيعات المرتبطة بالفواتير والتحصيلات.';
+
+COMMENT ON COLUMN DEALER_DATA.CHART_CODE IS
+    'كود الحساب المحاسبي للوكيل - FK → CHARTS_ELEMENTS.CHART_CODE
+     يحدد الحساب الذي تُقيَّد فيه العمولات.';
+
+COMMENT ON COLUMN DEALER_DATA.COMPANY_CODE IS
+    'كود الشركة - Tenant identifier (SaaS isolation)';
+
+COMMENT ON COLUMN DEALER_DATA.FISCAL_YEAR IS
+    'السنة المالية';
+
+COMMENT ON COLUMN DEALER_DATA.BRANCH_ID IS
+    'كود الفرع';
+
+
+-- =============================================================================
+-- 5. INST  (حقول اضافية اتكشفت من Page 46)
+-- =============================================================================
+COMMENT ON COLUMN INST.DEALER_IN_INV IS
+    'علم ربط المندوب بالفاتورة تلقائيا : 1=مفعل , 0=معطل.
+     يُحدد ما اذا كان يجب اختيار مندوب عند انشاء الفاتورة.';
+
+COMMENT ON COLUMN INST.DEALER_SDAD_TYPE IS
+    'كود نوع حركة السداد الخاص بعمولات المندوبين.
+     FK → SAL_PURCH_TRANS_TYPE.TRANS_CODE (SAL_PURCH=2)';
+
+COMMENT ON COLUMN INST.COMM_ON_INV IS
+    'علم احتساب العمولة على الفاتورة : 1=محتسب , 0=غير محتسب.';
+
+COMMENT ON COLUMN INST.NOTCASH_SELL_SDAD_TYPE IS
+    'كود نوع حركة السداد الآجل للبيع (غير نقدي).
+     FK → SAL_PURCH_TRANS_TYPE.TRANS_CODE WHERE SAL_PURCH=0 AND CASH_TRANS_TYPE=0
+     يُملا تلقائيا في PAYED.SDAD_TRANS_TYPE عند انشاء سداد بيع آجل.';
+
+COMMENT ON COLUMN INST.CASH_SELL_SDAD_TYPE IS
+    'كود نوع حركة السداد النقدي للبيع.
+     FK → SAL_PURCH_TRANS_TYPE.TRANS_CODE WHERE SAL_PURCH=0 AND CASH_TRANS_TYPE=1
+     يُملا تلقائيا في PAYED.SDAD_TRANS_TYPE عند انشاء سداد بيع نقدي.';
+
+COMMENT ON COLUMN INST.NOTCASH_PURCH_SDAD_TYPE IS
+    'كود نوع حركة السداد الآجل للشراء (غير نقدي).
+     FK → SAL_PURCH_TRANS_TYPE.TRANS_CODE WHERE SAL_PURCH=1 AND CASH_TRANS_TYPE=0';
+
+COMMENT ON COLUMN INST.CASH_PURCH_SDAD_TYPE IS
+    'كود نوع حركة السداد النقدي للشراء.
+     FK → SAL_PURCH_TRANS_TYPE.TRANS_CODE WHERE SAL_PURCH=1 AND CASH_TRANS_TYPE=1';
+
+COMMENT ON COLUMN INST.INV_CAT_CHK IS
+    'علم الزامية اختيار تصنيف الفاتورة في السداد :
+     1 = الزامي اختيار INV_CAT في شاشة السداد
+     0 = اختياري';
+
+
+-- =============================================================================
+-- End of Comments Script - Payment System (Page 30 + Page 46)
+-- Tables : SAL_PURCH_TRANS_TYPE | PAYED | MAIN_INV_PAYED
+--        | INV_CATEGORIES | DEALER_DATA | INST (additions)
+-- =============================================================================
+
+
+

@@ -201,11 +201,11 @@ def _parse_comments_file(sql_text: str) -> tuple[dict, dict]:
     return table_comments, column_comments
 
 
-_MAX_PRIMARY = 3    # cap on comment-matched primary tables — llama-3.1-8b-instant
-                    # Arabic tokenizes at ~1-2 chars/tok; 9-table primary (6169 chars)
-                    # ≈ 3000-6000 tokens overwhelms the 8B model → ORA-00923 (SQL
-                    # truncated before FROM). 3 tables = ~3000 chars = ~1500 tokens,
-                    # leaving the model enough budget to generate correct SQL.
+_MAX_PRIMARY = 5    # cap on comment-matched primary tables — raised from 3→5 so that
+                    # lower-scoring but genuinely relevant tables (e.g. PAYED when the
+                    # question uses "حركات السداد") are not displaced by alphabetically
+                    # earlier tables that share only one token. 5 tables ≈ 5000 chars
+                    # ≈ 2500 tokens — within the 8B model budget for correct SQL.
 
 _table_tokens: Optional[dict] = None
 _table_tokens_mtime: float = -1.0
