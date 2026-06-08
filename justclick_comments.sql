@@ -283,6 +283,8 @@ FK إلى MAIN_INV عبر INV_KEY.
 FK إلى ITEMS عبر ITEMID.
 ⚠ إجمالي البند = (QTY * PRICE) + ADD_VAL - SUB_VAL.
 ⚠ لتفاصيل بنود الفواتير استخدم DETAIL_INV فقط — لا يوجد جدول اسمه PRICE_LIST_DET في هذا النظام.
+⚠ JOINs الأساسية لتفاصيل الفاتورة: MAIN_INV (لـ INVID) و ITEMS (لاسم الصنف) فقط.
+⚠ UNITS و ITEMGROUP اختيارية — إن استخدمتهما فاستخدم LEFT JOIN وليس INNER JOIN.
 Invoice line items — one row per item per invoice.
 Line total formula: (QTY * PRICE) + ADD_VAL - SUB_VAL.';
 
@@ -315,16 +317,18 @@ COMMENT ON COLUMN DETAIL_INV.SUB_VAL IS
 Discount on this specific line. Subtracted from line total.';
 
 COMMENT ON COLUMN DETAIL_INV.UNIT_ID IS
-'وحدة القياس المستخدمة في هذا البند.
-FK → UNITS.UNIT_ID';
+'وحدة القياس المستخدمة في هذا البند — قد يكون NULL لبعض البنود.
+FK → UNITS.UNIT_ID
+⚠ استخدم LEFT JOIN UNITS وليس INNER JOIN — INNER JOIN يحذف جميع البنود التي UNIT_ID فيها NULL';
 
 COMMENT ON COLUMN DETAIL_INV.QTY_UNITS IS
 'الكمية بالوحدة الفرعية (إن وُجدت).
 Quantity in sub-unit (if applicable).';
 
 COMMENT ON COLUMN DETAIL_INV.GROUPID IS
-'مجموعة الصنف — لأغراض التصنيف والتقارير.
-FK → ITEMGROUP.GROUPID';
+'مجموعة الصنف — لأغراض التصنيف والتقارير. قد يكون NULL لبعض الأصناف.
+FK → ITEMGROUP.GROUPID
+⚠ استخدم LEFT JOIN ITEMGROUP وليس INNER JOIN — INNER JOIN يحذف جميع البنود التي GROUPID فيها NULL';
 
 COMMENT ON COLUMN DETAIL_INV.PRICEPERONE IS
 'سعر الوحدة الفرعية — Price per sub-unit.';

@@ -244,6 +244,22 @@ FETCH FIRST 200 ROWS ONLY
 
 لاحظ: لا يوجد VOUCH_POSTED ولا TRANS_TYPE لأن المستخدم لم يطلبهما.
 
+══ مثال صحيح لاستعلام تفاصيل الفاتورة ══
+سؤال: "تفاصيل الفاتورة رقم 5"
+SQL الصح:
+SELECT m.INVID, m.INVTYPE, i.ITEMNAME,
+       d.QTY, d.PRICE, d.ADD_VAL, d.SUB_VAL,
+       (d.QTY * d.PRICE) + d.ADD_VAL - d.SUB_VAL AS TOTAL_PRICE
+FROM DETAIL_INV d
+JOIN MAIN_INV m ON m.INV_KEY = d.INV_KEY
+JOIN ITEMS i ON i.ITEMID = d.ITEMID
+WHERE m.INVID = 5
+FETCH FIRST 200 ROWS ONLY
+
+لاحظ:
+- WHERE على m.INVID وليس d.INV_KEY — INV_KEY رقم داخلي وليس رقم الفاتورة.
+- لا INNER JOIN على UNITS أو ITEMGROUP — قد تكون NULL فتُحذف كل البنود.
+
 ══ مصدر المعنى الوحيد ══
 استخدم تعليقات المخطط أعلاه فقط لمعرفة معاني الأعمدة والقيم المرمَّزة (مثل قيم 0/1).
 لا تفترض أي قيمة لأي عمود من معرفتك السابقة — اقرأها من التعليقات فقط.
