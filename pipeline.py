@@ -1006,10 +1006,12 @@ async def _execute_template(
 # or STORE_CODE=1 (LLM guessed a numeric code instead of using CASH_NAME LIKE).
 _ENTITY_PREP_RE = re.compile(
     # Triggers: Arabic prepositions OR bare "خزينة/خزينه X" (treasury name, not "الخزينة")
-    # (?<!ال) lookbehind ensures we skip "الخزينة" (definite-article form) so
-    # "حركات الخزينة على X" fires on "على", not on the embedded "خزينة".
-    # [هة] covers both spellings: خزينة (ta-marbuta, formal) and خزينه (ha, colloquial).
-    r'(?:خاص\s+بـ?|لـ\s*|على\s+|(?<!ال)خزين[هة]\s+(?!ال))'
+    # (?<!ال) lookbehind: skips "الخزينة" (definite-article form) — e.g. "حركات الخزينة على X"
+    #   fires on "على", not on the embedded "خزينة".
+    # [هة]: matches both خزينة (ta-marbuta, formal) and خزينه (ha, colloquial).
+    # NO (?!ال) lookahead: treasury names FREQUENTLY start with "ال" (e.g. "البكيري",
+    #   "الجيمش") — the lookahead was silently dropping those queries with no entity hint.
+    r'(?:خاص\s+بـ?|لـ\s*|على\s+|(?<!ال)خزين[هة]\s+)'
     r'(.+?)'                                           # entity name (non-greedy)
     r'(?:\s+(?:من|في|خلال|لسنة|لشهر|بين|حتى|إلى|منذ|عن|اليوم|الأسبوع|الشهر|السنة|هذا|هذه)\b|$)',
     re.UNICODE,
