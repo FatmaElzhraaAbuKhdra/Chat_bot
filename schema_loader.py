@@ -355,8 +355,24 @@ def _select_tables_tiered(question: str) -> tuple[list[str], set[str]]:
                 ranked.append(tbl)
                 seen.add(tbl)
         primary_set = set(ranked)
-        referenced = (_fk_neighbours(primary_set, all_known) - primary_set) - blocked
-        referenced = set(sorted(referenced)[:_MAX_REFERENCED])
+        # Build referenced but sort by FK proximity to highest-ranked primary tables
+        # (not alphabetically) so MAIN_INV_PAYED linked to PAYED beats EMPLOYEES
+        # linked to CASH_TRANS_DETAIL which happens to start with E < M.
+        all_ref = (_fk_neighbours(primary_set, all_known) - primary_set) - blocked
+        # Score each referenced table by the rank-position of its nearest primary
+        # parent (lower rank-pos = more relevant primary = higher priority).
+        def _ref_score(tbl: str) -> int:
+            for rank_pos, p in enumerate(ranked):
+                p_fk = {re.search(r'FK\s*[→→]\s*(\w+)', d)
+                        for d in _column_comments.get(p, {}).values()}
+                p_fk = {m.group(1).upper() for m in p_fk if m}
+                r_fk = {re.search(r'FK\s*[→→]\s*(\w+)', d)
+                        for d in _column_comments.get(tbl, {}).values()}
+                r_fk = {m.group(1).upper() for m in r_fk if m}
+                if tbl.upper() in p_fk or p.upper() in r_fk:
+                    return rank_pos
+            return len(ranked)
+        referenced = set(sorted(all_ref, key=lambda t: (_ref_score(t), t))[:_MAX_REFERENCED])
     else:
         # comment-driven fallback: every commented table, name-only (NOT full schema,
         # NOT hardcoded accounting+invoicing). primary stays minimal so the budget
@@ -390,8 +406,10 @@ _SCHEMA_CTX_BUDGET = 4000   # Groq TPM=6000/min — classify_intent ~700 tok +
                              # primary budget=4000 + referenced cap=5 tables → ~5200 chars.
 _COL_DESC_CAP = 160     # per-column cap (median real desc = 47, avg = 58)
 _TBL_DESC_CAP = 300     # per-table cap (was 120 — RC2)
-_MAX_REFERENCED = 3     # FK-referenced (name-only) — reduced from 5; with _MAX_PRIMARY=3
-                         # total schema context targets ~2500-3500 chars for Groq TPM budget
+_MAX_REFERENCED = 6     # FK-referenced (name-only) — raised from 3→6 so that FK neighbours
+                         # alphabetically later than C/D (e.g. MAIN_INV_PAYED at M,
+                         # SAL_PURCH_TRANS_TYPE at S) are not silently dropped.
+                         # name-only entries are ~20 chars each → +3 entries ≈ +60 chars, negligible.
 
 
 def _compact_desc(text: str, cap: int) -> str:
