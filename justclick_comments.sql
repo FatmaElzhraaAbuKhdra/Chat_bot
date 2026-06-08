@@ -77,11 +77,13 @@ COMMENT ON COLUMN MAIN_INV.INV_KEY IS
      ⚠ لا تستخدم INVID في JOIN - استخدم INV_KEY دائما';
 
 COMMENT ON COLUMN MAIN_INV.INVID IS
-    'رقم الفاتورة المرئي للمستخدم - للعرض فقط.
+    'رقم الفاتورة المرئي للمستخدم - للعرض والبحث فقط.
      ⚠ INVID غير فريد عبر أنواع الفواتير
      ⚠ إن حدّد المستخدم نوع الفاتورة (مبيعات/مشتريات) قيّد بـ INVTYPE
      ⚠ إن لم يذكر المستخدم النوع — اعرض كل الأنواع بدون أي INVTYPE filter
      ⚠ ممنوع إضافة INVTYPE filter من تلقاء نفسك إذا لم يذكره المستخدم صراحةً
+     ⚠ للبحث بـ "رقم الفاتورة": JOIN مع MAIN_INV m على INV_KEY ثم WHERE m.INVID = الرقم
+     ⚠ DETAIL_INV لا يحتوي عمود INVID — ممنوع كتابة WHERE d.INV_KEY = رقم_الفاتورة
      ⚠ لا تستخدمه في JOIN';
 
 COMMENT ON COLUMN MAIN_INV.INVTYPE IS
@@ -285,9 +287,11 @@ Invoice line items — one row per item per invoice.
 Line total formula: (QTY * PRICE) + ADD_VAL - SUB_VAL.';
 
 COMMENT ON COLUMN DETAIL_INV.INV_KEY IS
-'المفتاح الرابط مع رأس الفاتورة.
+'المفتاح الرابط مع رأس الفاتورة — رقم داخلي وليس رقم الفاتورة المرئي للمستخدم.
 FK → MAIN_INV.INV_KEY
-⚠ استخدم INV_KEY وليس INVID في الـ JOIN.';
+⚠ INV_KEY ≠ رقم الفاتورة — لا تكتب WHERE d.INV_KEY = رقم_الفاتورة مطلقاً
+⚠ للبحث بـ "رقم الفاتورة": JOIN مع MAIN_INV m ON m.INV_KEY = d.INV_KEY ثم WHERE m.INVID = الرقم
+⚠ استخدم INV_KEY في JOIN فقط — وليس INVID';
 
 COMMENT ON COLUMN DETAIL_INV.ITEMID IS
 'كود الصنف.
