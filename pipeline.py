@@ -1005,7 +1005,11 @@ async def _execute_template(
 # CHART_CODE='RFGM' (observed when LLM encoded 'رفائع الجيمش' as an account code)
 # or STORE_CODE=1 (LLM guessed a numeric code instead of using CASH_NAME LIKE).
 _ENTITY_PREP_RE = re.compile(
-    r'(?:خاص\s+بـ?|لـ\s*|على\s+|خزينة\s+(?!ال))'  # prepositions + bare "خزينة X"
+    # Triggers: Arabic prepositions OR bare "خزينة/خزينه X" (treasury name, not "الخزينة")
+    # (?<!ال) lookbehind ensures we skip "الخزينة" (definite-article form) so
+    # "حركات الخزينة على X" fires on "على", not on the embedded "خزينة".
+    # [هة] covers both spellings: خزينة (ta-marbuta, formal) and خزينه (ha, colloquial).
+    r'(?:خاص\s+بـ?|لـ\s*|على\s+|(?<!ال)خزين[هة]\s+(?!ال))'
     r'(.+?)'                                           # entity name (non-greedy)
     r'(?:\s+(?:من|في|خلال|لسنة|لشهر|بين|حتى|إلى|منذ|عن|اليوم|الأسبوع|الشهر|السنة|هذا|هذه)\b|$)',
     re.UNICODE,
@@ -1035,8 +1039,10 @@ def _extract_search_entity(question: str) -> str:
     # Require at least one Arabic letter — skip pure dates/numbers ("على 2024")
     if len(name) < 2 or not re.search(r'[؀-ۿ]', name):
         return ""
-    # Cap at 4 words — longer captures are likely sentence fragments, not names
-    words = [w for w in name.split() if w][:4]
+    # Cap at 6 words — treasury names can be multi-word ("عج الجيمش - الشارع العام").
+    # The regex boundary (stop-words / $) already prevents sentence fragments;
+    # this cap is just a last-resort safety net.
+    words = [w for w in name.split() if w][:6]
     name = " ".join(words)
     like_hint = f"عمود_الاسم LIKE '%{name}%'"
     return (

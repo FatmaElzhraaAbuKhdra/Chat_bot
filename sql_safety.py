@@ -276,11 +276,59 @@ def validate_sql_for_storage(sql: str) -> SafetyResult:
     return SafetyResult(is_safe=True, sql=cleaned, warnings=[])
 
 
+def _strip_line_comments(sql: str) -> str:
+    """Remove SQL single-line comments (-- ...) that are outside string literals.
+
+    LLMs often append explanatory '-- ملاحظة' comments to generated SQL; these
+    trigger the injection-detection pattern r'--\s*\\w' even though they are
+    harmless.  Stripping them before the safety checks prevents false positives
+    while still blocking real injections (UNION, DML, UTL_, …).
+
+    Handles the only quoting form that appears in LLM-generated SQL: single-quoted
+    strings with '' as the escape sequence for a literal apostrophe.
+    """
+    result: list[str] = []
+    in_string = False
+    i = 0
+    n = len(sql)
+    while i < n:
+        c = sql[i]
+        if in_string:
+            result.append(c)
+            if c == "'":
+                # '' is an escaped apostrophe inside a string — stay in string
+                if i + 1 < n and sql[i + 1] == "'":
+                    result.append("'")
+                    i += 2
+                else:
+                    in_string = False
+                    i += 1
+            else:
+                i += 1
+        else:
+            if c == "'":
+                in_string = True
+                result.append(c)
+                i += 1
+            elif sql[i:i + 2] == "--":
+                # Skip to end of line (the newline itself is preserved for readability)
+                while i < n and sql[i] != "\n":
+                    i += 1
+            else:
+                result.append(c)
+                i += 1
+    return "".join(result)
+
+
 def _clean_sql(sql: str) -> str:
-    """Basic SQL cleanup: remove markdown, semicolons, extra whitespace."""
+    """Basic SQL cleanup: remove markdown, semicolons, SQL comments, extra whitespace."""
     sql = re.sub(r"```sql\s*", "", sql, flags=re.IGNORECASE)
     sql = re.sub(r"```\s*", "", sql)
     sql = sql.strip().rstrip(";").strip()
+    # Strip LLM-added single-line comments (-- ...) before pattern checks so that
+    # explanatory Arabic comments ("-- ملاحظة كذا") don't trigger the injection guard.
+    sql = _strip_line_comments(sql)
+    sql = sql.strip()
     # Strip bind variables
     sql = re.sub(r':(?!=)([a-zA-Z_]\w*)', 'NULL', sql)
     return sql
