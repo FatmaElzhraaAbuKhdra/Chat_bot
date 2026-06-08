@@ -148,11 +148,11 @@ def _call_groq(messages: list, temperature: float, max_tokens: int) -> str:
                 # is pushing past Groq's 8 192-token limit.
                 # Arabic tokenises at ≈1.5 chars/token, so a 10 000-char system prompt
                 # ≈ 6 700 tokens.  With max_tokens=2000 that's 8 700 > 8 192 → 413.
-                # Freeing the output budget to 600 (SQL fits in 400 tokens) drops the
-                # total to ≈7 300, safely under the limit.
-                log.warning("[LLM] groq 413 schema too large — retrying with max_tokens=600")
+                # Freeing the output budget to 1200 gives the 70B model enough room
+                # for complex SQL while reducing total tokens if a 413 still occurs.
+                log.warning("[LLM] groq 413 schema too large — retrying with max_tokens=1200")
                 retry_msgs = messages
-                retry_max = 600
+                retry_max = 1200
             resp = _get_groq_client().chat.completions.create(
                 model=_get_groq_model(),
                 messages=retry_msgs,
@@ -364,11 +364,10 @@ Use ONLY the schema comments provided above. Do not assume any column values.
         pass
 
     start_t = time.time()
-    # max_tokens=800: SQL rarely exceeds 400 tokens; 800 is a generous cap.
-    # Keeping output budget small is critical — Arabic tokenises at ≈1.5 chars/token,
-    # so a 10 000-char system prompt ≈ 6 700 tokens.  With max_tokens=2000 the total
-    # reaches ≈8 700 > Groq's 8 192-token limit → 413.  At 800 it stays at ≈7 500.
-    result = _call_llm(messages, temperature=0, max_tokens=800)
+    # max_tokens=2000: llama-3.3-70b-versatile has a 128k-token context window,
+    # so the old 8B-era cap of 800 is no longer needed.  Complex Oracle SQL with
+    # multiple JOINs can reach 600-800 tokens; 2000 gives a safe margin.
+    result = _call_llm(messages, temperature=0, max_tokens=2000)
     elapsed_ms = int((time.time() - start_t) * 1000)
 
     # Record result for A/B tracking
