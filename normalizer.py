@@ -5,7 +5,7 @@ Injected as a single pre-processing step before intent classification.
 No manual dictionary.  No if-chains.  No fuzzy synonyms.
 Vocabulary is built automatically from:
   1. justclick_comments.sql  (schema_loader column/table comments)
-  2. intent_classifier.py    (DOMAIN_SIGNALS + _KEYWORD_SCORES)
+  2. intent_classifier.py    (DOMAIN_SIGNALS keywords only)
 
 Three correction rules (applied in order):
   R1: Collapse 3+ repeated Arabic chars   المخزونن  → المخزون
@@ -68,14 +68,12 @@ def _build_vocab() -> tuple[frozenset, dict[str, str]]:
     except Exception as e:
         log.debug(f"[NORM] schema vocab error: {e}")
 
-    # Source 2: domain signal keywords + keyword-score keys
+    # Source 2: domain signal keywords
     try:
-        from intent_classifier import DOMAIN_SIGNALS, _KEYWORD_SCORES
+        from intent_classifier import DOMAIN_SIGNALS
         _ar = re.compile(r'^[؀-ۿ\s]+$')
         for kw_list in DOMAIN_SIGNALS.values():
             words.update(w for w in kw_list if _ar.match(w))
-        for score_dict in _KEYWORD_SCORES.values():
-            words.update(w for w in score_dict if _ar.match(w))
     except Exception as e:
         log.debug(f"[NORM] classifier vocab error: {e}")
 
