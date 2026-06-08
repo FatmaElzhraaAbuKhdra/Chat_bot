@@ -201,11 +201,12 @@ def _parse_comments_file(sql_text: str) -> tuple[dict, dict]:
     return table_comments, column_comments
 
 
-_MAX_PRIMARY = 5    # cap on comment-matched primary tables — raised from 3→5 so that
+_MAX_PRIMARY = 4    # cap on comment-matched primary tables — raised from 3→4 so that
                     # lower-scoring but genuinely relevant tables (e.g. PAYED when the
                     # question uses "حركات السداد") are not displaced by alphabetically
-                    # earlier tables that share only one token. 5 tables ≈ 5000 chars
-                    # ≈ 2500 tokens — within the 8B model budget for correct SQL.
+                    # earlier tables that share only one token.
+                    # 4 tables ≈ 4000 chars ≈ 2000 tokens — safe for 8B model even when
+                    # conversation history is included (avoids Groq 413 payload limit).
 
 _table_tokens: Optional[dict] = None
 _table_tokens_mtime: float = -1.0

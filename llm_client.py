@@ -130,10 +130,15 @@ def _call_groq(messages: list, temperature: float, max_tokens: int) -> str:
         return resp.choices[0].message.content.strip()
     except Exception as e:
         err = str(e)
-        # Retry by stripping history only for payload-size 413 (not TPM-based 413
-        # which contains "rate_limit" — stripping history won't help there).
-        is_size_413 = ("413" in err or "too large" in err.lower()) and "rate_limit" not in err.lower()
+        # Groq returns 413 for both "payload too large" AND "context too long", and
+        # both error bodies contain "rate_limit" — so we cannot exclude rate_limit here.
+        # Detect by HTTP status 413 OR by "too large" / "context" keywords, then retry
+        # without conversation history (system + last user message only).
+        is_size_413 = ("413" in err or "too large" in err.lower()
+                       or "request too large" in err.lower()
+                       or ("context" in err.lower() and "limit" in err.lower()))
         if is_size_413 and len(messages) > 2:
+            log.warning("[LLM] groq 413 payload too large — retrying without history")
             resp = _get_groq_client().chat.completions.create(
                 model=_get_groq_model(),
                 messages=[messages[0], messages[-1]],
