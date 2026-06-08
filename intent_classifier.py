@@ -1,9 +1,8 @@
 """
 intent_classifier.py — ERP Intelligence Router (v2)
-3-Level classification:
+2-Level classification:
   Level 1: Regex fast-path         → confidence 0.95  (< 1ms)
-  Level 2: Keyword scoring         → confidence 0.75-0.90  (< 1ms)
-  Level 3: LLM micro-classify      → confidence 0.80-0.90  (200ms)
+  Level 2: LLM micro-classify      → confidence 0.80-0.90  (200ms)
 
 Plus:
   - Context-need detection (does the question need conversation history?)
@@ -141,112 +140,6 @@ SUB_INTENT_PATTERNS = {
 
 
 # ══════════════════════════════════════════════════════════════════
-# Level 2: Keyword Scoring System
-# ══════════════════════════════════════════════════════════════════
-# كل sub_intent فيه keywords ووزنها — لو المجموع >= threshold يتم اعتماده
-
-_KEYWORD_SCORES: dict[str, dict[str, float]] = {
-    "account_balance": {
-        "رصيد": 3.0, "حساب": 2.0, "balance": 3.0, "account": 2.0,
-        "كام": 1.5, "كم": 1.5, "بكام": 1.5,
-    },
-    "account_statement": {
-        "كشف": 3.0, "حساب": 2.0, "حركات": 2.5, "حركة": 2.5,
-        "statement": 3.0, "قيود": 1.5,
-    },
-    "sales_summary": {
-        "مبيعات": 3.0, "إجمالي": 2.0, "اجمالي": 2.0, "بيع": 2.0,
-        "اليوم": 1.5, "الشهر": 1.5, "sales": 3.0, "total": 2.0,
-    },
-    "purchase_summary": {
-        "مشتريات": 3.0, "إجمالي": 2.0, "اجمالي": 2.0, "شراء": 2.0,
-        "purchase": 3.0,
-    },
-    "invoice_detail": {
-        "فاتورة": 3.0, "فاتوره": 3.0, "تفاصيل": 2.0, "بيانات": 1.5,
-        "invoice": 3.0, "رقم": 1.0,
-    },
-    "stock_balance": {
-        "مخزن": 3.0, "مخزون": 3.0, "مخازن": 3.0, "أصناف": 2.0, "اصناف": 2.0,
-        "كمية": 2.0, "رصيد": 1.5, "حركات": 1.5, "stock": 3.0,
-        "inventory": 3.0, "store": 2.0, "منتج": 2.0, "منتجات": 2.0,
-    },
-    "item_info": {
-        "صنف": 3.0, "أصناف": 2.5, "اصناف": 2.5, "بيانات": 1.5,
-        "سعر": 1.5, "item": 3.0, "منتج": 2.5,
-    },
-    "outstanding": {
-        "مستحق": 3.0, "مديونية": 3.0, "مديون": 3.0, "متبقي": 2.5,
-        "عليه": 1.5, "فاضل": 2.0, "outstanding": 3.0,
-    },
-    "top_customers": {
-        "أكثر": 2.0, "اكثر": 2.0, "أعلى": 2.0, "اعلى": 2.0,
-        "أعلي": 2.0, "اعلي": 2.0, "لاعلي": 2.0, "لأعلى": 2.0,
-        "عملاء": 3.0, "عميل": 2.0, "top": 2.0, "customer": 2.0,
-        "شراء": 1.5, "الشراء": 1.5,
-    },
-    "top_items": {
-        "أكثر": 2.0, "اكثر": 2.0, "أعلى": 2.0, "اعلى": 2.0,
-        "أعلي": 2.0, "اعلي": 2.0, "لاعلي": 2.0, "لأعلى": 2.0,
-        "أصناف": 3.0, "اصناف": 3.0, "صنف": 2.0, "منتج": 2.0,
-        "مبيعاً": 1.5, "top": 2.0, "item": 2.0,
-    },
-    "customer_list": {
-        "قائمة": 2.0, "عملاء": 3.0, "كل": 1.5, "العملاء": 3.0,
-        "list": 2.0, "customer": 2.0,
-    },
-    "employee_count": {
-        "عدد": 2.5, "كم": 2.5, "موظف": 3.0, "موظفين": 3.0,
-        "employee": 3.0, "count": 2.0,
-    },
-    "employee_list": {
-        "قائمة": 2.0, "موظفين": 3.0, "الموظفين": 3.0, "كل": 1.5,
-        "list": 2.0, "employee": 2.0,
-    },
-    "trial_balance": {
-        "ميزان": 3.5, "مراجعة": 2.0, "trial": 3.0, "balance": 1.5,
-    },
-    "chart_of_accounts": {
-        "حسابات": 3.0, "الحسابات": 3.0, "شجرة": 3.0, "دليل": 2.0,
-        "تبدا": 2.0, "تبدأ": 2.0, "chart": 3.0, "accounts": 2.0,
-    },
-    "revenue_expenses": {
-        "إيرادات": 3.0, "ايرادات": 3.0, "الإيرادات": 3.0, "الايرادات": 3.0,
-        "مصروفات": 3.0, "المصروفات": 3.0, "مصاريف": 3.0,
-        "قائمة الدخل": 4.0, "income": 3.0, "expense": 3.0, "revenue": 3.0,
-    },
-}
-
-_KEYWORD_THRESHOLD = 4.5  # minimum score to accept keyword-based match
-
-
-def _keyword_score_classify(question: str) -> tuple[str, float]:
-    """
-    Level 2: Score-based keyword matching.
-    Returns (sub_intent, confidence) or ("", 0.0) if no match.
-    """
-    q_lower = question.lower()
-    best_intent = ""
-    best_score = 0.0
-
-    for intent_name, keywords in _KEYWORD_SCORES.items():
-        score = 0.0
-        for kw, weight in keywords.items():
-            if kw in q_lower:
-                score += weight
-        if score > best_score:
-            best_score = score
-            best_intent = intent_name
-
-    if best_score >= _KEYWORD_THRESHOLD:
-        # Normalize confidence: 4.5→0.75, 6→0.82, 8+→0.90
-        confidence = min(0.90, 0.65 + (best_score / 40.0))
-        return best_intent, round(confidence, 2)
-
-    return "", 0.0
-
-
-# ══════════════════════════════════════════════════════════════════
 # Entity extraction
 # ══════════════════════════════════════════════════════════════════
 
@@ -324,10 +217,9 @@ def _detect_needs_history(question: str, history: list = None) -> bool:
 
 def classify_intent(question: str, history: list = None) -> Intent:
     """
-    3-Level intent classification:
+    2-Level intent classification:
       Level 1: Regex exact match → confidence 0.95
-      Level 2: Keyword scoring   → confidence 0.75-0.90
-      Level 3: LLM fallback      → confidence 0.80-0.90
+      Level 2: LLM fallback      → confidence 0.80-0.90
     """
     q = question.strip()
 
@@ -384,16 +276,7 @@ def classify_intent(question: str, history: list = None) -> Intent:
             source = "regex"
             break
 
-    # ══ Level 2: Keyword scoring (if regex missed) ══
-    if not sub_intent:
-        kw_intent, kw_conf = _keyword_score_classify(q)
-        if kw_intent:
-            sub_intent = kw_intent
-            confidence = kw_conf
-            source = "keywords"
-            log.info(f"[INTENT] Keyword scoring: {kw_intent} (conf={kw_conf})")
-
-    # ══ Level 3: LLM fallback (if both missed) ══
+    # ══ Level 2: LLM fallback (if regex missed) ══
     if not sub_intent:
         llm_result = _llm_classify(q, history)
         if llm_result:
