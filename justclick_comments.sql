@@ -78,8 +78,10 @@ COMMENT ON COLUMN MAIN_INV.INV_KEY IS
 
 COMMENT ON COLUMN MAIN_INV.INVID IS
     'رقم الفاتورة المرئي للمستخدم - للعرض فقط.
-     ⚠ غير فريد عبر انواع الفواتير (قد يتكرر نفس الرقم في بيع وشراء).
-     ⚠ INVID غير فريد عبر أنواع الفواتير — لو المستخدم حدد النوع قيّد بـ INVTYPE، لو ما حددش اعرض كل الأنواع أو نبّه المستخدم.
+     ⚠ INVID غير فريد عبر أنواع الفواتير
+     ⚠ إن حدّد المستخدم نوع الفاتورة (مبيعات/مشتريات) قيّد بـ INVTYPE
+     ⚠ إن لم يذكر المستخدم النوع — اعرض كل الأنواع بدون أي INVTYPE filter
+     ⚠ ممنوع إضافة INVTYPE filter من تلقاء نفسك إذا لم يذكره المستخدم صراحةً
      ⚠ لا تستخدمه في JOIN';
 
 COMMENT ON COLUMN MAIN_INV.INVTYPE IS
@@ -278,6 +280,7 @@ COMMENT ON TABLE DETAIL_INV IS
 FK إلى MAIN_INV عبر INV_KEY.
 FK إلى ITEMS عبر ITEMID.
 ⚠ إجمالي البند = (QTY * PRICE) + ADD_VAL - SUB_VAL.
+⚠ لتفاصيل بنود الفواتير استخدم DETAIL_INV فقط — لا يوجد جدول اسمه PRICE_LIST_DET في هذا النظام.
 Invoice line items — one row per item per invoice.
 Line total formula: (QTY * PRICE) + ADD_VAL - SUB_VAL.';
 
@@ -554,6 +557,7 @@ COMMENT ON TABLE ITEMS IS
 'الأصناف والمنتجات — بيانات الصنف الأساسية.
 ⚠ هذا جدول بيانات الصنف فقط — للكميات والحركات انظر TRANSACTION.
 ⚠ السعر هنا هو سعر البيع الافتراضي — للأسعار الخاصة انظر PRICE_LIST_DET.
+⚠ للأصناف والمنتجات استخدم ITEMS فقط — لا يوجد جدول اسمه PRODUCTS في هذا النظام.
 Master table for all items and products. Prices and inventory movements are in other tables.';
 
 COMMENT ON COLUMN ITEMS.ITEMID IS
@@ -1579,7 +1583,8 @@ COMMENT ON COLUMN STORE_TRANS_TYPE.DUP_ITEM IS
 -- 8. ITEMS  (الأصناف)
 -- =============================================================================
 COMMENT ON TABLE ITEMS IS
-    'جدول الأصناف المخزنية - يُعرِّف كل صنف وخصائصه';
+    'جدول الأصناف المخزنية - يُعرِّف كل صنف وخصائصه.
+     ⚠ للأصناف والمنتجات استخدم ITEMS فقط — لا يوجد جدول اسمه PRODUCTS في هذا النظام';
 
 COMMENT ON COLUMN ITEMS.ITEMID IS
     'كود الصنف - المفتاح الأساسي';
