@@ -55,8 +55,7 @@ from executive_reports import detect_report_intent, generate_executive_report, f
 # template→LLM (never fabricate SQL), so the worst case is a slower-but-correct
 # LLM answer — a safe failure mode. Set SEMANTIC_FIRST=0 to revert to pure
 # template-first routing. It deliberately uses only CHEAP, RELIABLE signals
-# (intent entities + transaction-type words + the template's own SQL) and NOT the
-# reasoning plan, whose dimension/table/time detection over-fires (verified).
+# (intent entities + transaction-type words + the template's own SQL).
 _GATE_SPECIFIC_ENTITIES = (
     "customer_name", "store_name", "employee_name", "supplier_name", "item_name",
 )
@@ -1078,14 +1077,8 @@ async def _execute_llm_controlled(
         else:
             log.info("[PIPELINE] Schema context cache HIT")
 
-        # CHANGE 3: reasoning.decompose_query injection REMOVED. The rule engine no
-        # longer feeds the LLM. Coded-value/metric/filter meaning must come from the
-        # schema comments injected via schema_ctx — not from learning/reasoning.py.
-
-        # FOLLOW-UP (Phase 3): get_llm_context injection REMOVED. The learning-engine
-        # knowledge base + approved SQL examples are a non-comment meaning source
-        # (its seed facts duplicate coded-value meaning, e.g. 'INVTYPE: 0=بيع'), so it
-        # no longer feeds the LLM. Column/value meaning comes only from schema_ctx.
+        # Schema context (schema_ctx) is the sole source of column/value meaning
+        # fed to the LLM — derived entirely from justclick_comments.sql comments.
 
         # FOLLOW-UP (Phase 4): get_join_hint (ontology) injection REMOVED. JOIN
         # relationships are described in the comments themselves (FK markers / ⚠ JOIN
@@ -1195,8 +1188,6 @@ async def _execute_llm_controlled(
             answer += "\n\n---\n⚠️ النتائج مقتصرة على أول 500 سجل — يمكن تضييق نطاق البحث للحصول على نتائج أكثر دقة."
 
         log_query(user_id, question, sql, safety, success=True, rows=len(data))
-
-        # CHANGE 3: reasoning validate/record REMOVED (no reasoning plan exists now).
 
         # Build chart: explicit request or auto-generate
         chart = None

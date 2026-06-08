@@ -28,7 +28,10 @@ _cache_lock = threading.Lock()
 def _get_embedding_gemini(text: str) -> list[float] | None:
     """Generate embedding using Gemini API."""
     try:
-        import google.generativeai as genai
+        import warnings
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=FutureWarning)
+            import google.generativeai as genai
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
             return None

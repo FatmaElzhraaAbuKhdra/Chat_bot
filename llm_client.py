@@ -294,30 +294,11 @@ Use ONLY the schema comments provided above. Do not assume any column values.
         messages.append({"role": msg["role"], "content": msg["content"]})
     messages.append({"role": "user", "content": question})
 
-    # Prompt versioning: track which version was used
-    _version_id = "v1_default"
-    try:
-        from prompt_manager import select_prompt, record_result
-        _selected = select_prompt()
-        _version_id = _selected.version_id
-    except Exception:
-        pass
-
     start_t = time.time()
     # max_tokens=2000: llama-3.3-70b-versatile has a 128k-token context window,
     # so the old 8B-era cap of 800 is no longer needed.  Complex Oracle SQL with
     # multiple JOINs can reach 600-800 tokens; 2000 gives a safe margin.
     result = _call_llm(messages, temperature=0, max_tokens=2000)
-    elapsed_ms = int((time.time() - start_t) * 1000)
-
-    # Record result for A/B tracking
-    try:
-        from prompt_manager import record_result
-        # Success = non-empty SQL-like response
-        success = bool(result and result.strip().upper().startswith("SELECT"))
-        record_result(_version_id, success, elapsed_ms)
-    except Exception:
-        pass
 
     return _strip_tenant_filters(result)
 
