@@ -753,8 +753,10 @@ COMMENT ON COLUMN TRANSACTION.FISCAL_YEAR IS
 COMMENT ON TABLE TRANSACTION_TOT IS
 'أرصدة المخزون الإجمالية لكل صنف في كل مخزن (نتيجة مجمّعة).
 ⚠ هذا هو المصدر الصحيح لرصيد المخزون الحالي — وليس TRANSACTION مباشرة.
+⚠ أضف WHERE QTY <> 0 لاستبعاد الأصناف التي نفد رصيدها.
 Current stock balance per item per store — aggregated result.
-Use this for current stock queries, not the raw TRANSACTION table.';
+Use this for current stock queries, not the raw TRANSACTION table.
+Filter: QTY <> 0 to exclude items with zero stock.';
 
 COMMENT ON COLUMN TRANSACTION_TOT.ITEMID IS
 'كود الصنف — FK → ITEMS.ITEMID';
@@ -2411,5 +2413,46 @@ COMMENT ON COLUMN INST.INV_CAT_CHK IS
 -- - SAL_PURCH: إذا قال المستخدم "عميل" → SAL_PURCH=0 | "مورد" → SAL_PURCH=1 | "مندوب" → SAL_PURCH=2 | بدون ذكر → بدون فلتر.
 -- @SQL_EXAMPLE_END
 
+-- @SQL_EXAMPLE_START
+-- ══ مثال صحيح لاستعلام شجرة الحسابات مع DECODE ══
+-- عند عرض نوع الحساب أو طبيعته استخدم DECODE هكذا:
+--
+-- SELECT
+--   c.CHART_CODE,
+--   c.CHART_NAME,
+--   DECODE(c.CHART_TYPE,   0, 'ميزانية',     1, 'قائمة الدخل') AS CHART_TYPE_AR,
+--   DECODE(c.CHART_NATURE, 0, 'حساب رئيسي', 1, 'حساب مساعد')  AS CHART_NATURE_AR,
+--   c.PARENT_CHART_CODE
+-- FROM CHARTS c
+-- WHERE c.COMPANY_CODE = :company_code
+-- ORDER BY c.CHART_CODE;
+--
+-- ملاحظات:
+-- CHART_TYPE:   0 = ميزانية (أصول/خصوم),  1 = قائمة الدخل (إيرادات/مصروفات)
+-- CHART_NATURE: 0 = حساب رئيسي (main),    1 = حساب مساعد (sub/leaf)
+-- للشجرة الهرمية: START WITH PARENT_CHART_CODE IS NULL CONNECT BY PRIOR CHART_CODE = PARENT_CHART_CODE
+-- @SQL_EXAMPLE_END
 
+-- @SQL_EXAMPLE_START
+-- ══ مثال صحيح لاستعلام رصيد المخزون (TRANSACTION_TOT) ══
+-- دائماً استخدم TRANSACTION_TOT للأرصدة الحالية — أسرع وأصح من TRANSACTION:
+--
+-- SELECT
+--   i.ITEMNAME,
+--   i.ITEMID,
+--   s.STORE_NAME,
+--   t.QTY,
+--   t.PRICE,
+--   (t.QTY * t.PRICE) AS STOCK_VALUE
+-- FROM TRANSACTION_TOT t
+-- JOIN ITEMS i ON i.ITEMID = t.ITEMID
+-- JOIN STORE s ON s.STORE_CODE = t.STORE_CODE
+-- WHERE t.QTY <> 0
+--   AND t.COMPANY_CODE = :company_code
+-- ORDER BY t.QTY DESC;
+--
+-- ملاحظات:
+-- WHERE QTY <> 0 : لاستبعاد الأصناف التي نفد رصيدها (مهم للأداء)
+-- لا تستخدم TRANSACTION مباشرة للأرصدة — استخدم TRANSACTION_TOT دائماً
+-- @SQL_EXAMPLE_END
 
