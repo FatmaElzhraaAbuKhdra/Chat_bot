@@ -27,7 +27,7 @@ from memory import (
 )
 from schema_loader import get_relevant_schema
 from llm_client import generate_sql, format_answer, _call_llm
-from db import execute_query
+from db import execute_read_query as execute_query  # SELECT-only pool; DML pool stays in erp_actions
 from dashboard_engine import find_dashboard_by_query, execute_dashboard
 from cache import (
     sql_cache, dash_cache, schema_cache,
@@ -425,9 +425,25 @@ async def process_question(
     except Exception:
         pass
 
-    # ── Response cache check (skip for action/workflow questions) ──
-    # session_ctx: encode session-dependent state so different sessions get distinct
-    # cache entries (e.g. invoice_detail INVTYPE=0 vs cold-session no-INVTYPE).
+    # ── Step 0: Company access validation (BEFORE cache check) ──
+    # The cache check must come AFTER this gate, otherwise a user without access to
+    # company X could receive a cached response that was generated for a user who
+    # does have access — a multi-tenant data leak.
+    if company_code:
+        has_access = await validate_company_access(user_id, company_code)
+        if not has_access:
+            return PipelineResult(
+                answer="ليس لديك صلاحية على هذه الشركة.",
+                method="error",
+            )
+
+    # ── Response cache check (AFTER company validation) ──
+    # user_role is included in the cache key so users with different permission levels
+    # never share a cache entry (a viewer cannot receive a cached admin response that
+    # exposes masked columns / restricted data).
+    # session_ctx encodes INVTYPE context so the same question in different sessions
+    # gets distinct entries.
+    _user_role = _user_perms.role if _user_perms else "viewer"
     _session_ctx = ""
     try:
         from learning.conversation_bi import get_context as _bi_get_ctx
@@ -439,7 +455,10 @@ async def process_question(
         pass
     try:
         import response_cache
-        cached = response_cache.get(question, company_code, fiscal_year, session_ctx=_session_ctx)
+        cached = response_cache.get(
+            question, company_code, fiscal_year,
+            session_ctx=_session_ctx, user_role=_user_role,
+        )
         if cached:
             return PipelineResult(
                 answer=cached.answer,
@@ -454,15 +473,6 @@ async def process_question(
             )
     except Exception:
         pass
-
-    # ── Step 0: Company access validation ──
-    if company_code:
-        has_access = await validate_company_access(user_id, company_code)
-        if not has_access:
-            return PipelineResult(
-                answer="ليس لديك صلاحية على هذه الشركة.",
-                method="error",
-            )
 
     # ══════════════════════════════════════════════════════════════
     # ERP OPERATOR LAYER (pre-classification fast-path)
@@ -745,6 +755,7 @@ async def process_question(
                 insights=result.insights,
                 template_used=result.template_used,
                 session_ctx=_session_ctx,
+                user_role=_user_role,   # role-scoped key prevents cross-permission leaks
             )
         except Exception:
             pass

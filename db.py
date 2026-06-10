@@ -11,6 +11,15 @@ DB_RETRY_BASE_DELAY = 1.0  # seconds (exponential: 1s, 2s)
 
 _pool = None
 
+# ── Read-only pool (chat pipeline SELECT queries) ────────────────
+# Uses DB_READ_USER / DB_READ_PASS when configured.
+# If those env vars are absent the read pool falls back to _pool —
+# the Oracle user itself cannot enforce SELECT-only in that case, so
+# sql_safety regex remains the only DML guard.  Set DB_READ_USER to
+# a schema-level SELECT-only Oracle user for true defense-in-depth.
+_read_pool = None
+_READ_DB_CONFIGURED = False  # True only when a dedicated read user exists
+
 
 async def get_pool():
     global _pool
@@ -22,6 +31,44 @@ async def get_pool():
             min=2, max=10, increment=1
         )
     return _pool
+
+
+async def get_read_pool():
+    """Return the SELECT-only connection pool used by the chat pipeline.
+
+    Priority:
+      1. DB_READ_USER / DB_READ_PASS set → dedicated Oracle user (SELECT grants only).
+         The database itself blocks any DML even if sql_safety regex is bypassed.
+      2. Not set → shares the main DML-capable pool and logs a WARNING.
+         In this mode the regex + AST safety layer is the only DML guard.
+    """
+    global _read_pool, _READ_DB_CONFIGURED
+    if _read_pool is not None:
+        return _read_pool
+
+    read_user = os.getenv("DB_READ_USER", "").strip()
+    read_pass = os.getenv("DB_READ_PASS", "").strip()
+
+    if read_user and read_pass:
+        _read_pool = oracledb.create_pool(
+            user=read_user,
+            password=read_pass,
+            dsn=f"{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_SID')}",
+            min=2, max=10, increment=1
+        )
+        _READ_DB_CONFIGURED = True
+        log.info("[DB] Read-only pool created (DB_READ_USER=%s)", read_user)
+    else:
+        log.warning(
+            "[DB] DB_READ_USER not configured — chat queries share the main DML-capable pool. "
+            "To enforce SELECT-only at the DB layer, create an Oracle user with SELECT grants "
+            "and set DB_READ_USER / DB_READ_PASS in .env."
+        )
+        await get_pool()   # ensure main pool is initialised
+        _read_pool = _pool
+        _READ_DB_CONFIGURED = False
+
+    return _read_pool
 
 
 def _clean_sql(sql: str) -> str:
@@ -40,10 +87,9 @@ def has_bind_variables(sql: str) -> bool:
     return bool(re.search(r':(?!=)\b[a-zA-Z_]\w*', sql))
 
 
-def _run_query_sync(sql: str, params: dict = None) -> list[dict]:
-    """Synchronous query execution (runs in thread pool via asyncio)."""
-    pool_sync = _pool
-    with pool_sync.acquire() as conn:
+def _run_query_sync_on_pool(pool, sql: str, params: dict = None) -> list[dict]:
+    """Synchronous query execution on a given pool (runs in thread pool via asyncio)."""
+    with pool.acquire() as conn:
         with conn.cursor() as cur:
             cur.execute(sql, params or {})
             cols = [d[0].lower() for d in cur.description]
@@ -53,6 +99,11 @@ def _run_query_sync(sql: str, params: dict = None) -> list[dict]:
             if truncated:
                 result.append({"__truncated__": True, "__limit__": 500})
             return result
+
+
+def _run_query_sync(sql: str, params: dict = None) -> list[dict]:
+    """Synchronous query execution (runs in thread pool via asyncio)."""
+    return _run_query_sync_on_pool(_pool, sql, params)
 
 
 def _is_transient_error(e: Exception) -> bool:
@@ -98,6 +149,50 @@ async def execute_query(sql: str, params: dict = None) -> list[dict]:
             if _is_transient_error(e) and attempt < DB_MAX_RETRIES:
                 delay = DB_RETRY_BASE_DELAY * (2 ** attempt)
                 log.warning(f"[DB] Transient error, retry {attempt+1}/{DB_MAX_RETRIES} in {delay}s: {e}")
+                last_err = e
+                await asyncio.sleep(delay)
+                continue
+            raise
+
+    raise last_err
+
+
+async def execute_read_query(sql: str, params: dict = None) -> list[dict]:
+    """Execute a SELECT query using the read-only pool.
+
+    When DB_READ_USER is configured, the Oracle user has SELECT-only grants —
+    any DML that slips past sql_safety is rejected at the database layer.
+    When DB_READ_USER is absent, falls back to the main pool (same behaviour
+    as execute_query, but logs a warning at startup so the gap is visible).
+    """
+    sql = _clean_sql(sql)
+    pool = await get_read_pool()
+
+    last_err = None
+    for attempt in range(1 + DB_MAX_RETRIES):
+        try:
+            loop = asyncio.get_event_loop()
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, _run_query_sync_on_pool, pool, sql, params),
+                timeout=DB_QUERY_TIMEOUT,
+            )
+            return result
+        except asyncio.TimeoutError:
+            log.warning(
+                "[DB] Read query timeout (%ss), attempt %d: %s...",
+                DB_QUERY_TIMEOUT, attempt + 1, sql[:100],
+            )
+            last_err = TimeoutError(f"انتهت مهلة الاستعلام ({DB_QUERY_TIMEOUT} ثانية)")
+            if attempt < DB_MAX_RETRIES:
+                await asyncio.sleep(DB_RETRY_BASE_DELAY * (2 ** attempt))
+                continue
+        except Exception as e:
+            if _is_transient_error(e) and attempt < DB_MAX_RETRIES:
+                delay = DB_RETRY_BASE_DELAY * (2 ** attempt)
+                log.warning(
+                    "[DB] Transient error on read pool, retry %d/%d in %.1fs: %s",
+                    attempt + 1, DB_MAX_RETRIES, delay, e,
+                )
                 last_err = e
                 await asyncio.sleep(delay)
                 continue

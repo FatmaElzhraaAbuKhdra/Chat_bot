@@ -6,7 +6,7 @@ import csv
 import io
 import logging
 import traceback
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 from typing import List, Optional
@@ -19,6 +19,7 @@ from schema_loader import get_schema_context
 from query_templates import list_templates
 from cache import get_all_stats as get_cache_stats, invalidate_all, sql_cache, dash_cache
 from company_manager import get_user_companies
+import rbac as _rbac
 
 log = logging.getLogger("chat")
 
@@ -77,13 +78,38 @@ class ChatResponse(BaseModel):
 
 
 @router.post("/", response_model=ChatResponse)
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, request: Request):
     try:
+        # ── Identity resolution ────────────────────────────────────────
+        # Priority: JWT-verified identity > body user_id.
+        # When AUTH_MODE=jwt a missing/invalid token is a hard 401.
+        # When AUTH_MODE=api_key the body user_id is accepted (legacy) —
+        # in that mode access is gated by X-API-Key at the middleware level,
+        # not per-user identity. Switch to AUTH_MODE=jwt for real RBAC.
+        _auth_user = _rbac.authenticate_request(dict(request.headers))
+        if _auth_user:
+            # Verified identity from JWT — body user_id is ignored
+            if _auth_user != req.user_id:
+                log.warning(
+                    "[AUTH] Body user_id=%r overridden by JWT-verified identity=%r",
+                    req.user_id, _auth_user,
+                )
+            effective_user_id = _auth_user
+        else:
+            if _rbac._AUTH_MODE == "jwt":
+                # JWT mode with no valid token → hard reject
+                raise HTTPException(
+                    status_code=401,
+                    detail="المصادقة مطلوبة — يرجى إرسال Authorization: Bearer <token> صالح",
+                )
+            # api_key / dev mode: accept body claim (existing behaviour)
+            effective_user_id = req.user_id
+
         history = [{"role": m.role, "content": m.content} for m in req.history]
 
         result = await process_question(
             question=req.question,
-            user_id=req.user_id,
+            user_id=effective_user_id,
             company_code=req.company_code,
             fiscal_year=req.fiscal_year,
             history=history,
@@ -104,7 +130,7 @@ async def chat(req: ChatRequest):
         try:
             from audit_log import log_interaction
             log_interaction(
-                user_id=req.user_id,
+                user_id=effective_user_id,
                 question=req.question,
                 intent_category=result.intent.category if result.intent else "",
                 intent_sub=result.intent.sub_intent if result.intent else "",
@@ -124,8 +150,7 @@ async def chat(req: ChatRequest):
         sql_for_response = result.sql
         export_for_response = result.export_available
         try:
-            from rbac import get_user_permissions
-            perms = get_user_permissions(req.user_id)
+            perms = _rbac.get_user_permissions(effective_user_id)
             if not perms.can_view_sql:
                 sql_for_response = ""
             if not perms.can_export:

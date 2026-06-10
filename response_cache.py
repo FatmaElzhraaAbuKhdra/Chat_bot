@@ -41,23 +41,25 @@ class CacheEntry:
 
 
 def _make_key(question: str, company_code: str = "1", fiscal_year: str = "2024",
-              session_ctx: str = "") -> str:
-    """Generate cache key from question + context + session state.
+              session_ctx: str = "", user_role: str = "") -> str:
+    """Generate cache key from question + context + session state + user role.
 
-    session_ctx carries session-dependent values (e.g. txn_context INVTYPE) so that
-    the same question with different session states gets different cache entries.
-    This prevents invoice_detail queries from returning a cached cold-session result
-    when the current session has an established INVTYPE.
+    user_role is included so that users with different permission levels never
+    share a cache entry — a viewer cannot receive a cached admin response that
+    exposes masked columns or restricted data.
+
+    session_ctx carries session-dependent values (e.g. txn_context INVTYPE) so
+    that the same question with different session states gets different entries.
     """
     normalized = question.strip().lower()
-    raw = f"{normalized}|{company_code}|{fiscal_year}|{session_ctx}"
+    raw = f"{normalized}|{company_code}|{fiscal_year}|{session_ctx}|{user_role}"
     return hashlib.md5(raw.encode()).hexdigest()
 
 
 def get(question: str, company_code: str = "1", fiscal_year: str = "2024",
-        session_ctx: str = "") -> Optional[CacheEntry]:
+        session_ctx: str = "", user_role: str = "") -> Optional[CacheEntry]:
     """Get cached response if valid."""
-    key = _make_key(question, company_code, fiscal_year, session_ctx)
+    key = _make_key(question, company_code, fiscal_year, session_ctx, user_role)
     entry = _cache.get(key)
     if entry and not entry.is_expired:
         entry.hit_count += 1
@@ -73,13 +75,13 @@ def put(question: str, company_code: str, fiscal_year: str,
         method: str = "", chart_data: dict = None,
         suggestions: list = None, insights: list = None,
         template_used: str = "", ttl: float = _DEFAULT_TTL,
-        session_ctx: str = ""):
+        session_ctx: str = "", user_role: str = ""):
     """Cache a pipeline response."""
     # Don't cache errors or empty results
     if method == "error" or not answer:
         return
 
-    key = _make_key(question, company_code, fiscal_year, session_ctx)
+    key = _make_key(question, company_code, fiscal_year, session_ctx, user_role)
     _cache[key] = CacheEntry(
         key=key,
         answer=answer,
