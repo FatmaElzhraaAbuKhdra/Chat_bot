@@ -18,6 +18,7 @@ Row-level security:
   - sensitive column masking (PII)
 """
 import os
+import re
 import logging
 from dataclasses import dataclass, field
 from typing import Optional
@@ -338,36 +339,99 @@ def load_roles_from_db():
         log.debug(f"[RBAC] DB role loading skipped: {e}")
 
 
-def inject_row_level_security(sql: str, user_id: str, company_code: str) -> str:
-    """Apply row-level security to SQL based on user permissions.
-    Adds BRANCH_ID filtering for branch-restricted users.
+def inject_row_level_security(
+    sql: str,
+    user_id: str,
+    company_code: str = "",   # reserved — branch-only filter for now
+) -> tuple[str, dict]:
+    """Apply row-level security (branch filter) and return (sql, bind_params).
+
+    Callers must forward the returned params dict to execute_read_query:
+        sql, rls = inject_row_level_security(sql, user_id, co)
+        rows = await execute_read_query(sql, {**query_params, **rls})
+
+    Returns (original_sql, {}) unchanged when no branch restriction applies.
+
+    Fixes vs the old regex-based implementation:
+
+    1. Subquery-safe injection — _find_outer_token() tracks parenthesis depth
+       character-by-character, so WHERE / AND always lands on the outermost
+       SELECT.  The old re.sub(r'\\bWHERE\\b', ..., count=1) matched the first
+       WHERE in the text, which could be inside a subquery:
+
+         SELECT * FROM MAIN_INV m,
+           (SELECT INVID FROM DETAIL_INV WHERE ITEMID=5) d  <- depth-1 WHERE
+         WHERE m.INVID = d.INVID                            <- depth-0 WHERE
+
+       With the old code the filter was injected after the depth-1 WHERE,
+       not after the outer one, producing broken or wrong SQL.
+
+    2. Bind variables — branch values become :rls_branch_0, :rls_branch_1 …
+       never string-interpolated.  The old f\"'{b}'\" pattern allowed a
+       crafted branch ID such as  x' OR '1'='1  to inject SQL.
+
+    3. Missing fallback — the old code silently omitted the filter when there
+       was no WHERE *and* no ORDER/GROUP/FETCH marker.  The new code always
+       appends WHERE <condition> in that case.
     """
-    perms = get_user_permissions(user_id)
+    from query_policy import (
+        _find_outer_token, _strip_subqueries,
+        _WHERE_RE, _END_MARKER_RE,
+        BRANCH_TABLES,
+    )
 
-    # Branch filtering (if user is restricted to specific branches)
-    if perms.allowed_branches and perms.allowed_branches != ["*"]:
-        branches_str = ",".join(f"'{b}'" for b in perms.allowed_branches)
-        # Only add if the query touches tables with BRANCH_ID
-        if re.search(r'\bBRANCH_ID\b', sql, re.IGNORECASE) or \
-           re.search(r'\b(MAIN_INV|VOUCHERS|TRANSACTION)\b', sql, re.IGNORECASE):
-            # Inject branch filter
-            if "WHERE" in sql.upper():
-                sql = re.sub(
-                    r'\bWHERE\b',
-                    f"WHERE BRANCH_ID IN ({branches_str}) AND",
-                    sql, count=1, flags=re.IGNORECASE
-                )
-            else:
-                # Add WHERE before ORDER BY or FETCH
-                insert_point = re.search(
-                    r'\b(ORDER|FETCH|GROUP|HAVING)\b', sql, re.IGNORECASE
-                )
-                if insert_point:
-                    sql = sql[:insert_point.start()] + \
-                          f" WHERE BRANCH_ID IN ({branches_str}) " + \
-                          sql[insert_point.start():]
+    perms    = get_user_permissions(user_id)
+    branches = perms.allowed_branches
 
-    return sql
+    # No branch restriction at all — pass through unchanged
+    if not branches or branches == ["*"]:
+        return sql, {}
 
+    # Only inject when the outer query actually references a branch-aware table.
+    # Use _strip_subqueries so table names inside subqueries are ignored.
+    outer_sql = _strip_subqueries(sql)
+    touches_branch_table = bool(
+        re.search(r'\bBRANCH_ID\b', outer_sql, re.IGNORECASE)
+    ) or any(
+        re.search(rf'\b{re.escape(t)}\b', outer_sql, re.IGNORECASE)
+        for t in BRANCH_TABLES
+    )
+    if not touches_branch_table:
+        return sql, {}
 
-import re  # ensure re is available for inject_row_level_security
+    # Skip if BRANCH_ID is already constrained at the outer level
+    if re.search(r'\bBRANCH_ID\s*(=|IN\s*\()', outer_sql, re.IGNORECASE):
+        log.debug("[RBAC] BRANCH_ID already in outer query — RLS injection skipped")
+        return sql, {}
+
+    # Build named bind params — one per allowed branch value
+    params: dict[str, str] = {}
+    placeholders: list[str] = []
+    for i, branch in enumerate(branches):
+        key = f"rls_branch_{i}"
+        params[key] = str(branch)
+        placeholders.append(f":{key}")
+
+    condition = f"BRANCH_ID IN ({', '.join(placeholders)})"
+
+    # Depth-aware injection — uses the same helpers as query_policy.apply_policy
+    where_pos = _find_outer_token(sql, _WHERE_RE)
+    end_pos   = _find_outer_token(sql, _END_MARKER_RE)
+
+    if where_pos is not None:
+        # Outer WHERE exists — append AND before end marker or at SQL end
+        new_sql = (
+            sql[:end_pos].rstrip() + f"\n   AND {condition}\n" + sql[end_pos:]
+            if end_pos is not None
+            else sql.rstrip() + f"\n   AND {condition}"
+        )
+    else:
+        # No outer WHERE — create one before end marker or at SQL end
+        new_sql = (
+            sql[:end_pos].rstrip() + f"\n WHERE {condition}\n" + sql[end_pos:]
+            if end_pos is not None
+            else sql.rstrip() + f"\n WHERE {condition}"
+        )
+
+    log.info("[RBAC] Branch RLS injected for user=%s: %d branch(es)", user_id, len(branches))
+    return new_sql, params

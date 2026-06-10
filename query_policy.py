@@ -124,6 +124,12 @@ INHERITS_TENANT = {
     "VOUCHERS_DET": "VOUCHERS",
 }
 
+# Tables that carry a BRANCH_ID column (per-branch row-level security)
+BRANCH_TABLES = {
+    "MAIN_INV", "VOUCHERS", "VOUCHERS_DET",
+    "TRANSACTION", "TRANSACTION_TOT",
+}
+
 
 # ══════════════════════════════════════════════════════════════════
 # Query Classification Layer
@@ -456,29 +462,66 @@ def _already_filtered(sql: str, column: str, alias: str) -> bool:
     return False
 
 
+def _find_outer_token(sql: str, pattern: re.Pattern) -> Optional[int]:
+    """Return the start position of the first match of *pattern* at
+    parenthesis depth 0 (outermost SELECT level).
+
+    Scans character-by-character tracking ( / ) depth so that tokens inside
+    subqueries are never mistaken for outer-level clauses.  Returns None when
+    no such match exists.
+
+    Examples where the old re.search would pick the wrong position:
+      SELECT * FROM T WHERE X IN (SELECT Y FROM S WHERE Z=1) ORDER BY X
+      ↑ outer WHERE at depth 0                ↑ inner WHERE at depth 1 — skipped
+    """
+    depth = 0
+    i = 0
+    n = len(sql)
+    while i < n:
+        ch = sql[i]
+        if ch == '(':
+            depth += 1
+        elif ch == ')':
+            if depth > 0:
+                depth -= 1
+        elif depth == 0:
+            m = pattern.match(sql, i)
+            if m:
+                return m.start()
+        i += 1
+    return None
+
+
+# Pre-compiled patterns used by both _find_outer_token callers
+_WHERE_RE      = re.compile(r'\bWHERE\b', re.IGNORECASE)
+_END_MARKER_RE = re.compile(
+    r'\b(GROUP\s+BY|ORDER\s+BY|FETCH\s+FIRST|HAVING|UNION)\b',
+    re.IGNORECASE,
+)
+
+
 def _inject_at_correct_position(sql: str, conditions: list[str]) -> str:
-    """Inject AND conditions at the correct SQL position."""
+    """Inject AND conditions at the correct SQL position.
+
+    Uses _find_outer_token so the WHERE / AND clause always lands on the
+    outermost SELECT, not on a subquery WHERE that happens to appear first
+    in the SQL text.
+    """
     cond_str = " AND ".join(conditions)
 
-    end_markers = re.compile(
-        r'\b(GROUP\s+BY|ORDER\s+BY|FETCH\s+FIRST|HAVING|UNION)\b',
-        re.IGNORECASE
-    )
+    where_pos = _find_outer_token(sql, _WHERE_RE)
+    end_pos   = _find_outer_token(sql, _END_MARKER_RE)
 
-    marker_match = end_markers.search(sql)
-
-    if re.search(r'\bWHERE\b', sql, re.IGNORECASE):
-        # WHERE exists — inject before end markers or at end
-        if marker_match:
-            pos = marker_match.start()
-            sql = sql[:pos].rstrip() + f"\n   AND {cond_str}\n" + sql[pos:]
+    if where_pos is not None:
+        # Outer WHERE exists — append AND before end marker or at SQL end
+        if end_pos is not None:
+            sql = sql[:end_pos].rstrip() + f"\n   AND {cond_str}\n" + sql[end_pos:]
         else:
             sql = sql.rstrip() + f"\n   AND {cond_str}"
     else:
-        # No WHERE — create one
-        if marker_match:
-            pos = marker_match.start()
-            sql = sql[:pos].rstrip() + f"\n WHERE {cond_str}\n" + sql[pos:]
+        # No outer WHERE — create one before end marker or at SQL end
+        if end_pos is not None:
+            sql = sql[:end_pos].rstrip() + f"\n WHERE {cond_str}\n" + sql[end_pos:]
         else:
             sql = sql.rstrip() + f"\n WHERE {cond_str}"
 
