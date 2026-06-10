@@ -160,14 +160,76 @@ ENTITY_PATTERNS = {
     "employee_name": r"(?:موظف|اسم|employee)\s+([^\d\s].{2,30})",
 }
 
+# ── Arabic month names → month number ────────────────────────────
+# Covers Egyptian, Gulf, and Levantine Arabic month names so date-range
+# questions like "من يناير لمارس" or "شهر آذار" are correctly detected.
+# Used only for entity extraction — business meaning still comes from comments.
+_AR_MONTHS: dict[str, int] = {
+    # Egyptian / international
+    'يناير': 1,  'جانفي': 1,  'كانون الثاني': 1,
+    'فبراير': 2, 'فيفري': 2,  'شباط': 2,
+    'مارس': 3,   'آذار': 3,
+    'أبريل': 4,  'إبريل': 4,  'ابريل': 4,  'نيسان': 4,
+    'مايو': 5,   'أيار': 5,
+    'يونيو': 6,  'يونيه': 6,  'حزيران': 6,
+    'يوليو': 7,  'يوليه': 7,  'تموز': 7,
+    'أغسطس': 8,  'اغسطس': 8,  'آب': 8,
+    'سبتمبر': 9, 'أيلول': 9,
+    'أكتوبر': 10,'اكتوبر': 10,'تشرين الأول': 10,
+    'نوفمبر': 11,'تشرين الثاني': 11,
+    'ديسمبر': 12,'كانون الأول': 12,
+}
+
+# Month names sorted longest-first so the multi-word names match before
+# single-word ones (e.g. "تشرين الأول" before "تشرين").
+_AR_MONTH_PATTERN = re.compile(
+    '(' + '|'.join(re.escape(m) for m in
+                   sorted(_AR_MONTHS, key=len, reverse=True)) + ')',
+    re.UNICODE,
+)
+
+# "من يناير لـمارس" / "من يناير إلى مارس" / "بين يناير و مارس"
+_DATE_RANGE_RE = re.compile(
+    r'(?:من|بين)\s+'
+    r'(' + '|'.join(re.escape(m) for m in sorted(_AR_MONTHS, key=len, reverse=True)) + r')'
+    r'\s+(?:ل(?:ـ\s*|\s+)?|إلى\s+|الى\s+|حتى\s+|و\s*)'
+    r'(' + '|'.join(re.escape(m) for m in sorted(_AR_MONTHS, key=len, reverse=True)) + r')',
+    re.UNICODE,
+)
+
 
 def _extract_entities(question: str) -> dict:
-    """Extract named entities from the question."""
-    entities = {}
+    """Extract named entities from the question.
+
+    In addition to the ENTITY_PATTERNS regex table, detects:
+      • Arabic month-range  → date_month_from / date_month_to  (1-12)
+      • Single Arabic month → date_month_from  (1-12)
+    These two extra entities are used by the semantic gate in pipeline.py
+    to demote templates that can't honor a specific month range to the LLM path.
+    """
+    entities: dict = {}
     for name, pattern in ENTITY_PATTERNS.items():
         match = re.search(pattern, question, re.IGNORECASE)
         if match:
             entities[name] = match.group(1).strip()
+
+    # ── Arabic month range ──────────────────────────────────────
+    m = _DATE_RANGE_RE.search(question)
+    if m:
+        f = _AR_MONTHS.get(m.group(1))
+        t = _AR_MONTHS.get(m.group(2))
+        if f:
+            entities['date_month_from'] = str(f)
+        if t:
+            entities['date_month_to'] = str(t)
+    else:
+        # Single month name (no range)
+        sm = _AR_MONTH_PATTERN.search(question)
+        if sm:
+            num = _AR_MONTHS.get(sm.group(1))
+            if num:
+                entities['date_month_from'] = str(num)
+
     return entities
 
 

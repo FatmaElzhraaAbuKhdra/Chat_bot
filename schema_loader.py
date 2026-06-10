@@ -545,13 +545,51 @@ def _compact_desc(text: str, cap: int) -> str:
 
 
 # ── Comment-derived business concepts (single source of truth) ───────
+# ── Arabic broken-plural → canonical-singular map ──────────────────
+# Applied AFTER basic normalization so every entry is already in
+# normalized form (ة→ه, ى→ي, أإآ→ا, ال stripped).
+# Symmetric: both the question word AND the comment word go through the
+# same normalization, so adding an entry here never causes false matches —
+# it only unifies words that were previously two different tokens.
+# Rule: add only if the broken plural is actually used in ERP questions
+# AND the singular form already appears in table/column comments.
+_BROKEN_PLURALS: dict[str, str] = {
+    'فواتير':   'فاتوره',   # invoices → invoice
+    'عملاء':    'عميل',     # customers → customer
+    'موردين':   'مورد',     # suppliers → supplier
+    'موردون':   'مورد',
+    'موظفين':   'موظف',     # employees → employee
+    'موظفون':   'موظف',
+    'اصناف':    'صنف',      # items → item  (أصناف already normalises أ→ا)
+    'مخازن':    'مخزن',     # stores → store
+    'مستودعات': 'مستودع',   # warehouses → warehouse
+    'قيود':     'قيد',      # journal entries → entry
+    'مدفوعات':  'مدفوع',    # payments → payment
+    'مرتجعات':  'مرتجع',    # returns → return
+    'حسابات':   'حساب',     # accounts → account
+    'تقارير':   'تقرير',    # reports → report
+    'فروع':     'فرع',      # branches → branch
+    'مجموعات':  'مجموعه',   # groups → group
+    'عمليات':   'عمليه',    # operations → operation
+    'معاملات':  'معامله',   # transactions → transaction
+}
+
+
 def _normalize_concept(text: str) -> str:
-    """Normalize an Arabic concept label for matching (strip leading ال, alef/ya/ta)."""
+    """Normalize an Arabic concept label for matching.
+
+    Steps (applied in order):
+      1. Normalize alef variants (أإآٱ → ا)
+      2. Normalize teh-marbuta (ة → ه) and alef-maqsura (ى → ي)
+      3. Strip definite article (ال) when word is longer than 4 chars
+      4. Map common Arabic broken plurals to their canonical singular
+         so question words (جمع) match comment words (مفرد) and vice-versa.
+    """
     t = re.sub(r'[أإآٱ]', 'ا', (text or '').strip().lower())
     t = t.replace('ة', 'ه').replace('ى', 'ي')
     if t.startswith('ال') and len(t) > 4:
         t = t[2:]
-    return t
+    return _BROKEN_PLURALS.get(t, t)
 
 
 def get_flag_concept_map() -> dict[str, list[tuple[str, str]]]:

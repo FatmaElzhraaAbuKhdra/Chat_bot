@@ -286,6 +286,26 @@ def _template_matches_meaning(template, entities: dict, question: str) -> tuple[
     except Exception:
         pass
 
+    # 5. Month-range specificity — question names a specific month range but the
+    #    template has no date_month_from / date_month_to parameters.
+    #    Without this check an "alltime" template silently answers a Jan→Mar question
+    #    with the total for ALL periods — a subtly wrong but plausible-looking result.
+    #    Fail-open: if the check itself errors (import issues, unexpected entities),
+    #    the template is allowed through so a real ERP question is never blocked.
+    _DATE_MONTH_ENTITIES = frozenset({'date_month_from', 'date_month_to'})
+    if _DATE_MONTH_ENTITIES & entities.keys():
+        try:
+            tmpl_params = set(getattr(template, 'required_params', [])
+                              ) | set(getattr(template, 'optional_params', []))
+            if not (_DATE_MONTH_ENTITIES & tmpl_params):
+                return False, (
+                    "question requests a specific month range "
+                    f"({[e for e in _DATE_MONTH_ENTITIES if e in entities]}) "
+                    "but the template has no date_month parameters — LLM path"
+                )
+        except Exception:
+            pass
+
     return True, ""
 
 
