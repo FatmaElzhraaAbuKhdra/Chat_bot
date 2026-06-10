@@ -194,58 +194,79 @@ def get_masked_columns(user_id: str) -> list[str]:
 
 
 # ── JWT/Token-Based Identity Integration ─────────────────────────
-_JWT_SECRET = os.getenv("JWT_SECRET", "")
+# AUTH_MODE is a stable deployment setting — read once at import time.
+# JWT_SECRET is resolved lazily on every call so python-dotenv has time
+# to populate os.environ before the first authentication attempt.
 _AUTH_MODE = os.getenv("AUTH_MODE", "api_key")  # api_key | jwt | oauth2
 
 
-def verify_token(token: str) -> Optional[dict]:
-    """Verify a JWT token and extract user claims.
-    Returns {user_id, role, company_code, branches} or None.
+def _get_jwt_secret() -> str:
+    """Return JWT_SECRET from the environment.
 
-    In production: replace with actual JWT library (PyJWT).
-    This implementation provides the integration contract.
+    Raises RuntimeError in jwt mode when the secret is absent or empty.
+    The error deliberately propagates to the caller (→ HTTP 500) so that
+    a misconfigured jwt-mode deployment fails loudly on startup / first
+    request rather than silently falling through to the claimed identity.
     """
-    if not token or not _JWT_SECRET:
+    secret = os.getenv("JWT_SECRET", "").strip()
+    if not secret and _AUTH_MODE == "jwt":
+        raise RuntimeError(
+            "[RBAC] JWT_SECRET is not configured. "
+            "Set JWT_SECRET in the environment / .env file before running in jwt mode."
+        )
+    return secret
+
+
+def verify_token(token: str) -> Optional[dict]:
+    """Verify a JWT Bearer token and return {user_id, role, company_code, branches}.
+
+    Security guarantees (PyJWT >= 2.4):
+
+    1. algorithms=["HS256"] is passed explicitly.  PyJWT checks the 'alg'
+       field in the JWT header and raises InvalidAlgorithmError if it is not
+       HS256 — this defeats alg:none and RS256-confusion attacks where an
+       attacker substitutes a different algorithm in the header.
+
+    2. options={"require": ["exp", "sub"]} forces both claims to be present;
+       a token without an expiry or a subject is rejected outright.
+
+    3. An empty JWT_SECRET in jwt mode raises RuntimeError (outside the
+       try/except) so it is never silently swallowed.  The error surfaces as
+       HTTP 500 so operations knows the deployment is misconfigured.
+    """
+    if not token:
+        return None
+
+    # _get_jwt_secret raises RuntimeError in jwt mode if secret is missing.
+    # It sits OUTSIDE the try/except block intentionally — misconfiguration
+    # must not be caught and turned into a silent None return.
+    secret = _get_jwt_secret()
+    if not secret:
+        # api_key / dev mode with no secret — skip JWT verification entirely.
         return None
 
     try:
-        import hmac
-        import hashlib
-        import json
-        import base64
+        import jwt as _jwt  # PyJWT
 
-        # Simple JWT verification (HS256)
-        parts = token.split(".")
-        if len(parts) != 3:
-            return None
-
-        # Decode payload
-        payload_b64 = parts[1] + "=" * (4 - len(parts[1]) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(payload_b64))
-
-        # Verify signature
-        signing_input = f"{parts[0]}.{parts[1]}".encode()
-        expected_sig = base64.urlsafe_b64encode(
-            hmac.new(_JWT_SECRET.encode(), signing_input, hashlib.sha256).digest()
-        ).rstrip(b"=").decode()
-
-        if not hmac.compare_digest(expected_sig, parts[2]):
-            log.warning("[RBAC] JWT signature verification failed")
-            return None
-
-        # Check expiration
-        import time
-        if payload.get("exp", 0) < time.time():
-            return None
-
+        payload = _jwt.decode(
+            token,
+            secret,
+            algorithms=["HS256"],               # explicit allowlist — alg:none rejected
+            options={"require": ["exp", "sub"]}, # both claims mandatory
+        )
         return {
-            "user_id": payload.get("sub", ""),
-            "role": payload.get("role", "viewer"),
+            "user_id":      payload["sub"],
+            "role":         payload.get("role", "viewer"),
             "company_code": payload.get("company", "1"),
-            "branches": payload.get("branches", []),
+            "branches":     payload.get("branches", []),
         }
-    except Exception as e:
-        log.debug(f"[RBAC] Token verification failed: {e}")
+
+    except ImportError:
+        log.error("[RBAC] PyJWT is not installed — run: pip install 'PyJWT>=2.8'")
+        return None
+    except Exception as exc:
+        # Log only the exception class — avoids leaking token content into logs.
+        log.warning("[RBAC] JWT verification failed: %s", type(exc).__name__)
         return None
 
 

@@ -207,6 +207,20 @@ async def startup():
         log.info("[STARTUP] Proactive monitoring engine started (interval=900s)")
     except Exception as e:
         log.warning(f"[STARTUP] Proactive monitor start skipped: {e}")
+    # ── JWT secret validation ─────────────────────────────────────
+    # Fail at startup (not on first request) when AUTH_MODE=jwt but the
+    # secret is not configured.  api_key mode skips this check silently.
+    try:
+        from rbac import _AUTH_MODE as _rbac_auth_mode, _get_jwt_secret
+        if _rbac_auth_mode == "jwt":
+            _get_jwt_secret()                   # raises if secret absent
+            log.info("[STARTUP] JWT secret validated (AUTH_MODE=jwt)")
+    except RuntimeError as jwt_err:
+        log.critical("[STARTUP] %s", jwt_err)
+        raise  # abort — a jwt-mode server without a secret must not serve traffic
+    except Exception:
+        pass  # import errors in unusual envs — non-fatal at startup
+
     # Start scheduled cleanup task (Phase 4: production operations)
     asyncio.create_task(_scheduled_cleanup())
 
