@@ -6,7 +6,7 @@ import csv
 import io
 import logging
 import traceback
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 from typing import List, Optional
@@ -19,6 +19,7 @@ from schema_loader import get_schema_context
 from query_templates import list_templates
 from cache import get_all_stats as get_cache_stats, invalidate_all, sql_cache, dash_cache
 from company_manager import get_user_companies
+import rbac as _rbac
 
 log = logging.getLogger("chat")
 
@@ -64,30 +65,117 @@ class ChatResponse(BaseModel):
     execution_time_ms: int = 0
     chart_data: Optional[dict] = None
     widgets: Optional[list] = None
+    suggestions: Optional[list] = None   # copilot follow-up suggestions
+    insights: Optional[list] = None      # copilot business insights
+    proactive_alerts: Optional[list] = None   # unacknowledged proactive alerts
+    health_scores: Optional[dict] = None      # ERP health score snapshot
+    # ERP Operator fields
+    action_card: Optional[dict] = None         # Action confirmation/result card
+    action_id: Optional[str] = None            # Pending action ID for confirmation flow
+    navigation_links: Optional[list] = None    # APEX deep links
+    export_available: Optional[dict] = None    # Export metadata when data is exportable
+    report_data: Optional[dict] = None         # Executive report structured data
 
 
 @router.post("/", response_model=ChatResponse)
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, request: Request):
     try:
+        # ── Identity resolution ────────────────────────────────────────
+        # Priority: JWT-verified identity > body user_id.
+        # When AUTH_MODE=jwt a missing/invalid token is a hard 401.
+        # When AUTH_MODE=api_key the body user_id is accepted (legacy) —
+        # in that mode access is gated by X-API-Key at the middleware level,
+        # not per-user identity. Switch to AUTH_MODE=jwt for real RBAC.
+        _auth_user = _rbac.authenticate_request(dict(request.headers))
+        if _auth_user:
+            # Verified identity from JWT — body user_id is ignored
+            if _auth_user != req.user_id:
+                log.warning(
+                    "[AUTH] Body user_id=%r overridden by JWT-verified identity=%r",
+                    req.user_id, _auth_user,
+                )
+            effective_user_id = _auth_user
+        else:
+            if _rbac._AUTH_MODE == "jwt":
+                # JWT mode with no valid token → hard reject
+                raise HTTPException(
+                    status_code=401,
+                    detail="المصادقة مطلوبة — يرجى إرسال Authorization: Bearer <token> صالح",
+                )
+            # api_key / dev mode: accept body claim (existing behaviour)
+            effective_user_id = req.user_id
+
         history = [{"role": m.role, "content": m.content} for m in req.history]
 
         result = await process_question(
             question=req.question,
-            user_id=req.user_id,
+            user_id=effective_user_id,
             company_code=req.company_code,
             fiscal_year=req.fiscal_year,
             history=history,
         )
 
+        # Inject proactive alerts on greeting/first message
+        proactive_alerts = None
+        if result.method in ("greeting", "help"):
+            try:
+                from proactive.alerts import alert_store as _astore
+                unack = _astore.get_unacknowledged()
+                if unack:
+                    proactive_alerts = [a.to_dict() for a in unack[:5]]
+            except Exception:
+                pass
+
+        # Audit log
+        try:
+            from audit_log import log_interaction
+            log_interaction(
+                user_id=effective_user_id,
+                question=req.question,
+                intent_category=result.intent.category if result.intent else "",
+                intent_sub=result.intent.sub_intent if result.intent else "",
+                intent_confidence=result.intent.confidence if result.intent else 0,
+                method=result.method,
+                template_used=result.template_used,
+                sql_generated=result.sql,
+                row_count=result.row_count,
+                answer_preview=result.answer[:200],
+                execution_time_ms=result.execution_time_ms,
+                cache_hit="+cached" in result.method,
+            )
+        except Exception:
+            pass
+
+        # RBAC: filter response based on user role
+        sql_for_response = result.sql
+        export_for_response = result.export_available
+        try:
+            perms = _rbac.get_user_permissions(effective_user_id)
+            if not perms.can_view_sql:
+                sql_for_response = ""
+            if not perms.can_export:
+                export_for_response = None
+        except Exception:
+            pass
+
         return ChatResponse(
             answer=result.answer,
-            sql_generated=result.sql,
+            sql_generated=sql_for_response,
             row_count=result.row_count,
             method=result.method,
             template_used=result.template_used,
             execution_time_ms=result.execution_time_ms,
             chart_data=result.chart_data,
             widgets=result.widgets,
+            suggestions=result.suggestions or None,
+            insights=result.insights or None,
+            proactive_alerts=proactive_alerts,
+            # ERP Operator fields
+            action_card=result.action_card,
+            action_id=result.action_id,
+            navigation_links=result.navigation_links,
+            export_available=export_for_response,
+            report_data=result.report_data,
         )
     except Exception as e:
         logging.error(f"[CHAT] Error: {e}\n{traceback.format_exc()}")
@@ -210,18 +298,34 @@ async def cache_stats():
 
 
 class CacheInvalidateRequest(BaseModel):
-    tier: str = "all"  # all | sql | dashboard
+    tier: str = "all"  # all | sql | dashboard | response
 
 
 @router.post("/cache/invalidate")
 async def cache_invalidate(req: CacheInvalidateRequest):
-    """إبطال الكاش — يمسح البيانات المخزنة مؤقتاً."""
+    """إبطال الكاش — يمسح البيانات المخزنة مؤقتاً.
+    tier=all      → sql + dashboard + response caches
+    tier=sql      → SQL results only
+    tier=dashboard → dashboard cache only
+    tier=response → pipeline response cache (question→answer pairs, 5-min TTL)
+    """
     if req.tier == "all":
         counts = invalidate_all()
+        try:
+            import response_cache as _rc
+            counts["response"] = _rc.invalidate_all()
+        except Exception:
+            pass
     elif req.tier == "sql":
         counts = {"sql_results": sql_cache.invalidate()}
     elif req.tier == "dashboard":
         counts = {"dashboards": dash_cache.invalidate()}
+    elif req.tier == "response":
+        try:
+            import response_cache as _rc
+            counts = {"response": _rc.invalidate_all()}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
     else:
         raise HTTPException(status_code=400, detail=f"Unknown tier: {req.tier}")
 
@@ -236,3 +340,40 @@ async def list_companies(user_id: str = "web_user"):
     """قائمة الشركات المتاحة للمستخدم."""
     companies = await get_user_companies(user_id)
     return {"companies": companies}
+
+
+# ── Schema debug / reload endpoints ─────────────────────────────
+
+@router.get("/schema-debug")
+async def schema_debug(question: str = ""):
+    """Debug schema selection for a question.
+
+    Returns which tables were selected (primary/referenced), their token-overlap
+    scores, context length, comments file mtime, cache hit status, blocked tables,
+    and a sample of the flag-concept map derived from comments.
+
+    Example: GET /chat/schema-debug?question=أعلى 5 عملاء
+    """
+    from schema_loader import get_schema_debug_info
+    from cache import schema_cache, make_schema_key
+
+    # Check cache BEFORE calling get_schema_debug_info (which may populate it)
+    cache_hit = False
+    if question.strip():
+        cache_hit = schema_cache.get(make_schema_key(question)) is not None
+
+    info = get_schema_debug_info(question)
+    return {**info, "cache_hit": cache_hit}
+
+
+@router.post("/reload-schema")
+async def reload_schema():
+    """Force reload of justclick_comments.sql and clear all schema/response caches.
+
+    Use this after editing justclick_comments.sql to apply changes immediately
+    without waiting for the 5-minute cache TTL or the hot-reload mtime check.
+    """
+    from schema_loader import force_reload_schema
+    result = force_reload_schema()
+    log.info(f"[SCHEMA] force-reloaded via POST /chat/reload-schema: {result}")
+    return {"status": "ok", **result}

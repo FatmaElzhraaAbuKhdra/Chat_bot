@@ -52,8 +52,8 @@ _register(QueryTemplate(
     sql="""
 SELECT c.CHART_CODE,
        c.CHART_NAME_A,
-       DECODE(c.CHART_TYPE, 0, 'ميزانية/Balance Sheet', 1, 'قائمة الدخل/Income Statement') AS CHART_TYPE,
-       DECODE(c.CHART_NATURE, 0, 'عام/Main', 1, 'مساعد/Sub') AS CHART_NATURE,
+       DECODE(c.CHART_TYPE, 0, 'ميزانية', 1, 'قائمة الدخل') AS CHART_TYPE,
+       DECODE(c.CHART_NATURE, 0, 'عام', 1, 'مساعد') AS CHART_NATURE,
        NVL(SUM(CASE WHEN vd.AMOUNT > 0 THEN vd.AMOUNT ELSE 0 END), 0) AS total_debit,
        NVL(SUM(CASE WHEN vd.AMOUNT < 0 THEN ABS(vd.AMOUNT) ELSE 0 END), 0) AS total_credit,
        NVL(SUM(vd.AMOUNT), 0) AS balance
@@ -77,8 +77,8 @@ _register(QueryTemplate(
 SELECT CHART_CODE,
        CHART_NAME_A,
        CHART_NAME_E,
-       DECODE(CHART_TYPE, 0, 'ميزانية/Balance Sheet', 1, 'قائمة الدخل/Income Statement') AS CHART_TYPE,
-       DECODE(CHART_NATURE, 0, 'عام/Main Account', 1, 'مساعد/Sub Account') AS CHART_NATURE,
+       DECODE(CHART_TYPE, 0, 'ميزانية', 1, 'قائمة الدخل') AS CHART_TYPE,
+       DECODE(CHART_NATURE, 0, 'عام', 1, 'مساعد') AS CHART_NATURE,
        PARENT_CHART_CODE,
        CHART_LEVEL,
        CHART_OPEN_LOC AS OPENING_BALANCE
@@ -125,15 +125,18 @@ _register(QueryTemplate(
     sql="""
 SELECT CHART_CODE,
        CHART_NAME_A,
-       DECODE(CHART_TYPE, 0, 'ميزانية/Balance Sheet', 1, 'قائمة الدخل/Income Statement') AS CHART_TYPE,
-       DECODE(CHART_NATURE, 0, 'عام/Main', 1, 'مساعد/Sub') AS CHART_NATURE,
+       DECODE(CHART_TYPE, 0, 'ميزانية', 1, 'قائمة الدخل') AS CHART_TYPE,
+       DECODE(CHART_NATURE, 0, 'عام', 1, 'مساعد') AS CHART_NATURE,
        PARENT_CHART_CODE,
        CHART_LEVEL
   FROM CHARTS
+ WHERE CHART_CODE LIKE '{{account_code}}%'
  ORDER BY CHART_CODE
  FETCH FIRST 200 ROWS ONLY
 """,
     required_params=[],
+    optional_params=["account_code"],
+    param_defaults={"account_code": ""},
     result_type="table",
 ))
 
@@ -150,7 +153,7 @@ SELECT c.CHART_CODE,
        NVL(SUM(vd.AMOUNT), 0) AS balance
   FROM CHARTS c
   LEFT JOIN VOUCHERS_DET vd ON vd.CHART_CODE = c.CHART_CODE
- WHERE c.CHART_NATURE = 1
+ WHERE c.CHART_NATURE = {{flag:CHART_NATURE:مساعد}}
  GROUP BY c.CHART_CODE, c.CHART_NAME_A
 HAVING NVL(SUM(CASE WHEN vd.AMOUNT > 0 THEN vd.AMOUNT ELSE 0 END), 0) <> 0
     OR NVL(SUM(CASE WHEN vd.AMOUNT < 0 THEN ABS(vd.AMOUNT) ELSE 0 END), 0) <> 0
@@ -192,8 +195,8 @@ _register(QueryTemplate(
     sql="""
 SELECT m.INVID,
        m.INVDATE,
-       DECODE(m.INVTYPE, 0, 'بيع/Sale', 1, 'شراء/Purchase') AS INV_TYPE,
-       DECODE(m.RETURN_FLAG, 0, 'عادية/Normal', 1, 'مرتجع/Return') AS RETURN_STATUS,
+       DECODE(m.INVTYPE, 0, 'بيع', 1, 'شراء') AS INV_TYPE,
+       DECODE(m.RETURN_FLAG, 0, 'عادية', 1, 'مرتجع') AS RETURN_STATUS,
        cu.CUST_NAME,
        i.ITEMNAME,
        d.QTY,
@@ -205,10 +208,58 @@ SELECT m.INVID,
   JOIN ITEMS i ON i.ITEMID = d.ITEMID
   LEFT JOIN CUST cu ON cu.CUSTID = m.CUST_ID AND cu.CUST_TYPE = m.CUST_TYPE
  WHERE m.INVID = {{invoice_id}}
+   AND m.INVTYPE = {{invtype}}
  FETCH FIRST 200 ROWS ONLY
 """,
-    required_params=["invoice_id"],
+    required_params=["invoice_id", "invtype"],
     result_type="table",
+))
+
+_register(QueryTemplate(
+    name="invoice_count_sales",
+    description="عدد فواتير المبيعات (كل الفترات) / Count of sales invoices, all-time",
+    domain="invoicing",
+    sub_intent="invoice_count",
+    sql="""
+SELECT COUNT(*) AS invoice_count
+  FROM MAIN_INV
+ WHERE INVTYPE = {{flag:INVTYPE:بيع}}
+   AND RETURN_FLAG = {{flag:RETURN_FLAG:فاتورة عادية}}
+""",
+    required_params=[],
+    result_type="scalar",
+))
+
+_register(QueryTemplate(
+    name="invoice_count_purchase",
+    description="عدد فواتير المشتريات (كل الفترات) / Count of purchase invoices, all-time",
+    domain="invoicing",
+    sub_intent="invoice_count_purchase",
+    sql="""
+SELECT COUNT(*) AS invoice_count
+  FROM MAIN_INV
+ WHERE INVTYPE = {{flag:INVTYPE:شراء}}
+   AND RETURN_FLAG = {{flag:RETURN_FLAG:فاتورة عادية}}
+""",
+    required_params=[],
+    result_type="scalar",
+))
+
+_register(QueryTemplate(
+    name="sales_summary_alltime",
+    description="إجمالي المبيعات (كل الفترات) / Sales total, all-time (default)",
+    domain="invoicing",
+    sub_intent="sales_summary",
+    sql="""
+SELECT COUNT(*) AS invoice_count,
+       NVL(SUM(FINALTOTAL), 0) AS total_sales,
+       NVL(SUM(TAX), 0) AS total_tax
+  FROM MAIN_INV
+ WHERE INVTYPE = {{flag:INVTYPE:بيع}}
+   AND RETURN_FLAG = {{flag:RETURN_FLAG:فاتورة عادية}}
+""",
+    required_params=[],
+    result_type="scalar",
 ))
 
 _register(QueryTemplate(
@@ -221,11 +272,11 @@ SELECT COUNT(*) AS invoice_count,
        NVL(SUM(FINALTOTAL), 0) AS total_sales,
        NVL(SUM(TAX), 0) AS total_tax
   FROM MAIN_INV
- WHERE INVTYPE = 0
-   AND RETURN_FLAG = 0
+ WHERE INVTYPE = {{flag:INVTYPE:بيع}}
+   AND RETURN_FLAG = {{flag:RETURN_FLAG:فاتورة عادية}}
    AND TRUNC(INVDATE) = TRUNC(SYSDATE)
 """,
-    required_params=[],
+    required_params=["time_today"],   # P1: only when user explicitly says "today"
     result_type="scalar",
 ))
 
@@ -239,8 +290,8 @@ SELECT TRUNC(INVDATE) AS sale_date,
        COUNT(*) AS invoice_count,
        NVL(SUM(FINALTOTAL), 0) AS total_sales
   FROM MAIN_INV
- WHERE INVTYPE = 0
-   AND RETURN_FLAG = 0
+ WHERE INVTYPE = {{flag:INVTYPE:بيع}}
+   AND RETURN_FLAG = {{flag:RETURN_FLAG:فاتورة عادية}}
    AND TRUNC(INVDATE) BETWEEN TO_DATE('{{date_from}}', 'YYYY-MM-DD')
                            AND TO_DATE('{{date_to}}', 'YYYY-MM-DD')
  GROUP BY TRUNC(INVDATE)
@@ -249,6 +300,23 @@ SELECT TRUNC(INVDATE) AS sale_date,
 """,
     required_params=["date_from", "date_to"],
     result_type="table",
+))
+
+_register(QueryTemplate(
+    name="purchase_summary_alltime",
+    description="إجمالي المشتريات (كل الفترات) / Purchase total, all-time (default)",
+    domain="invoicing",
+    sub_intent="purchase_summary",
+    sql="""
+SELECT COUNT(*) AS invoice_count,
+       NVL(SUM(FINALTOTAL), 0) AS total_purchases,
+       NVL(SUM(TAX), 0) AS total_tax
+  FROM MAIN_INV
+ WHERE INVTYPE = {{flag:INVTYPE:شراء}}
+   AND RETURN_FLAG = {{flag:RETURN_FLAG:فاتورة عادية}}
+""",
+    required_params=[],
+    result_type="scalar",
 ))
 
 _register(QueryTemplate(
@@ -261,11 +329,11 @@ SELECT COUNT(*) AS invoice_count,
        NVL(SUM(FINALTOTAL), 0) AS total_purchases,
        NVL(SUM(TAX), 0) AS total_tax
   FROM MAIN_INV
- WHERE INVTYPE = 1
-   AND RETURN_FLAG = 0
+ WHERE INVTYPE = {{flag:INVTYPE:شراء}}
+   AND RETURN_FLAG = {{flag:RETURN_FLAG:فاتورة عادية}}
    AND TRUNC(INVDATE) = TRUNC(SYSDATE)
 """,
-    required_params=[],
+    required_params=["time_today"],   # P1: only when user explicitly says "today"
     result_type="scalar",
 ))
 
@@ -281,9 +349,9 @@ SELECT cu.CUSTID,
        NVL(SUM(m.FINALTOTAL), 0) AS total_sales
   FROM MAIN_INV m
   JOIN CUST cu ON cu.CUSTID = m.CUST_ID AND cu.CUST_TYPE = m.CUST_TYPE
- WHERE m.INVTYPE = 0
-   AND m.RETURN_FLAG = 0
-   AND cu.CUST_TYPE = 0
+ WHERE m.INVTYPE = {{flag:INVTYPE:بيع}}
+   AND m.RETURN_FLAG = {{flag:RETURN_FLAG:فاتورة عادية}}
+   AND cu.CUST_TYPE = {{flag:CUST_TYPE:عميل}}
  GROUP BY cu.CUSTID, cu.CUST_NAME
  ORDER BY total_sales DESC
  FETCH FIRST {{top_n}} ROWS ONLY
@@ -307,8 +375,8 @@ SELECT i.ITEMID,
   FROM DETAIL_INV d
   JOIN ITEMS i ON i.ITEMID = d.ITEMID
   JOIN MAIN_INV m ON m.INV_KEY = d.INV_KEY
- WHERE m.INVTYPE = 0
-   AND m.RETURN_FLAG = 0
+ WHERE m.INVTYPE = {{flag:INVTYPE:بيع}}
+   AND m.RETURN_FLAG = {{flag:RETURN_FLAG:فاتورة عادية}}
  GROUP BY i.ITEMID, i.ITEMNAME
  ORDER BY total_sales DESC
  FETCH FIRST {{top_n}} ROWS ONLY
@@ -330,9 +398,9 @@ SELECT cu.CUSTID,
        NVL(SUM(m.FINALTOTAL - m.SDAD), 0) AS outstanding
   FROM MAIN_INV m
   JOIN CUST cu ON cu.CUSTID = m.CUST_ID AND cu.CUST_TYPE = m.CUST_TYPE
- WHERE m.INVTYPE = 0
-   AND m.RETURN_FLAG = 0
-   AND cu.CUST_TYPE = 0
+ WHERE m.INVTYPE = {{flag:INVTYPE:بيع}}
+   AND m.RETURN_FLAG = {{flag:RETURN_FLAG:فاتورة عادية}}
+   AND cu.CUST_TYPE = {{flag:CUST_TYPE:عميل}}
    AND (m.FINALTOTAL - m.SDAD) > 0
  GROUP BY cu.CUSTID, cu.CUST_NAME
  ORDER BY outstanding DESC
@@ -407,13 +475,13 @@ _register(QueryTemplate(
 SELECT CUSTID,
        CUST_NAME,
        CUST_NAME_E,
-       DECODE(CUST_TYPE, 0, 'عميل/Customer', 1, 'مورد/Supplier', 2, 'وكيل/Dealer') AS CUST_TYPE_DESC,
+       DECODE(CUST_TYPE, 0, 'عميل', 1, 'مورد', 2, 'وكيل') AS CUST_TYPE_DESC,
        OPEN_BALANCE,
        CREDIT_LIMIT,
        TAX_NO
   FROM CUST
- WHERE CUST_TYPE = 0
-   AND ACTIVE = '1'
+ WHERE CUST_TYPE = {{flag:CUST_TYPE:عميل}}
+   AND ACTIVE = '{{flag:ACTIVE:نشط}}'
  ORDER BY CUST_NAME
  FETCH FIRST 200 ROWS ONLY
 """,
@@ -430,15 +498,15 @@ _register(QueryTemplate(
 SELECT CUSTID,
        CUST_NAME,
        CUST_NAME_E,
-       DECODE(CUST_TYPE, 0, 'عميل/Customer', 1, 'مورد/Supplier', 2, 'وكيل/Dealer') AS CUST_TYPE_DESC,
+       DECODE(CUST_TYPE, 0, 'عميل', 1, 'مورد', 2, 'وكيل') AS CUST_TYPE_DESC,
        OPEN_BALANCE,
-       DECODE(DBCRD, 0, 'مدين/Debit', 1, 'دائن/Credit') AS BALANCE_DIR,
+       DECODE(DBCRD, 0, 'مدين', 1, 'دائن') AS BALANCE_DIR,
        CREDIT_LIMIT,
        TAX_NO,
        CHART_CODE
   FROM CUST
  WHERE CUSTID = {{customer_id}}
-   AND CUST_TYPE = 0
+   AND CUST_TYPE = {{flag:CUST_TYPE:عميل}}
 """,
     required_params=["customer_id"],
     result_type="table",
@@ -457,8 +525,8 @@ SELECT CUSTID,
        CREDIT_LIMIT,
        TAX_NO
   FROM CUST
- WHERE CUST_TYPE = 1
-   AND ACTIVE = '1'
+ WHERE CUST_TYPE = {{flag:CUST_TYPE:مورد}}
+   AND ACTIVE = '{{flag:ACTIVE:نشط}}'
  ORDER BY CUST_NAME
  FETCH FIRST 200 ROWS ONLY
 """,
@@ -479,7 +547,7 @@ _register(QueryTemplate(
     sql="""
 SELECT COUNT(*) AS employee_count
   FROM EMPLOYEES
- WHERE EMP_ACTIVE = '1'
+ WHERE EMP_ACTIVE = '{{flag:EMP_ACTIVE:نشط}}'
    AND END_SERVICE_FLG = 'N'
 """,
     required_params=[],
@@ -498,7 +566,7 @@ SELECT EMP_ID,
        HIRE_DATE,
        END_SERVICE_FLG
   FROM EMPLOYEES
- WHERE EMP_ACTIVE = '1'
+ WHERE EMP_ACTIVE = '{{flag:EMP_ACTIVE:نشط}}'
    AND END_SERVICE_FLG = 'N'
  ORDER BY EMP_NAME_AR
  FETCH FIRST 200 ROWS ONLY
@@ -539,9 +607,36 @@ def find_template(sub_intent: str, entities: dict) -> Optional[QueryTemplate]:
     return best
 
 
+class FlagResolutionError(Exception):
+    """Raised when a {{flag:COL:label}} placeholder has no comment-defined value.
+    The caller (template execution) treats this as INELIGIBLE → LLM fallback."""
+
+
+_FLAG_PH = re.compile(r'\{\{flag:([A-Z_][A-Z0-9_]*):([^}]+)\}\}')
+
+
+def _resolve_flag_placeholders(sql: str) -> str:
+    """COMMENT-FIRST: replace every {{flag:COLUMN:label}} with the value the
+    COMMENTS assign to that label. Comments are the only source of the value.
+    """
+    from schema_loader import resolve_flag
+
+    def _repl(m):
+        col, label = m.group(1), m.group(2).strip()
+        val = resolve_flag(col, label)
+        if val is None:
+            raise FlagResolutionError(f"{col}:{label}")
+        return str(val)
+
+    return _FLAG_PH.sub(_repl, sql)
+
+
 def render_template(template: QueryTemplate, entities: dict) -> str:
     """Render a template with extracted entities, producing safe SQL."""
     sql = template.sql.strip()
+
+    # Comment-first: resolve coded literals from comments at render time (Phase A).
+    sql = _resolve_flag_placeholders(sql)
 
     params = dict(template.param_defaults)
     params.update(entities)
@@ -552,6 +647,12 @@ def render_template(template: QueryTemplate, entities: dict) -> str:
             value = params.get(param_name, "")
             safe_value = _sanitize_param(value)
             sql = sql.replace(placeholder, safe_value)
+
+    # Clean up empty optional WHERE clauses
+    # e.g. WHERE CHART_CODE LIKE '%' → remove condition (match all)
+    sql = re.sub(r"\bWHERE\s+\w+\s+LIKE\s+'%'\s*\n?", "", sql, flags=re.IGNORECASE)
+    # Clean leading AND after WHERE removal
+    sql = re.sub(r"\bWHERE\s+AND\b", "WHERE", sql, flags=re.IGNORECASE)
 
     return sql.strip()
 

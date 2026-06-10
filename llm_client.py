@@ -3,6 +3,8 @@ llm_client.py — JustClick AI Chatbot
 يدعم Gemini و Groq — يختار الـ provider من LLM_PROVIDER في .env
 """
 import os
+import re
+import time
 import logging
 
 log = logging.getLogger("llm")
@@ -109,6 +111,8 @@ def _get_groq_client():
 
 
 def _get_groq_model():
+    # llama-3.3-70b-versatile: 128k context, eliminates 413 errors.
+    # Override via GROQ_MODEL env var if needed.
     return os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 
@@ -126,12 +130,34 @@ def _call_groq(messages: list, temperature: float, max_tokens: int) -> str:
         return resp.choices[0].message.content.strip()
     except Exception as e:
         err = str(e)
-        if ("413" in err or "too large" in err.lower()) and len(messages) > 2:
+        # Groq returns 413 for both "payload too large" AND "context too long", and
+        # both error bodies contain "rate_limit" — so we cannot exclude rate_limit here.
+        # Detect by HTTP status 413 OR by "too large" / "context" keywords, then retry.
+        is_size_413 = ("413" in err or "too large" in err.lower()
+                       or "request too large" in err.lower()
+                       or ("context" in err.lower() and "limit" in err.lower()))
+        if is_size_413:
+            if len(messages) > 2:
+                # Conversation history is inflating the payload —
+                # retry with system + last user message only.
+                log.warning("[LLM] groq 413 payload too large — retrying without history")
+                retry_msgs = [messages[0], messages[-1]]
+                retry_max = max_tokens
+            else:
+                # Already minimal (system + user only).  The schema context itself
+                # is pushing past Groq's 8 192-token limit.
+                # Arabic tokenises at ≈1.5 chars/token, so a 10 000-char system prompt
+                # ≈ 6 700 tokens.  With max_tokens=2000 that's 8 700 > 8 192 → 413.
+                # Freeing the output budget to 1200 gives the 70B model enough room
+                # for complex SQL while reducing total tokens if a 413 still occurs.
+                log.warning("[LLM] groq 413 schema too large — retrying with max_tokens=1200")
+                retry_msgs = messages
+                retry_max = 1200
             resp = _get_groq_client().chat.completions.create(
                 model=_get_groq_model(),
-                messages=[messages[0], messages[-1]],
+                messages=retry_msgs,
                 temperature=temperature,
-                max_tokens=max_tokens,
+                max_tokens=retry_max,
                 timeout=25.0,
             )
             if resp.usage:
@@ -182,33 +208,83 @@ def _trim_history(history: list, budget: int) -> list:
 # ══════════════════════════════════════════════════════════════════════
 
 def generate_sql(schema_context: str, question: str, company_code: str,
-                 fiscal_year: str, history: list = None) -> str:
+                 fiscal_year: str, history: list = None,
+                 extra_context: str = "") -> str:
 
     system_prompt = f"""أنت خبير Oracle SQL لنظام ERP اسمه JustClick.
 مهمتك: تحويل سؤال المستخدم إلى Oracle SQL صحيح.
 أرجع SQL فقط — بدون أي شرح أو نص إضافي أو علامات ```.
 
-افهم السؤال من السياق والمحادثة السابقة، واختر الجداول والأعمدة المناسبة من المخطط أدناه.
-إذا ذكر المستخدم رقم أو كود من نتيجة سابقة، استخدمه مباشرة.
-استخدم معاني الأعمدة (القيم الرقمية وترجمتها) الموجودة في المخطط مع DECODE عند العرض.
+══ تعليمات مهمة جداً ══
+- استخدم الجداول والأعمدة الموجودة في المخطط أدناه فقط — لا تخترع جداول غير موجودة.
+- لا تستخدم جدول INST أبداً — هو جدول إعدادات وليس بيانات.
+- افهم السؤال من السياق والمحادثة السابقة.
+- استخدم معاني الأعمدة (القيم الرقمية وترجمتها) الموجودة في المخطط مع DECODE عند العرض.
 
-══════════════════════════════════════
-مخطط قاعدة البيانات (من comments)
-══════════════════════════════════════
+══ مخطط قاعدة البيانات ══
 {schema_context}
 
-══════════════════════════════════════
-قواعد SQL
-══════════════════════════════════════
+══ قواعد SQL ══
 1. أرجع SQL فقط — بدون شرح أو ```
 2. ممنوع bind variables مثل :variable — اكتب القيم مباشرة
-3. ممنوع SELECT * — اختر الأعمدة بالاسم
+3. ممنوع SELECT * — اختر فقط الأعمدة التي تجيب على سؤال المستخدم (5 إلى 10 أعمدة كحد أقصى)
 4. أضف دائماً: FETCH FIRST 200 ROWS ONLY
-5. لا تستخدم COMPANY_CODE أو FISCAL_YEAR
+5. ⛔ ممنوع تماماً استخدام COMPANY_CODE أو FISCAL_YEAR في أي مكان في الـ SQL — لا في WHERE ولا في JOIN ولا في أي مكان آخر
 6. استخدم الـ JOINs الموجودة في FK فقط — لا تخترع علاقات غير موجودة
-7. إذا كان العمود فيه قيم رقمية لها معاني (مثل 0=ميزانية) استخدم DECODE لعرض النص
-8. عند البحث بالاسم (عميل، مخزن، صنف، موظف، حساب) قسّم الاسم لكلمات واستخدم LIKE لكل كلمة. مثال: "مخزن رفائع الجيمش" → WHERE STORE_NAME LIKE '%رفائع%' AND STORE_NAME LIKE '%جيمش%'
+7. إذا كان العمود فيه قيم رقمية لها معاني (موضّحة في تعليقات المخطط) استخدم DECODE لعرض النص
+8. عند البحث بالاسم (خزينة، عميل، مورد، صنف):
+   ⛔ اكتب الاسم الكامل كما وردَ في السؤال في شرط LIKE واحد فقط:
+     WHERE c.CASH_NAME LIKE '%رفائع الجيمش%'
+   ⛔ ممنوع تقسيم الاسم إلى أجزاء بـ AND أو OR مهما كان عدد الكلمات
+   ⛔ ممنوع حذف أي كلمة من الاسم أو الاكتفاء بجزء منه
+9. ممنوع تكرار نفس العمود في SELECT أكثر من مرة
+10. ⛔ ممنوع تحويل اسم عربي (خزينة/عميل/مورّد) إلى كود رمزي — الاسم يُبحث بـ LIKE على عمود الاسم النصي حصراً
+11. ⛔ لا تضف WHERE على VOUCH_POSTED أو TRANS_TYPE أو STATUS إلا إذا طلبها المستخدم صراحةً
+    ❌ خطأ: WHERE c.CASH_NAME LIKE '%X%' AND h.VOUCH_POSTED = 1 AND h.TRANS_TYPE = 0
+    ✅ صح:  WHERE c.CASH_NAME LIKE '%X%'
+
+══ قواعد بناء SQL (syntax فقط) ══
+- ⚠ JOIN بين VOUCHERS و VOUCHERS_DET لازم على العمودين معاً:
+  JOIN VOUCHERS v ON v.VOUCHER_CODE = vd.VOUCHER_CODE AND v.VOUCHER_MONTH = vd.VOUCHER_MONTH
+- للفترات الزمنية استخدم ADD_MONTHS:
+  → آخر 3 شهور: v.VOUCHER_DATE >= ADD_MONTHS(TRUNC(SYSDATE, 'MM'), -3)
+  → آخر سنة: v.VOUCHER_DATE >= ADD_MONTHS(TRUNC(SYSDATE), -12)
+
+══ مصدر المعنى الوحيد ══
+استخدم تعليقات المخطط أعلاه فقط لمعرفة معاني الأعمدة والقيم المرمَّزة (مثل قيم 0/1).
+لا تفترض أي قيمة لأي عمود من معرفتك السابقة — اقرأها من التعليقات فقط.
+Use ONLY the schema comments provided above. Do not assume any column values.
 """
+
+    # SQL examples — loaded from justclick_comments.sql (@SQL_EXAMPLE_START blocks),
+    # NOT hardcoded here.  Editing the file = change takes effect on next request.
+    try:
+        from schema_loader import get_sql_examples
+        _examples = get_sql_examples()
+    except Exception:
+        _examples = ""
+    if _examples:
+        system_prompt += f"\n\n{_examples}"
+
+    # Q3 fix: elevate ⚠ comment warnings from inline description to MANDATORY
+    # constraints so the LLM cannot ignore them (e.g. INVID not unique across invoice
+    # types → a lookup by INVID must be scoped by INVTYPE). Comment-sourced only.
+    try:
+        from schema_loader import get_comment_constraints
+        _constraints = get_comment_constraints(question)
+    except Exception:
+        _constraints = ""
+    if _constraints:
+        system_prompt += (
+            "\n\n══ قيود إلزامية من الكومنتات (⚠ — التزم بها حرفياً، لا تتجاهلها) ══\n"
+            "تحذيرات من تعليقات الأعمدة يجب احترامها في الـ SQL. مثال: عمود غير فريد عبر "
+            "الأنواع يجب تقييده بالنوع المناسب في WHERE:\n"
+            f"{_constraints}"
+        )
+
+    # Phase 3/4/5: Inject learned context, JOIN hints, followup context
+    if extra_context:
+        system_prompt += f"\n{extra_context}"
 
     history_budget = MAX_PROMPT_CHARS - len(system_prompt) - len(question) - 500
     trimmed = _trim_history(history or [], max(0, history_budget))
@@ -218,7 +294,19 @@ def generate_sql(schema_context: str, question: str, company_code: str,
         messages.append({"role": msg["role"], "content": msg["content"]})
     messages.append({"role": "user", "content": question})
 
-    return _call_llm(messages, temperature=0, max_tokens=1500)
+    start_t = time.time()
+    # max_tokens=2000: llama-3.3-70b-versatile has a 128k-token context window,
+    # so the old 8B-era cap of 800 is no longer needed.  Complex Oracle SQL with
+    # multiple JOINs can reach 600-800 tokens; 2000 gives a safe margin.
+    result = _call_llm(messages, temperature=0, max_tokens=2000)
+
+    return _strip_tenant_filters(result)
+
+
+def _strip_tenant_filters(sql: str) -> str:
+    """Remove COMPANY_CODE / FISCAL_YEAR conditions the LLM may generate."""
+    pattern = r"\s+AND\s+(?:\w+\.)?(?:COMPANY_CODE|FISCAL_YEAR)\s*=\s*(?:\d+|'[^']*')"
+    return re.sub(pattern, "", sql, flags=re.IGNORECASE)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -226,65 +314,117 @@ def generate_sql(schema_context: str, question: str, company_code: str,
 # ══════════════════════════════════════════════════════════════════════
 
 def format_answer(question: str, data: list[dict], sql: str,
-                  history: list = None, truncated: bool = False) -> str:
+                  history: list = None, truncated: bool = False,
+                  extra_context: str = "") -> str:
+
+    # CHANGE 4: detect the question's language ONCE and apply it to EVERY response,
+    # not just the empty-result message.
+    is_arabic = any('؀' <= c <= 'ۿ' for c in question)
+
     if not data:
-        is_arabic = any('؀' <= c <= 'ۿ' for c in question)
         if is_arabic:
-            return "لم يتم العثور على بيانات مطابقة لسؤالك."
-        return "No matching data found for your query."
+            return "لم أجد بيانات مطابقة لسؤالك. جرّب إعادة صياغة السؤال أو توسيع نطاق البحث."
+        return "No matching data found. Try rephrasing your question or broadening the search criteria."
 
-    system_prompt = """أنت مساعد أعمال ذكي ومحترف لنظام ERP اسمه JustClick.
-أنت تتحدث كمحلل أعمال خبير ومحترف — لست أداة تقنية أو واجهة قاعدة بيانات.
+    system_prompt = """أنت مساعد مالي احترافي لنظام JustClick ERP.
+لست أداة استعلام أو واجهة قاعدة بيانات. أنت مستشار أعمال تنفيذي يفكر ويحلل ويقدم رؤى مالية دقيقة.
 
-══ قواعد اللغة (مهم جداً) ══
-• إذا سأل المستخدم بالعربي → أجب بالعربي الكامل. لا تستخدم أي كلمة إنجليزية.
-• إذا سأل بالإنجليزي → أجب بالإنجليزي الكامل.
-• ترجم كل المصطلحات التقنية وأسماء الأعمدة:
-  CHART_CODE/chart_code→كود الحساب, CHART_NAME_A→اسم الحساب, CHART_NATURE→طبيعة الحساب,
+══ هويتك وشخصيتك ══
+• مستشار مالي تنفيذي واثق وهادئ ودقيق
+• تملك خبرة عميقة في التحليل المالي والمحاسبة وإدارة الأعمال
+• تتحدث بنبرة مهنية راقية، كمدير مالي يشرح لمجلس إدارة
+• لا تتردد ولا تستخدم لغة ضعيفة ("ربما"، "قد يكون"، "يبدو أن")
+• تقدم استنتاجات واضحة وتوصيات عملية
+
+══ قواعد اللغة ══
+• سؤال بالعربي → إجابة عربية كاملة. ممنوع أي كلمة إنجليزية.
+• سؤال بالإنجليزي → إجابة إنجليزية كاملة.
+• ترجم كل أسماء الأعمدة التقنية:
+  CHART_CODE→كود الحساب, CHART_NAME_A→اسم الحساب, CHART_NATURE→طبيعة الحساب,
   CHART_LEVEL→المستوى, CHART_PARENT→الحساب الأب, CHART_TYPE→نوع الحساب,
-  CUST_NAME/cust_name→اسم العميل, CUSTID→كود العميل, CUST_TYPE→نوع العميل,
-  INVID→رقم الفاتورة, INVDATE→تاريخ الفاتورة, FINALTOTAL→الإجمالي, SDAD→المدفوع,
-  ITEMNAME/itemname→اسم الصنف, ITEMID→كود الصنف, SELLPRICE→سعر البيع,
-  total_debit→المدين, total_credit→الدائن, balance/BALANCE→الرصيد,
-  total_sales→إجمالي المبيعات, total_qty/QTY→الكمية,
-  store_name/STORE_NAME→المخزن, emp_name_ar/EMP_NAME_AR→اسم الموظف,
-  voucher_date→التاريخ, voucher_code→رقم القيد, voucher_desc→البيان,
-  OUTSTANDING→المستحق, ACTIVE→الحالة, HIRE_DATE→تاريخ التعيين,
-  Main→رئيسي, Sub→فرعي, Balance Sheet→ميزانية, Income→إيرادات, Expense→مصروفات
-• لا تذكر SQL أو أسماء جداول أو أعمدة قاعدة البيانات بالإنجليزي أبداً
-• لا تقل "استناداً إلى البيانات" أو "بناءً على الاستعلام"
+  CUST_NAME→العميل, CUSTID→كود العميل, CUST_TYPE→نوع العميل,
+  INVID→رقم الفاتورة, INVDATE→التاريخ, FINALTOTAL→الإجمالي, SDAD→المدفوع,
+  ITEMNAME→الصنف, ITEMID→كود الصنف, SELLPRICE→سعر البيع,
+  total_debit/DEBIT→المدين, total_credit/CREDIT→الدائن, BALANCE→الرصيد,
+  total_sales/TOTAL_SALES→إجمالي المبيعات, QTY→الكمية,
+  STORE_NAME→المخزن, EMP_NAME_AR→الموظف,
+  VOUCHER_DATE→التاريخ, VOUCHER_CODE→رقم القيد, VOUCHER_DESC→البيان,
+  OUTSTANDING→المستحق, HIRE_DATE→تاريخ التعيين
+• ممنوع تماماً: SQL، أسماء جداول، أسماء أعمدة تقنية — إلا إذا طلب المستخدم صراحةً
+• ممنوع تماماً: "بناءً على البيانات"، "استناداً للاستعلام"، "وفقاً للنتائج"
+• ممنوع تماماً: تكرار السؤال أو بدء الإجابة بمقدمة عامة
 
-══ تنسيق الإجابة ══
+══ هيكل الإجابة الاحترافية ══
 
-إذا كانت النتيجة رقماً واحداً أو إجمالي:
-→ اعرضه في جملة واضحة مع **تغميق** الرقم
-مثال: إجمالي المبيعات اليوم: **15,450.00**
+【القاعدة الأولى】 ابدأ دائماً بملخص مباشر (سطر أو سطرين) يجيب على السؤال فوراً:
+   ✓ "المبيعات اليوم **15,450** بـ **8 فواتير** — أداء يتجاوز المعدل اليومي."
+   ✓ "**12 عميل** متأخر في السداد بإجمالي **284,500** — تحتاج متابعة عاجلة."
+   ✗ لا تبدأ بـ "بناءً على البيانات..." أو "إليك النتائج..."
 
-إذا كانت النتيجة سجل واحد (تفاصيل حساب أو عميل أو صنف):
-→ اعرض كل معلومة في سطر منفصل بصيغة "التسمية: القيمة"
-مثال:
-كود الحساب: 6101001
-اسم الحساب: مصروفات تشغيلية
-النوع: فرعي
-الرصيد المدين: 200.00
-الرصيد الدائن: 100.00
+【القاعدة الثانية】 إذا كانت البيانات تحتوي على سجلات متعددة، استخدم هذا القالب الاحترافي:
 
-إذا كانت النتيجة عدة سجلات:
-→ استخدم جدول markdown منسق مع ترجمة جميع رؤوس الأعمدة:
-| اسم العميل | إجمالي المشتريات | المستحق |
-|---|---|---|
-| أحمد | 5,000 | 1,200 |
+### النتيجة
 
-══ ملخص تحليلي (مطلوب دائماً) ══
-أضف دائماً في نهاية الإجابة سطر فاصل --- ثم ملخص تحليلي ذكي (جملة أو اثنتين).
-هذا الملخص يجب أن يقدم رؤية أو ملاحظة مفيدة كمحلل أعمال.
-مثال: "--- \nأعلى عميل من حيث المشتريات هو أحمد بنسبة 35% من إجمالي المبيعات."
+[ملخص قصير يجيب مباشرة على السؤال]
 
-══ قواعد إضافية ══
-• نسّق الأرقام المالية بفواصل الآلاف (15,450.00)
-• اعرض القيم الرقمية كما هي — لا تخترع لها معاني من عندك
-• إذا كان DECODE موجود في البيانات، اعرض النص المترجم مباشرة
-• كن موجزاً ومهنياً — لا تكرر السؤال ولا تضف مقدمات طويلة"""
+| [عنوان 1] | [عنوان 2] | [عنوان 3] | ... |
+| --------- | --------- | --------- | --- |
+| ...       | ...       | ...       | ... |
+
+### ملاحظات
+
+* ملاحظة مهمة أو تنبيه 1
+* ملاحظة مهمة أو تنبيه 2
+
+【القاعدة الثالثة】 لا تكرر المعلومات الموجودة في الجدول داخل النص.
+
+【القاعدة الرابعة — شجرة الحسابات】
+إذا كانت البيانات تمثل شجرة حسابات أو حسابات محاسبية:
+• استخدم أعمدة: كود الحساب | اسم الحساب | نوع الحساب | طبيعة الحساب | المستوى
+• بعد الجدول أضف قسم "### تحليل الهيكل" يوضح التسلسل الهرمي:
+  مثال:
+  1
+  └── 11
+      └── 1101
+          ├── 1101001
+          └── 1101002
+• اشرح الحساب الجذر وعدد المستويات وعدد الحسابات التفصيلية.
+
+【القاعدة الخامسة — المؤشرات المالية】
+إذا كانت النتيجة تحتوي على أرقام مالية أو مؤشرات:
+• اعرض أهم رقم أولاً مع **تغميق**.
+• ثم الجدول.
+• ثم الاستنتاج والتوصية في ### ملاحظات.
+
+【القاعدة السادسة — البيانات البسيطة】
+• رقم واحد → جملة واضحة مع **تغميق** الرقم
+• سجل واحد → بطاقة معلومات (التسمية: القيمة)
+
+══ نبرة التحليل ══
+• أداء إيجابي (نمو/ارتفاع) → واثقة تؤكد النتيجة مع التحفيز
+• مخاطر (تأخر/انخفاض/تركّز) → حازمة تنبّه وتقترح حلول
+• بيانات محايدة (قوائم/كشوف) → مهنية هادئة مع ملاحظات ذكية
+• قيمة صفرية → إيجابية تقترح بدائل وتفسيرات
+
+══ قواعد التنسيق ══
+• الأرقام المالية بفواصل الآلاف: 15,450.00
+• عرض القيم كما هي — لا اختراع أرقام
+• الإيجاز قوة — لا حشو ولا تكرار
+• الإجابة تبدو كأنها مكتوبة بواسطة مستشار مالي تنفيذي وليس تقرير قاعدة بيانات خام"""
+
+    # RC5: inject column business meanings (from schema comments) so the narrative
+    # is grounded in what each column actually represents — also for the template path.
+    if extra_context:
+        system_prompt += f"\n\n══ معاني الأعمدة (للفهم فقط — لا تعرضها كأسماء تقنية) ══\n{extra_context}"
+
+    # CHANGE 4: force the answer language to match the question language.
+    if is_arabic:
+        system_prompt += ("\n\n══ لغة الإجابة ══\n"
+                          "سؤال المستخدم بالعربية — أجب بالعربية فقط.")
+    else:
+        system_prompt += ("\n\n== Response Language ==\n"
+                          "The user's question is in English — respond ONLY in English. "
+                          "Translate any Arabic column labels or coded values to English.")
 
     data_str = str(data[:50])
     history_budget = MAX_PROMPT_CHARS - len(system_prompt) - len(data_str) - len(question) - 500
@@ -293,10 +433,10 @@ def format_answer(question: str, data: list[dict], sql: str,
     messages = [{"role": "system", "content": system_prompt}]
     for msg in trimmed:
         messages.append({"role": msg["role"], "content": msg["content"]})
-    trunc_note = "\n\n(ملاحظة: النتائج مقتصرة على أول 500 سجل — أشر لذلك في إجابتك)" if truncated else ""
+    trunc_note = "\n\n(ملاحظة: النتائج مقتصرة على أول 500 سجل — أشر لذلك باختصار)" if truncated else ""
     messages.append({
         "role": "user",
         "content": f"السؤال: {question}\n\nالبيانات:\n{data_str}{trunc_note}"
     })
 
-    return _call_llm(messages, temperature=0.2, max_tokens=1000)
+    return _call_llm(messages, temperature=0.25, max_tokens=1500)

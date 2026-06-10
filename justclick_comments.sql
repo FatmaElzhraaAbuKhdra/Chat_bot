@@ -60,116 +60,218 @@
 --  MAIN_INV — رأس الفاتورة
 -- ------------------------------------------------------------
 COMMENT ON TABLE MAIN_INV IS
-'رأس فاتورة البيع والشراء. كل صف = فاتورة واحدة.
-INVTYPE: 0=بيع/Sale, 1=شراء/Purchase.
-RETURN_FLAG: 0=فاتورة عادية, 1=مرتجع/Return.
-⚠ JOIN مع DETAIL_INV يكون على INV_KEY وليس INVID.
-⚠ JOIN مع CUST يكون على (CUST_ID,CUST_TYPE) معاً وليس CUST_ID وحده.
-لجلب مبيعات نقية: WHERE INVTYPE=0 AND RETURN_FLAG=0.
-لجلب مرتجعات البيع: WHERE INVTYPE=0 AND RETURN_FLAG=1.
-Header table for all sales and purchase invoices.';
+    'راس فاتورة البيع والشراء. كل صف = فاتورة واحدة.
+     INVTYPE     : 0=بيع , 1=شراء.
+     RETURN_FLAG : 0=فاتورة عادية , 1=مرتجع.
+     ⚠ JOIN مع DETAIL_INV      يكون على INV_KEY وليس INVID.
+     ⚠ JOIN مع CUST             يكون على (CUST_ID + CUST_TYPE) معا وليس CUST_ID وحده.
+     ⚠ JOIN مع MAIN_INV_EFFECTS يكون على INV_KEY مع فلتر ADD_DIS.
+     لجلب مبيعات نقية    : WHERE INVTYPE=0 AND RETURN_FLAG=0.
+     لجلب مرتجعات البيع  : WHERE INVTYPE=0 AND RETURN_FLAG=1.
+     لجلب مشتريات نقية   : WHERE INVTYPE=1 AND RETURN_FLAG=0.
+     صافي المبيعات = SUM(FINALTOTAL WHERE RETURN_FLAG=0) - SUM(FINALTOTAL WHERE RETURN_FLAG=1).';
 
 COMMENT ON COLUMN MAIN_INV.INV_KEY IS
-'المفتاح الداخلي الفريد للفاتورة — Internal unique surrogate key.
-⚠ هذا هو المفتاح المستخدم في كل الـ JOINs مع DETAIL_INV وجميع الجداول الأخرى.
-⚠ لا تستخدم INVID في الـ JOIN — استخدم INV_KEY دائماً.
-Use this for ALL joins, never use INVID for joins.';
+    'المفتاح الداخلي الفريد للفاتورة - Surrogate PK.
+     ⚠ هذا هو المفتاح المستخدم في كل الـ JOINs مع DETAIL_INV و MAIN_INV_EFFECTS.
+     ⚠ لا تستخدم INVID في JOIN - استخدم INV_KEY دائما';
 
 COMMENT ON COLUMN MAIN_INV.INVID IS
-'رقم الفاتورة المرئي للمستخدم — User-visible invoice number.
-⚠ غير فريد عبر أنواع الفواتير المختلفة (قد يتكرر نفس الرقم في بيع وشراء).
-⚠ للعرض فقط — لا تستخدمه في JOIN.
-Display only. NOT unique across transaction types.';
-
-COMMENT ON COLUMN MAIN_INV.INVDATE IS
-'تاريخ الفاتورة — Invoice date.
-استخدمه في فلاتر التاريخ مثلاً: WHERE TRUNC(INVDATE) BETWEEN تاريخ_البداية AND تاريخ_النهاية.';
-
-COMMENT ON COLUMN MAIN_INV.INVTOTAL IS
-'إجمالي الفاتورة قبل الضريبة وقبل الخصم الإجمالي.
-Invoice subtotal before tax and before header-level discount.';
-
-COMMENT ON COLUMN MAIN_INV.FINALTOTAL IS
-'الإجمالي النهائي للفاتورة = INVTOTAL + TAX - خصومات.
-هو الرقم الذي يُعرض للمستخدم كإجمالي مستحق.
-Final amount due: includes tax, after all discounts. This is what the customer pays.';
-
-COMMENT ON COLUMN MAIN_INV.TAX IS
-'قيمة الضريبة المضافة (مبلغ وليس نسبة).
-⚠ هذا مبلغ فعلي بالعملة وليس نسبة مئوية.
-Tax amount in currency (not a percentage).';
-
-COMMENT ON COLUMN MAIN_INV.SDAD IS
-'المبلغ المسدَّد نقداً فور إنشاء الفاتورة.
-المتبقي غير المسدد = FINALTOTAL - SDAD.
-Cash paid at invoice creation. Outstanding = FINALTOTAL - SDAD.';
-
-COMMENT ON COLUMN MAIN_INV.CUST_ID IS
-'كود العميل أو المورد.
-FK → CUST.CUSTID
-⚠ الـ JOIN لازم يكون على عمودين معاً:
-  MAIN_INV.CUST_ID   = CUST.CUSTID
-  MAIN_INV.CUST_TYPE = CUST.CUST_TYPE
-بدون CUST_TYPE في الشرط ستظهر بيانات خاطئة.';
-
-COMMENT ON COLUMN MAIN_INV.CUST_TYPE IS
-'نوع الطرف الآخر في الفاتورة:
-0 = عميل / Customer
-1 = مورد / Supplier
-2 = وكيل / Dealer
-⚠ جزء أساسي من مفتاح الـ JOIN مع جدول CUST — لا تحذفه من شرط JOIN.';
+    'رقم الفاتورة المرئي للمستخدم - للعرض والبحث فقط.
+     ⚠ INVID غير فريد عبر أنواع الفواتير
+     ⚠ إن حدّد المستخدم نوع الفاتورة (مبيعات/مشتريات) قيّد بـ INVTYPE
+     ⚠ إن لم يذكر المستخدم النوع — اعرض كل الأنواع بدون أي INVTYPE filter
+     ⚠ ممنوع إضافة INVTYPE filter من تلقاء نفسك إذا لم يذكره المستخدم صراحةً
+     ⚠ للبحث بـ "رقم الفاتورة": JOIN مع MAIN_INV m على INV_KEY ثم WHERE m.INVID = الرقم
+     ⚠ DETAIL_INV لا يحتوي عمود INVID — ممنوع كتابة WHERE d.INV_KEY = رقم_الفاتورة
+     ⚠ لا تستخدمه في JOIN';
 
 COMMENT ON COLUMN MAIN_INV.INVTYPE IS
-'نوع الفاتورة:
-0 = بيع / Sale
-1 = شراء / Purchase';
+    'نوع الفاتورة : 0=بيع , 1=شراء';
 
 COMMENT ON COLUMN MAIN_INV.RETURN_FLAG IS
-'حالة الفاتورة:
-0 = فاتورة عادية / Normal invoice
-1 = مرتجع / Return invoice
-⚠ المرتجعات لها نفس INVTYPE (0 لمرتجع بيع، 1 لمرتجع شراء).
-⚠ عند حساب صافي المبيعات: اطرح RETURN_FLAG=1 من RETURN_FLAG=0.';
+    'حالة الفاتورة : 0=فاتورة عادية , 1=مرتجع.
+     ⚠ المرتجعات لها نفس INVTYPE (0=مرتجع بيع , 1=مرتجع شراء).
+     ⚠ عند حساب صافي المبيعات : اطرح RETURN_FLAG=1 من RETURN_FLAG=0';
+
+COMMENT ON COLUMN MAIN_INV.INVDATE IS
+    'تاريخ الفاتورة (التاريخ المحاسبي).
+     للفلترة : WHERE TRUNC(INVDATE) BETWEEN :from_date AND :to_date';
+
+COMMENT ON COLUMN MAIN_INV.INVTOTAL IS
+    'اجمالي الفاتورة قبل الخصومات والاضافات والضريبة';
+
+COMMENT ON COLUMN MAIN_INV.FINALTOTAL IS
+    'الاجمالي النهائي = INVTOTAL + اضافات - خصومات + ضريبة.
+     هو الرقم المعروض للمستخدم كاجمالي مستحق الدفع';
+
+COMMENT ON COLUMN MAIN_INV.TAX IS
+    'قيمة الضريبة المضافة بالعملة (مبلغ وليس نسبة).
+     ⚠ هذا مبلغ فعلي بالعملة وليس نسبة مئوية';
+
+COMMENT ON COLUMN MAIN_INV.DISCOUNT IS
+    'قيمة الخصم الاجمالي على راس الفاتورة';
+
+COMMENT ON COLUMN MAIN_INV.SDAD IS
+    'المبلغ المسدد نقدا فور انشاء الفاتورة.
+     المتبقي غير المسدد = FINALTOTAL - SDAD';
+
+COMMENT ON COLUMN MAIN_INV.CASH_AMOUNT IS
+    'جزء الدفع نقدا عند تقسيم طريقة الدفع';
+
+COMMENT ON COLUMN MAIN_INV.BANK_AMOUNT IS
+    'جزء الدفع بالتحويل البنكي عند تقسيم طريقة الدفع';
+
+COMMENT ON COLUMN MAIN_INV.PAY_METHOD IS
+    'طريقة الدفع : 0=كاش , 1=شيك , 2=فيزا , 3=تحويل بنكي.
+     ⚠ مخزن كرقم - استخدم DECODE او CASE للعرض النصي';
+
+COMMENT ON COLUMN MAIN_INV.CUST_ID IS
+    'كود العميل او المورد - FK → CUST.CUSTID.
+     ⚠ الـ JOIN لازم يشمل CUST_TYPE ايضا :
+       MAIN_INV.CUST_ID   = CUST.CUSTID
+       MAIN_INV.CUST_TYPE = CUST.CUST_TYPE';
+
+COMMENT ON COLUMN MAIN_INV.CUST_TYPE IS
+    'نوع الجهة في الفاتورة : 0=عميل , 1=مورد , 2=وكيل.
+     ⚠ جزء اساسي من شرط JOIN مع CUST - لا تحذفه';
 
 COMMENT ON COLUMN MAIN_INV.STORE_CODE IS
-'كود المخزن الذي تمت منه العملية.
-FK → STORE.STORE_CODE';
+    'كود المخزن الذي تمت منه العملية - FK → STORE.STORE_CODE | الاسم في STORE.STORE_NAME';
+
+COMMENT ON COLUMN MAIN_INV.TRANS_CODE IS
+    'رقم الاذن المخزني المرتبط بالفاتورة - FK → TRANSMASTER.TRANS_CODE';
+
+COMMENT ON COLUMN MAIN_INV.TRANS_TYPE_CODE IS
+    'كود نوع الاذن المخزني المرتبط - FK → STORE_TRANS_TYPE.TRANS_CODE | التصنيف في STORE_TRANS_TYPE.TRANS_TYPE';
+
+COMMENT ON COLUMN MAIN_INV.CHART_CODE IS
+    'كود الحساب في دليل الحسابات - FK → CHARTS_ELEMENTS.CHART_CODE';
+
+COMMENT ON COLUMN MAIN_INV.CREATE_TRANS IS
+    'علم انشاء الحركة المخزنية تلقائيا عند حفظ الفاتورة : 1=نعم , 0=لا';
+
+COMMENT ON COLUMN MAIN_INV.CASH_FLAG IS
+    'نوع الفاتورة من حيث الدفع : 1=نقدي (فوري) , 0=آجل';
 
 COMMENT ON COLUMN MAIN_INV.INV_TRANS_TYPE IS
-'نوع حركة الفاتورة التفصيلي (نقدي، آجل، إلخ).
-FK → SAL_PURCH_TRANS_TYPE.TRANS_CODE';
+    'نوع حركة الفاتورة (نقدي / آجل / إلخ) - FK → SAL_PURCH_TRANS_TYPE.TRANS_CODE | الاسم في SAL_PURCH_TRANS_TYPE.TRANS_NAME';
 
 COMMENT ON COLUMN MAIN_INV.INV_CAT IS
-'تصنيف الفاتورة.
-FK → INV_CATEGORIES.INV_CAT';
+    'تصنيف الفاتورة - FK → INV_CATEGORIES.INV_CAT';
 
 COMMENT ON COLUMN MAIN_INV.EFFECT_VALUE IS
-'قيمة الإضافة على مستوى رأس الفاتورة (ضريبة إجمالية أو رسوم).
-Added value at invoice header level (overall tax or fees).';
+    'قيمة الاضافة على مستوى راس الفاتورة (ضريبة اجمالية او رسوم)';
 
 COMMENT ON COLUMN MAIN_INV.EFFECT_VALUE_CUST IS
-'قيمة الخصم الخاص بالعميل على مستوى رأس الفاتورة.
-Customer-specific discount at invoice header level.';
-
-COMMENT ON COLUMN MAIN_INV.CREATE_DATE_TM IS
-'تاريخ ووقت إنشاء الفاتورة في النظام (يختلف عن INVDATE).
-System creation timestamp (differs from INVDATE which is the business date).';
-
-COMMENT ON COLUMN MAIN_INV.HEAD_NOTES IS
-'ملاحظات الفاتورة — Notes/remarks on the invoice.';
+    'قيمة الخصم الخاص بالعميل على مستوى راس الفاتورة';
 
 COMMENT ON COLUMN MAIN_INV.DEALER_ID IS
-'كود الوكيل المرتبط بالفاتورة (إن وجد).
-FK → DEALER_DATA.DEALER_ID  (DEALER_TYPE=2)';
+    'كود الوكيل المرتبط بالفاتورة - FK → DEALER_DATA.DEALER_ID';
+
+COMMENT ON COLUMN MAIN_INV.ADMIN_ID IS
+    'كود المسؤول او المراجع - FK → ACC_USERS.USERID';
+
+COMMENT ON COLUMN MAIN_INV.AREA_ID IS
+    'كود المنطقة الجغرافية للفاتورة';
+
+COMMENT ON COLUMN MAIN_INV.COST_CODE IS
+    'مركز التكلفة المرتبط بالفاتورة - FK → COST_CENTERS.COST_CODE | الاسم في COST_CENTERS.COST_NAME';
+
+COMMENT ON COLUMN MAIN_INV.CREATE_DATE_TM IS
+    'تاريخ ووقت انشاء الفاتورة في النظام.
+     ⚠ يختلف عن INVDATE : INVDATE=التاريخ المحاسبي , CREATE_DATE_TM=وقت الادخال الفعلي';
+
+COMMENT ON COLUMN MAIN_INV.SER_IN_DAY IS
+    'الرقم التسلسلي للفاتورة خلال اليوم الواحد';
+
+COMMENT ON COLUMN MAIN_INV.HEAD_NOTES IS
+    'ملاحظات راس الفاتورة';
+
+COMMENT ON COLUMN MAIN_INV.DESERVE_DATE IS
+    'تاريخ استحقاق الدفع للفواتير الآجلة';
+
+COMMENT ON COLUMN MAIN_INV.CLIENT_NAME IS
+    'اسم العميل حر النص - للعملاء غير المسجلين في CUST';
+
+COMMENT ON COLUMN MAIN_INV.BOOK_INVNO IS
+    'رقم الفاتورة في دفتر الفواتير الورقي للمطابقة اليدوية';
+
+COMMENT ON COLUMN MAIN_INV.CLINET_ADDRESS IS
+    '⚠ اسم الحقل فيه خطا املائي (CLINET بدلا من CLIENT).
+     عنوان العميل غير المسجل';
+
+COMMENT ON COLUMN MAIN_INV.CLINET_PERSONAL_ID IS
+    '⚠ اسم الحقل فيه خطا املائي (CLINET بدلا من CLIENT).
+     رقم الهوية الشخصية للعميل غير المسجل';
+
+COMMENT ON COLUMN MAIN_INV.CLINET_GOVE_NAME IS
+    '⚠ اسم الحقل فيه خطا املائي (CLINET بدلا من CLIENT).
+     المحافظة / المنطقة للعميل غير المسجل';
+
+COMMENT ON COLUMN MAIN_INV.CLIENT_TRAD_ID IS
+    'رقم السجل التجاري للعميل غير المسجل';
+
+COMMENT ON COLUMN MAIN_INV.ORIGINAL_INV_KEY IS
+    'مفتاح الفاتورة الاصلية في حالة المرتجع - FK → MAIN_INV.INV_KEY';
+
+COMMENT ON COLUMN MAIN_INV.OLD_INV_KEY IS
+    'مفتاح الفاتورة في النظام القديم قبل الترحيل';
+
+COMMENT ON COLUMN MAIN_INV.OLD_SESSION_ID IS
+    'رقم الجلسة في النظام القديم قبل الترحيل';
+
+COMMENT ON COLUMN MAIN_INV.SESSION_ID IS
+    'معرف جلسة نقطة البيع (POS) المرتبطة بالفاتورة';
+
+COMMENT ON COLUMN MAIN_INV.POS_INV_KEY IS
+    'معرف الفاتورة في نظام نقطة البيع (POS)';
+
+COMMENT ON COLUMN MAIN_INV.SUBMISSIONID IS
+    'رقم تقديم الفاتورة الالكترونية لهيئة الزكاة والضريبة (ZATCA)';
+
+COMMENT ON COLUMN MAIN_INV.UUID IS
+    'المعرف الفريد للفاتورة الالكترونية (UUID) - مطلوب من ZATCA';
+
+COMMENT ON COLUMN MAIN_INV.LONGID IS
+    'المعرف الطويل للفاتورة الالكترونية من ZATCA';
+
+COMMENT ON COLUMN MAIN_INV.HASHKEY IS
+    'الـ Hash المشفر للفاتورة الالكترونية - للتحقق من سلامة البيانات';
+
+COMMENT ON COLUMN MAIN_INV.STATUS IS
+    'حالة تقديم الفاتورة الالكترونية لـ ZATCA (REPORTED / CLEARED / ERROR)';
+
+COMMENT ON COLUMN MAIN_INV.MSG IS
+    'رسالة الاستجابة من ZATCA عند تقديم الفاتورة الالكترونية';
+
+COMMENT ON COLUMN MAIN_INV.INV_KEY_TAX IS
+    'مفتاح الفاتورة الضريبية المرتبطة';
+
+COMMENT ON COLUMN MAIN_INV.SENT_DATE IS
+    'تاريخ ارسال الفاتورة الالكترونية لـ ZATCA';
+
+COMMENT ON COLUMN MAIN_INV.GENERATEDQR IS
+    'بيانات QR Code المولد للفاتورة الالكترونية.
+     ⚠ نوع البيانات LONG (legacy) - تجنب استخدامه في WHERE او JOIN';
+
+COMMENT ON COLUMN MAIN_INV.JSON_TAX_RESPONSE IS
+    'الاستجابة الكاملة من ZATCA بصيغة JSON - نوع البيانات CLOB';
+
+COMMENT ON COLUMN MAIN_INV.ACTION_TYPE IS
+    'نوع الاجراء على الفاتورة الالكترونية (Submit / Report / Clear)';
+
+COMMENT ON COLUMN MAIN_INV.ORD_NO IS
+    'رقم امر الطلب / الشغل المرتبط بالفاتورة';
 
 COMMENT ON COLUMN MAIN_INV.COMPANY_CODE IS
-'كود الشركة — Tenant identifier (SaaS isolation).
+    'كود الشركة - Tenant identifier (SaaS isolation)';
 
 COMMENT ON COLUMN MAIN_INV.FISCAL_YEAR IS
-'السنة المالية — Fiscal year.
+    'السنة المالية';
 
 COMMENT ON COLUMN MAIN_INV.BRANCH_ID IS
-'كود الفرع — Branch identifier.
+    'كود الفرع';
 
 
 -- ------------------------------------------------------------
@@ -180,13 +282,18 @@ COMMENT ON TABLE DETAIL_INV IS
 FK إلى MAIN_INV عبر INV_KEY.
 FK إلى ITEMS عبر ITEMID.
 ⚠ إجمالي البند = (QTY * PRICE) + ADD_VAL - SUB_VAL.
+⚠ لتفاصيل بنود الفواتير استخدم DETAIL_INV فقط — لا يوجد جدول اسمه PRICE_LIST_DET في هذا النظام.
+⚠ JOINs الأساسية لتفاصيل الفاتورة: MAIN_INV (لـ INVID) و ITEMS (لاسم الصنف) فقط.
+⚠ UNITS و ITEMGROUP اختيارية — إن استخدمتهما فاستخدم LEFT JOIN وليس INNER JOIN.
 Invoice line items — one row per item per invoice.
 Line total formula: (QTY * PRICE) + ADD_VAL - SUB_VAL.';
 
 COMMENT ON COLUMN DETAIL_INV.INV_KEY IS
-'المفتاح الرابط مع رأس الفاتورة.
+'المفتاح الرابط مع رأس الفاتورة — رقم داخلي وليس رقم الفاتورة المرئي للمستخدم.
 FK → MAIN_INV.INV_KEY
-⚠ استخدم INV_KEY وليس INVID في الـ JOIN.';
+⚠ INV_KEY ≠ رقم الفاتورة — لا تكتب WHERE d.INV_KEY = رقم_الفاتورة مطلقاً
+⚠ للبحث بـ "رقم الفاتورة": JOIN مع MAIN_INV m ON m.INV_KEY = d.INV_KEY ثم WHERE m.INVID = الرقم
+⚠ استخدم INV_KEY في JOIN فقط — وليس INVID';
 
 COMMENT ON COLUMN DETAIL_INV.ITEMID IS
 'كود الصنف.
@@ -210,16 +317,18 @@ COMMENT ON COLUMN DETAIL_INV.SUB_VAL IS
 Discount on this specific line. Subtracted from line total.';
 
 COMMENT ON COLUMN DETAIL_INV.UNIT_ID IS
-'وحدة القياس المستخدمة في هذا البند.
-FK → UNITS.UNIT_ID';
+'وحدة القياس المستخدمة في هذا البند — قد يكون NULL لبعض البنود.
+FK → UNITS.UNIT_ID
+⚠ استخدم LEFT JOIN UNITS وليس INNER JOIN — INNER JOIN يحذف جميع البنود التي UNIT_ID فيها NULL';
 
 COMMENT ON COLUMN DETAIL_INV.QTY_UNITS IS
 'الكمية بالوحدة الفرعية (إن وُجدت).
 Quantity in sub-unit (if applicable).';
 
 COMMENT ON COLUMN DETAIL_INV.GROUPID IS
-'مجموعة الصنف — لأغراض التصنيف والتقارير.
-FK → ITEMGROUP.GROUPID';
+'مجموعة الصنف — لأغراض التصنيف والتقارير. قد يكون NULL لبعض الأصناف.
+FK → ITEMGROUP.GROUPID
+⚠ استخدم LEFT JOIN ITEMGROUP وليس INNER JOIN — INNER JOIN يحذف جميع البنود التي GROUPID فيها NULL';
 
 COMMENT ON COLUMN DETAIL_INV.PRICEPERONE IS
 'سعر الوحدة الفرعية — Price per sub-unit.';
@@ -264,7 +373,8 @@ COMMENT ON COLUMN CUST.CUST_TYPE IS
 ⚠ جزء من المفتاح الأساسي — لا تتجاهله في أي JOIN.';
 
 COMMENT ON COLUMN CUST.CUST_NAME IS
-'الاسم بالعربي — Arabic name (العملاء والموردين).';
+'الاسم بالعربي — Arabic name (العملاء والموردين).
+⚠ عند البحث بالاسم استخدم LIKE دائماً: CUST_NAME LIKE ''%كلمة%'' — لا تستخدم المطابقة التامة لأن المستخدم قد يكتب الاسم بشكل مختلف قليلاً';
 
 COMMENT ON COLUMN CUST.CUST_NAME_E IS
 'الاسم بالإنجليزي — English name.';
@@ -455,13 +565,15 @@ COMMENT ON TABLE ITEMS IS
 'الأصناف والمنتجات — بيانات الصنف الأساسية.
 ⚠ هذا جدول بيانات الصنف فقط — للكميات والحركات انظر TRANSACTION.
 ⚠ السعر هنا هو سعر البيع الافتراضي — للأسعار الخاصة انظر PRICE_LIST_DET.
+⚠ للأصناف والمنتجات استخدم ITEMS فقط — لا يوجد جدول اسمه PRODUCTS في هذا النظام.
 Master table for all items and products. Prices and inventory movements are in other tables.';
 
 COMMENT ON COLUMN ITEMS.ITEMID IS
 'كود الصنف الفريد — Unique item/product code.';
 
 COMMENT ON COLUMN ITEMS.ITEMNAME IS
-'اسم الصنف بالعربي — Arabic item name.';
+'اسم الصنف بالعربي — Arabic item name.
+⚠ عند البحث بالاسم استخدم LIKE دائماً: ITEMNAME LIKE ''%كلمة%'' — لا تستخدم المطابقة التامة';
 
 COMMENT ON COLUMN ITEMS.ITEM_NAME_E IS
 'اسم الصنف بالإنجليزي — English item name.';
@@ -641,8 +753,10 @@ COMMENT ON COLUMN TRANSACTION.FISCAL_YEAR IS
 COMMENT ON TABLE TRANSACTION_TOT IS
 'أرصدة المخزون الإجمالية لكل صنف في كل مخزن (نتيجة مجمّعة).
 ⚠ هذا هو المصدر الصحيح لرصيد المخزون الحالي — وليس TRANSACTION مباشرة.
+⚠ أضف WHERE QTY <> 0 لاستبعاد الأصناف التي نفد رصيدها.
 Current stock balance per item per store — aggregated result.
-Use this for current stock queries, not the raw TRANSACTION table.';
+Use this for current stock queries, not the raw TRANSACTION table.
+Filter: QTY <> 0 to exclude items with zero stock.';
 
 COMMENT ON COLUMN TRANSACTION_TOT.ITEMID IS
 'كود الصنف — FK → ITEMS.ITEMID';
@@ -725,7 +839,8 @@ COMMENT ON COLUMN CHARTS.CHART_CODE IS
 'كود الحساب — Account code (unique).';
 
 COMMENT ON COLUMN CHARTS.CHART_NAME_A IS
-'اسم الحساب بالعربي — Arabic account name.';
+'اسم الحساب بالعربي — Arabic account name.
+⚠ عند البحث بالاسم استخدم LIKE دائماً: CHART_NAME_A LIKE ''%كلمة%'' — لا تستخدم المطابقة التامة';
 
 COMMENT ON COLUMN CHARTS.CHART_NAME_E IS
 'اسم الحساب بالإنجليزي — English account name.';
@@ -778,9 +893,10 @@ NULL = مركز جذر / Root cost center.';
 --  VOUCHERS — رأس القيد المحاسبي
 -- ------------------------------------------------------------
 COMMENT ON TABLE VOUCHERS IS
-'رأس القيد المحاسبي (اليومية).
+'رأس القيد المحاسبي (اليومية) — للقيود المحاسبية فقط.
 ⚠ تفاصيل الحسابات المدينة والدائنة في VOUCHERS_DET.
 ⚠ JOIN مع VOUCHERS_DET على (VOUCHER_MONTH, VOUCHER_CODE) معاً — لازم العمودين.
+⚠ هذا الجدول للقيود والمحاسبة فقط — استخدم CASH_TRANS_HEAD للمعاملات النقدية.
 Journal entry header. Details in VOUCHERS_DET.
 JOIN: ON vd.voucher_code = v.voucher_code AND vd.voucher_month = v.voucher_month';
 
@@ -868,7 +984,8 @@ COMMENT ON COLUMN EMPLOYEES.EMP_ID IS
 'كود الموظف الفريد — Unique employee ID.';
 
 COMMENT ON COLUMN EMPLOYEES.EMP_NAME_AR IS
-'اسم الموظف بالعربي — Arabic employee name.';
+'اسم الموظف بالعربي — Arabic employee name.
+⚠ عند البحث بالاسم استخدم LIKE دائماً: EMP_NAME_AR LIKE ''%كلمة%'' — لا تستخدم المطابقة التامة';
 
 COMMENT ON COLUMN EMPLOYEES.EMP_NAME_EN IS
 'اسم الموظف بالإنجليزي — English employee name.';
@@ -1169,18 +1286,1173 @@ COMMENT ON COLUMN STORE_TRANS_TYPE.TRANS_TYPE IS
 COMMENT ON COLUMN STORE_TRANS_TYPE.TRANS_NAME IS
 'اسم نوع الحركة بالعربي (مثال: بيع، شراء، تحويل، جرد).';
 
+--------------------------------------------------------------------------------
 
--- ============================================================
---  نهاية الملف
---  للتحقق من الـ Comments المكتوبة:
+
+---Abdullah
+-- =============================================================================
+-- Oracle APEX Page 20 - STORE_TRANSACTION_FORM
+-- الحركات المخزنية
+-- Comments on Tables and Columns extracted from f103_page_20.sql
+-- Target Schema : JUSTCLICK2
+-- =============================================================================
+
+-- =============================================================================
+-- 1. TRANSMASTER  (رأس الحركة المخزنية - Header)
+-- =============================================================================
+COMMENT ON TABLE TRANSMASTER IS
+    'رأس الحركة المخزنية - يخزن بيانات رأس كل إذن صرف أو إضافة أو تحويل مخزني';
+
+COMMENT ON COLUMN TRANSMASTER.STORE_CODE IS
+    'كود المخزن المصدر - FK → STORE.STORE_CODE | الاسم في STORE.STORE_NAME';
+
+COMMENT ON COLUMN TRANSMASTER.TRANS_TYPE_CODE IS
+    'كود نوع الإذن المخزني - FK → STORE_TRANS_TYPE.TRANS_CODE | التصنيف في STORE_TRANS_TYPE.TRANS_TYPE : 0=صرف ، 1=إضافة ، 2=تحويل';
+
+COMMENT ON COLUMN TRANSMASTER.DIRECTION IS
+    'كود الجهة (العميل أو المورد) - FK → CUST.CUSTID | الاسم في CUST.CUST_NAME | نوع الجهة في CUST.CUST_TYPE : 0=عميل ، 1=مورد';
+
+COMMENT ON COLUMN TRANSMASTER.TRANS_DATE IS
+    'تاريخ الحركة المخزنية';
+
+COMMENT ON COLUMN TRANSMASTER.TRANS_CODE IS
+    'رقم الإذن المخزني - رقم تسلسلي داخل نوع الحركة والمخزن';
+
+COMMENT ON COLUMN TRANSMASTER.NOTES IS
+    'ملاحظات الحركة المخزنية';
+
+COMMENT ON COLUMN TRANSMASTER.INVID IS
+    'رقم الفاتورة المرتبطة بالحركة - مرجع اختياري لفاتورة المورد أو العميل';
+
+COMMENT ON COLUMN TRANSMASTER.TO_STORE_CODE IS
+    'كود المخزن المستلِم في حالة التحويل - FK → STORE.STORE_CODE | الاسم في STORE.STORE_NAME';
+
+COMMENT ON COLUMN TRANSMASTER.PARENT_STORE_CODE IS
+    'الرقم التسلسلي للإذن الأصلي عند التحويل - FK → TRANSMASTER.TRANS_SER';
+
+COMMENT ON COLUMN TRANSMASTER.COST_CODE IS
+    'كود مركز التكلفة المرتبط بالحركة - FK → COST_CENTERS.COST_CODE | الاسم في COST_CENTERS.COST_NAME | ⚠ اختياري NULL — استخدم LEFT JOIN فقط';
+
+COMMENT ON COLUMN TRANSMASTER.TRANS_SER IS
+    'الرقم التسلسلي الفريد للحركة عبر كل المخازن وأنواع الحركات - المفتاح الطبيعي القديم (Business PK)';
+
+COMMENT ON COLUMN TRANSMASTER.PRODUCT_ORDER_CODE IS
+    'رقم أمر الشغل أو الإنتاج المرتبط بالحركة - اختياري';
+
+COMMENT ON COLUMN TRANSMASTER.USER_SEEN IS
+    'آخر مستخدم اطلع على الحركة - تسجيل للمراجعة';
+
+COMMENT ON COLUMN TRANSMASTER.INV_KEY IS
+    'مفتاح الفاتورة الداخلية - ربط تفصيلي بالفاتورة';
+
+COMMENT ON COLUMN TRANSMASTER.REAL_BALANCE_CODE IS
+    'كود الجرد الفعلي المرتبط بالحركة - FK → REAL_BALANCE_HEAD.REAL_BALANCE_CODE';
+
+COMMENT ON COLUMN TRANSMASTER.MASTER_ID IS
+    'Surrogate Key للسجل - يستخدم في APEX لتحديد حالة الحفظ : IS NOT NULL = محفوظ مسبقاً';
+
+
+-- =============================================================================
+-- 2. TRANSACTION  (تفاصيل الحركة المخزنية - Detail IG)
+-- =============================================================================
+COMMENT ON TABLE TRANSACTION IS
+    'تفاصيل الحركة المخزنية - يخزن بنود كل إذن صرف أو إضافة أو تحويل مخزني';
+
+COMMENT ON COLUMN TRANSACTION.STORE_CODE IS
+    'كود المخزن - FK → STORE.STORE_CODE | الاسم في STORE.STORE_NAME';
+
+COMMENT ON COLUMN TRANSACTION.TRANS_TYPE_CODE IS
+    'كود نوع الإذن - FK → STORE_TRANS_TYPE.TRANS_CODE | التصنيف في STORE_TRANS_TYPE.TRANS_TYPE : 0=صرف ، 1=إضافة ، 2=تحويل';
+
+COMMENT ON COLUMN TRANSACTION.TRANS_CODE IS
+    'رقم الإذن - مطابق لـ TRANSMASTER.TRANS_CODE';
+
+COMMENT ON COLUMN TRANSACTION.ITEMID IS
+    'كود الصنف - FK → ITEMS.ITEMID | الاسم في ITEMS.ITEMNAME';
+
+COMMENT ON COLUMN TRANSACTION.PRICE IS
+    'سعر الوحدة في هذه الحركة';
+
+COMMENT ON COLUMN TRANSACTION.QTY IS
+    'كمية الوحدة الرئيسية للصنف في الحركة';
+
+COMMENT ON COLUMN TRANSACTION.DISCOUNT IS
+    'نسبة الخصم أو قيمة الخصم على السطر';
+
+COMMENT ON COLUMN TRANSACTION.NOTES IS
+    'ملاحظات على سطر الحركة';
+
+COMMENT ON COLUMN TRANSACTION.INVID IS
+    'رقم الفاتورة المرتبطة بالسطر - قد يختلف عن رأس الحركة';
+
+COMMENT ON COLUMN TRANSACTION.COST_CODE IS
+    'كود مركز التكلفة على مستوى السطر - FK → COST_CENTERS.COST_CODE | الاسم في COST_CENTERS.COST_NAME | ⚠ اختياري NULL — استخدم LEFT JOIN فقط';
+
+COMMENT ON COLUMN TRANSACTION.UNIT_ID IS
+    'كود وحدة القياس المستخدمة في هذا السطر - FK → UNITS.UNIT_ID | الاسم في UNITS.UNIT_NAME';
+
+COMMENT ON COLUMN TRANSACTION.QTY_UNITS IS
+    'كمية الوحدة الفرعية (sub-unit) للصنف في الحركة';
+
+COMMENT ON COLUMN TRANSACTION.ADD_ID IS
+    'الرقم التسلسلي لحركة الإضافة - يُولَّد عند تسجيل الإضافة في الرصيد';
+
+COMMENT ON COLUMN TRANSACTION.SUB_ID IS
+    'الرقم التسلسلي لحركة الصرف - يُولَّد عند خصم الكمية من الرصيد';
+
+COMMENT ON COLUMN TRANSACTION.TURNON_ID IS
+    'رقم التشغيلة (Batch/Lot Number) للصنف - يُستخدم لتتبع الدُفعات الإنتاجية';
+
+COMMENT ON COLUMN TRANSACTION.TURNON_DT IS
+    'تاريخ التشغيلة (تاريخ الدُفعة الإنتاجية)';
+
+COMMENT ON COLUMN TRANSACTION.EXP_DATE IS
+    'تاريخ صلاحية الصنف في هذا السطر';
+
+COMMENT ON COLUMN TRANSACTION.PARENT_SUB_ID IS
+    'رقم SUB_ID الأصلي في الإذن المحوَّل منه - FK → TRANSACTION.SUB_ID في إذن المصدر';
+
+COMMENT ON COLUMN TRANSACTION.TRANSACTION_SER IS
+    'الرقم التسلسلي الفريد للسطر داخل الحركة - يُستخدم للربط مع EXPIRY_DATA.TRANSACTION_SER';
+
+COMMENT ON COLUMN TRANSACTION.ID_SEQ IS
+    'رقم تسلسلي للسطر - يُميز بين سطور متعددة لنفس الصنف داخل الإذن الواحد';
+
+COMMENT ON COLUMN TRANSACTION.UNIT_ID2 IS
+    'كود وحدة القياس الثانوية - FK → UNITS.UNIT_ID | الاسم في UNITS.UNIT_NAME';
+
+COMMENT ON COLUMN TRANSACTION.ITEMID2 IS
+    'كود الصنف البديل أو المُحوَّل إليه - FK → ITEMS.ITEMID | الاسم في ITEMS.ITEMNAME';
+
+
+-- =============================================================================
+-- 3. TRANSACTION_TOT  (إجمالي الحركات - IG بسياسة السعر 0)
+-- =============================================================================
+COMMENT ON TABLE TRANSACTION_TOT IS
+    'إجمالي بنود الحركة المخزنية - يُستخدم عند INST.PRICE_POLICY=0 (سعر موحد) بدون تفصيل تشغيلات';
+
+COMMENT ON COLUMN TRANSACTION_TOT.STORE_CODE IS
+    'كود المخزن - FK → STORE.STORE_CODE | الاسم في STORE.STORE_NAME';
+
+COMMENT ON COLUMN TRANSACTION_TOT.TRANS_TYPE_CODE IS
+    'كود نوع الإذن - FK → STORE_TRANS_TYPE.TRANS_CODE | التصنيف في STORE_TRANS_TYPE.TRANS_TYPE : 0=صرف ، 1=إضافة ، 2=تحويل';
+
+COMMENT ON COLUMN TRANSACTION_TOT.TRANS_CODE IS
+    'رقم الإذن - مطابق لـ TRANSMASTER.TRANS_CODE';
+
+COMMENT ON COLUMN TRANSACTION_TOT.ITEMID IS
+    'كود الصنف - FK → ITEMS.ITEMID | الاسم في ITEMS.ITEMNAME';
+
+COMMENT ON COLUMN TRANSACTION_TOT.PRICE IS
+    'سعر الوحدة - read-only محسوب أو محمّل من سياسة الأسعار';
+
+COMMENT ON COLUMN TRANSACTION_TOT.QTY IS
+    'كمية الوحدة الرئيسية للصنف';
+
+COMMENT ON COLUMN TRANSACTION_TOT.DISCOUNT IS
+    'نسبة الخصم أو قيمة الخصم على السطر';
+
+COMMENT ON COLUMN TRANSACTION_TOT.NOTES IS
+    'ملاحظات على سطر الإجمالي';
+
+COMMENT ON COLUMN TRANSACTION_TOT.INVID IS
+    'رقم الفاتورة المرتبطة بالسطر';
+
+COMMENT ON COLUMN TRANSACTION_TOT.COST_CODE IS
+    'كود مركز التكلفة - FK → COST_CENTERS.COST_CODE | الاسم في COST_CENTERS.COST_NAME | ⚠ اختياري NULL — استخدم LEFT JOIN فقط';
+
+COMMENT ON COLUMN TRANSACTION_TOT.UNIT_ID IS
+    'كود وحدة القياس المستخدمة - FK → UNITS.UNIT_ID | الاسم في UNITS.UNIT_NAME';
+
+COMMENT ON COLUMN TRANSACTION_TOT.QTY_UNITS IS
+    'كمية الوحدة الفرعية للصنف';
+
+COMMENT ON COLUMN TRANSACTION_TOT.SUB_ID IS
+    'الرقم التسلسلي لحركة الصرف في جدول الرصيد';
+
+COMMENT ON COLUMN TRANSACTION_TOT.TRANSACTION_SER IS
+    'الرقم التسلسلي الفريد للسطر - يُستخدم للربط مع EXPIRY_DATA.TRANSACTION_SER';
+
+COMMENT ON COLUMN TRANSACTION_TOT.ID_SEQ IS
+    'رقم تسلسلي للسطر - يُميز السطور المتعددة للصنف الواحد في نفس الإذن';
+
+
+-- =============================================================================
+-- 4. EXPIRY_DATA  (بيانات تواريخ الصلاحية)
+-- =============================================================================
+COMMENT ON TABLE EXPIRY_DATA IS
+    'تواريخ الصلاحية للأصناف - يُخزن تفاصيل الدُفعات وتواريخ الصلاحية لكل سطر حركة';
+
+COMMENT ON COLUMN EXPIRY_DATA.STORE_CODE IS
+    'كود المخزن - FK → STORE.STORE_CODE | الاسم في STORE.STORE_NAME';
+
+COMMENT ON COLUMN EXPIRY_DATA.TRANS_TYPE_CODE IS
+    'كود نوع الإذن - FK → STORE_TRANS_TYPE.TRANS_CODE | التصنيف في STORE_TRANS_TYPE.TRANS_TYPE : 0=صرف ، 1=إضافة ، 2=تحويل';
+
+COMMENT ON COLUMN EXPIRY_DATA.TRANS_CODE IS
+    'رقم الإذن المرتبط - FK → TRANSMASTER.TRANS_CODE';
+
+COMMENT ON COLUMN EXPIRY_DATA.EXPIRE_DATE IS
+    'تاريخ انتهاء الصلاحية للدُفعة';
+
+COMMENT ON COLUMN EXPIRY_DATA.TURNON_NUMBER IS
+    'رقم التشغيلة (Batch/Lot) المرتبط بتاريخ الصلاحية';
+
+COMMENT ON COLUMN EXPIRY_DATA.QTY IS
+    'الكمية الخاصة بهذه الدُفعة / تاريخ الصلاحية';
+
+COMMENT ON COLUMN EXPIRY_DATA.TRANSACTION_SER IS
+    'الرقم التسلسلي للسطر - FK → TRANSACTION.TRANSACTION_SER';
+
+COMMENT ON COLUMN EXPIRY_DATA.ITEM_ID IS
+    'كود الصنف - FK → ITEMS.ITEMID | الاسم في ITEMS.ITEMNAME';
+
+
+-- =============================================================================
+-- 5. INST  (إعدادات النظام - System Configuration)
+-- =============================================================================
+COMMENT ON TABLE INST IS
+    'إعدادات النظام - سجل واحد لكل شركة يضبط سلوك الحركات المخزنية والنظام ككل';
+
+COMMENT ON COLUMN INST.CREATE_TRANS IS
+    'علم إنشاء الحركة : 1=مسموح بإنشاء أذون جديدة ، 0=محظور';
+
+COMMENT ON COLUMN INST.ADD_TRANS IS
+    'علم إذن الإضافة : 1=مسموح ، 0=محظور';
+
+COMMENT ON COLUMN INST.SUB_TRANS IS
+    'علم إذن الصرف : 1=مسموح ، 0=محظور';
+
+COMMENT ON COLUMN INST.RETURN_ADD_TRANS IS
+    'علم إذن مرتجع الإضافة : 1=مسموح ، 0=محظور';
+
+COMMENT ON COLUMN INST.RETURN_SUB_TRANS IS
+    'علم إذن مرتجع الصرف : 1=مسموح ، 0=محظور';
+
+COMMENT ON COLUMN INST.PRICE_POLICY IS
+    'سياسة السعر : 0=سعر موحد يُكتب في TRANSACTION_TOT ، 1=سعر تفصيلي يُكتب في TRANSACTION';
+
+COMMENT ON COLUMN INST.TURNON_FLAG IS
+    'علم التشغيلة : 1=إلزامي إدخال رقم التشغيلة في بنود الحركة ، 0=اختياري';
+
+COMMENT ON COLUMN INST.EXP_DATE_FLAG IS
+    'علم تاريخ الصلاحية : 1=إلزامي إدخال تاريخ الصلاحية في بنود الحركة ، 0=اختياري';
+
+COMMENT ON COLUMN INST.MAIN_SHEMA IS
+    'اسم الـ Schema الرئيسي للنظام - يُستخدم في الاستعلامات الديناميكية';
+
+COMMENT ON COLUMN INST.TO_TRANSFER_TRANS_CODE IS
+    'كود نوع الإذن المستخدم في الجانب المستلِم عند التحويل التلقائي - FK → STORE_TRANS_TYPE.TRANS_CODE | الاسم في STORE_TRANS_TYPE.TRANS_NAME';
+
+COMMENT ON COLUMN INST.MOTO_CHK IS
+    'علم تحقق إضافي في الحركات (MOTO Check) : 1=مفعّل ، 0=معطّل';
+
+COMMENT ON COLUMN INST.COST_IN_TRANSACTION IS
+    'علم ظهور حقل مركز التكلفة في بنود الحركة : 1=يظهر ، 0=مخفي';
+
+COMMENT ON COLUMN INST.DEFAULT_STORE IS
+    'كود المخزن الافتراضي - FK → STORE.STORE_CODE | الاسم في STORE.STORE_NAME | يُملأ تلقائياً عند فتح نموذج الحركة الجديدة';
+
+
+-- =============================================================================
+-- 6. STORE  (المخازن)
+-- =============================================================================
+COMMENT ON TABLE STORE IS
+    'جدول المخازن - يُعرِّف المخازن المتاحة في النظام';
+
+COMMENT ON COLUMN STORE.STORE_CODE IS
+    'كود المخزن - المفتاح الأساسي';
+
+COMMENT ON COLUMN STORE.STORE_NAME IS
+    'اسم المخزن باللغة العربية';
+
+COMMENT ON COLUMN STORE.STORE_NAME_EN IS
+    'اسم المخزن باللغة الإنجليزية';
+
+
+-- =============================================================================
+-- 7. STORE_TRANS_TYPE  (أنواع الحركات المخزنية)
+-- =============================================================================
+COMMENT ON TABLE STORE_TRANS_TYPE IS
+    'تعريف أنواع أذون الحركات المخزنية وخصائص كل نوع';
+
+COMMENT ON COLUMN STORE_TRANS_TYPE.TRANS_CODE IS
+    'كود نوع الحركة - المفتاح الأساسي';
+
+COMMENT ON COLUMN STORE_TRANS_TYPE.TRANS_NAME IS
+    'اسم نوع الحركة (مثلاً: إذن إضافة مواد خام ، إذن صرف إنتاج)';
+
+COMMENT ON COLUMN STORE_TRANS_TYPE.TRANS_TYPE IS
+    'تصنيف نوع الحركة : 0=صرف ، 1=إضافة ، 2=تحويل';
+
+COMMENT ON COLUMN STORE_TRANS_TYPE.DUP_ITEM IS
+    'السماح بتكرار الصنف في الإذن الواحد : 0=غير مسموح ، 1=مسموح';
+
+
+-- =============================================================================
+-- 8. ITEMS  (الأصناف)
+-- =============================================================================
+COMMENT ON TABLE ITEMS IS
+    'جدول الأصناف المخزنية - يُعرِّف كل صنف وخصائصه.
+     ⚠ للأصناف والمنتجات استخدم ITEMS فقط — لا يوجد جدول اسمه PRODUCTS في هذا النظام';
+
+COMMENT ON COLUMN ITEMS.ITEMID IS
+    'كود الصنف - المفتاح الأساسي';
+
+COMMENT ON COLUMN ITEMS.ITEMNAME IS
+    'اسم الصنف';
+
+COMMENT ON COLUMN ITEMS.UNIT_ID IS
+    'كود وحدة القياس الرئيسية - FK → UNITS.UNIT_ID | الاسم في UNITS.UNIT_NAME';
+
+COMMENT ON COLUMN ITEMS.SUB_UNIT_ID IS
+    'كود وحدة القياس الفرعية (مثلاً: كرتونة / قطعة) - FK → UNITS.UNIT_ID | الاسم في UNITS.UNIT_NAME';
+
+
+-- =============================================================================
+-- 9. UNITS  (وحدات القياس)
+-- =============================================================================
+COMMENT ON TABLE UNITS IS
+    'جدول وحدات القياس المستخدمة للأصناف المخزنية';
+
+COMMENT ON COLUMN UNITS.UNIT_ID IS
+    'كود وحدة القياس - المفتاح الأساسي';
+
+COMMENT ON COLUMN UNITS.UNIT_NAME IS
+    'اسم وحدة القياس (مثلاً: كيلو ، طن ، قطعة ، كرتونة)';
+
+
+-- =============================================================================
+-- 10. CUST  (العملاء / الموردون)
+-- =============================================================================
+COMMENT ON TABLE CUST IS
+    'جدول العملاء والموردين - يُستخدم كجهة الحركة في أذون الصرف والإضافة';
+
+COMMENT ON COLUMN CUST.CUSTID IS
+    'كود العميل / المورد - المفتاح الأساسي';
+
+COMMENT ON COLUMN CUST.CUST_NAME IS
+    'اسم العميل أو المورد';
+
+COMMENT ON COLUMN CUST.CUST_TYPE IS
+    'نوع الجهة : 0=عميل (مستلِم عند الصرف) ، 1=مورد (مُسلِّم عند الإضافة)';
+
+
+-- =============================================================================
+-- 11. COST_CENTERS  (مراكز التكلفة)
+-- =============================================================================
+COMMENT ON TABLE COST_CENTERS IS
+    'جدول مراكز التكلفة - يُحدد الجهة المحاسبية التي تتحمل تكلفة الحركة المخزنية';
+
+COMMENT ON COLUMN COST_CENTERS.COST_CODE IS
+    'كود مركز التكلفة - المفتاح الأساسي';
+
+COMMENT ON COLUMN COST_CENTERS.COST_NAME IS
+    'اسم مركز التكلفة باللغة العربية';
+
+COMMENT ON COLUMN COST_CENTERS.COST_NAME_E IS
+    'اسم مركز التكلفة باللغة الإنجليزية';
+
+
+
+
+-- =============================================
+-- CASH_TRANS_HEAD — رأس حركات الخزينة
+-- =============================================
+COMMENT ON TABLE CASH_TRANS_HEAD IS
+'حركات الخزينة النقدية — قبض وصرف الأموال من وإلى الخزائن.
+⚠ هذا الجدول للحركات النقدية على الخزائن فقط — وليس لسداد الديون أو التحصيلات من العملاء.
+⚠ لسداد الديون وتحصيلات العملاء والموردين استخدم جدول PAYED وليس هذا الجدول.
+⚠ هذا هو الجدول الصحيح الوحيد لأي سؤال عن حركات الخزينة أو القبض أو الصرف النقدي.
+⚠ VOUCHERS مخصص للقيود المحاسبية فقط — الخزينة النقدية هنا حصراً.
+⚠ للبحث باسم الخزينة: JOIN مع CASHES على CASH_ID ثم WHERE c.CASH_NAME LIKE ''%اسم الخزينة كاملاً%'' — لا تستخدم CASH_ID أو STORE_CODE للبحث النصي فهي أرقام.
+⚠ اسم الخزينة قد يتكون من أكثر من كلمة (مثل "رفائع الجيمش") — اكتبه كاملاً في شرط واحد: c.CASH_NAME LIKE ''%رفائع الجيمش%''. لا تقسّم الاسم إلى شروط AND أو OR منفصلة.
+⚠ للبحث في البيان/الملاحظات: WHERE h.NOTES LIKE ''%نص%''
+⚠ لا تضيف WHERE TRANS_TYPE إلا إذا ذكر المستخدم صراحةً (قبض أو صرف أو وارد أو صادر). لا تضيف WHERE VOUCH_POSTED إلا إذا طُلب ذلك.
+⚠ لا توجد أعمدة AMOUNT ولا AMOUNT_BEFOR_TAX ولا TAX في CASH_TRANS_HEAD — هذه الأعمدة في CASH_TRANS_DETAIL حصراً. للحصول عليها: JOIN CASH_TRANS_DETAIL d ON d.TRANS_ID = h.TRANS_ID ثم SELECT d.AMOUNT, d.AMOUNT_BEFOR_TAX, d.TAX.
+⚠ الأعمدة المطلوبة في SELECT لحركات الخزينة: h.TRANS_DATE, h.TRANS_CODE, h.TRANS_TYPE, h.NOTES, d.AMOUNT, d.AMOUNT_BEFOR_TAX, d.TAX, c.CASH_NAME — لا تختر كل الأعمدة من كل الجداول.
+⚠ CASH_TRANS_DETAIL لا يحتوي عمود CASH_ID — إذا أردت اسم الخزينة استخدم c.CASH_NAME من CASHES فقط.
+@lex حركات الخزينة = CASH_TRANS_HEAD
+@lex ايصالات القبض = CASH_TRANS_HEAD
+@lex سندات الصرف = CASH_TRANS_HEAD
+@lex قبض نقدي = CASH_TRANS_HEAD
+@lex صرف نقدي = CASH_TRANS_HEAD';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.TRANS_ID IS
+'رقم الحركة: المفتاح الأساسي الفريد للمعاملة النقدية';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.TRANS_CODE IS
+'رقم المستند: الرقم المرئي للمستخدم (رقم الإيصال)';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.TRANS_DATE IS
+'تاريخ المستند / تاريخ الحركة';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.TRANS_TYPE IS
+'نوع الحركة:
+0 = وارد / قبض / تحصيل
+1 = صادر / صرف / دفع
+⚠ لا تعمل JOIN مع STORE_TRANS_TYPE — TRANS_TYPE هنا قيم 0/1 فقط وليس له علاقة بجدول أنواع حركات المخزن.
+⚠ لا تضيف WHERE TRANS_TYPE إلا إذا ذكر السؤال نوع الحركة صراحةً (وارد أو صادر أو قبض أو صرف).';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.CASH_ID IS
+'كود الخزينة: مرتبط بـ CASHES.CASH_ID
+⚠ للبحث باسم الخزينة استخدم JOIN مع CASHES على CASH_ID';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.CHART_CODE IS
+'كود الحساب الرئيسي: مرتبط بـ CHARTS.CHART_CODE.
+⚠ CHART_CODE كود محاسبي رمزي (مثل 1010 أو ACC01) — لا تضع اسماً عربياً كقيمته أبداً ولا تستخدمه للبحث عن خزينة أو عميل بالاسم.';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.COST_CODE IS
+'كود مركز التكلفة: مرتبط بـ COST_CENTERS';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.PAY_METHOD IS
+'طريقة الدفع:
+0 = كاش
+1 = شيك
+2 = فيزا
+3 = تحويل بنكي';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.NOTES IS
+'ملاحظات على الحركة النقدية';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.INV_KEY IS
+'مفتاح الفاتورة المرتبطة: مرتبط بـ MAIN_INV.INV_KEY';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.INV_CAT IS
+'تصنيف الفاتورة المرتبطة';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.REQUEST_TRANS_ID IS
+'رقم اذن الصرف / الاضافة المرتبط';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.VOUCH_POSTED IS
+'حالة الترحيل للقيد المحاسبي:
+0 = غير مرحّل
+1 = مرحّل';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.USER_NAME IS
+'اسم المستخدم / أمين الخزينة الذي أجرى الحركة';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.COMPANY_CODE IS
+'كود الشركة: مرتبط بـ COMPANIES';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.FISCAL_YEAR IS
+'السنة المالية';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.BRANCH_ID IS
+'كود الفرع: مرتبط بـ BRANCHES';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.CHILD_CASH_ID IS
+'كود الخزينة الفرعية (لو الحركة بين خزينتين)';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.OLD_TRANS_CODE IS
+'رقم المستند القديم (للحركات المحوّلة من نظام سابق)';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.STORE_CODE IS
+'كود المخزن المرتبط بالحركة — رقم (NUMBER) فقط.
+⚠ STORE_CODE رقم صحيح — لا تستخدم عليه LIKE أو مقارنة نصية أبداً.
+⚠ للبحث بالاسم استخدم CASHES.CASH_NAME LIKE عبر JOIN على CASH_ID وليس STORE_CODE.
+⚠ لا تضيف WHERE STORE_CODE ما لم يُذكر رقم المخزن صراحةً في السؤال — البحث بالاسم يكون عبر CASHES.CASH_NAME فقط.';
+
+COMMENT ON COLUMN CASH_TRANS_HEAD.SESSION_ID IS
+'رقم جلسة النظام عند إنشاء الحركة';
+
+-- =============================================
+-- CASH_TRANS_DETAIL — تفاصيل حركات الخزينة
+-- =============================================
+COMMENT ON TABLE CASH_TRANS_DETAIL IS
+'تفاصيل حركات الخزينة: سطر لكل حساب أو توجيه في الحركة النقدية';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.SERIAL IS
+'رقم السطر التسلسلي: المفتاح الأساسي للسطر';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.TRANS_ID IS
+'رقم الحركة: مرتبط بـ CASH_TRANS_HEAD.TRANS_ID — JOIN: JOIN CASH_TRANS_DETAIL d ON d.TRANS_ID = h.TRANS_ID.
+⚠ الأعمدة AMOUNT وAMOUNT_BEFOR_TAX وTAX تنتمي لـ CASH_TRANS_DETAIL (alias d) لا CASH_TRANS_HEAD (alias ct أو h) — اكتبها d.AMOUNT لا ct.AMOUNT.';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.ID IS
+'معرف السطر الداخلي';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.FLAG IS
+'نوع التوجيه:
+0 = مدين / دائن عادي
+1 = سطر خاص (اشتراكات / عقود)';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.AMOUNT IS
+'مبلغ السطر';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.AMOUNT_BEFOR_TAX IS
+'المبلغ قبل الضريبة';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.TAX IS
+'قيمة الضريبة على السطر';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.CHART_CODE IS
+'كود الحساب في هذا السطر: مرتبط بـ CHARTS.CHART_CODE';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.CHART_CODE_NEXT IS
+'كود الحساب المقابل (الطرف الآخر من القيد)';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.COST_CODE IS
+'كود مركز التكلفة للسطر';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.COST_CODE_NEXT IS
+'كود مركز التكلفة للحساب المقابل';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.NOTES_DETAIL IS
+'ملاحظات السطر';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.SELLER IS
+'كود البائع / المندوب المرتبط بالسطر';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.CONTRACT_CODE IS
+'رقم العقد المرتبط بالسطر';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.MEMBER_ST_DATE IS
+'تاريخ بداية الاشتراك (للسطور من نوع اشتراك)';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.MEMBER_END_DATE IS
+'تاريخ نهاية الاشتراك';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.MEMBER_ST_MO IS
+'شهر بداية الاشتراك';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.MEMBER_END_MO IS
+'شهر نهاية الاشتراك';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.DIFF_MO IS
+'عدد الأشهر بين بداية ونهاية الاشتراك';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.FRACTION_PAYED IS
+'المبلغ المدفوع كجزء من الاشتراك';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.INV_KEY IS
+'مفتاح الفاتورة المرتبطة بالسطر — اختياري، قد يكون NULL.
+⚠ لا تستخدم JOIN مع MAIN_INV إلا لو السؤال يطلب بيانات الفاتورة صراحةً.
+⚠ لاستعراض حركات الخزينة لا تحتاج JOIN مع MAIN_INV.';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.COMPANY_CODE IS
+'كود الشركة';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.FISCAL_YEAR IS
+'السنة المالية';
+
+COMMENT ON COLUMN CASH_TRANS_DETAIL.BRANCH_ID IS
+'كود الفرع';
+
+-- =============================================
+-- CASHES — الخزائن
+-- =============================================
+COMMENT ON TABLE CASHES IS
+'جدول الخزائن: يحتوي على جميع الخزائن النقدية والبنكية
+@lex الخزينة = CASHES
+@lex الخزائن = CASHES';
+
+COMMENT ON COLUMN CASHES.CASH_ID IS
+'رقم الخزينة: المفتاح الأساسي';
+
+COMMENT ON COLUMN CASHES.CASH_NAME IS
+'اسم الخزينة بالعربي — هذا هو الحقل الوحيد للبحث النصي عن الخزينة.
+⚠ أي اسم خزينة مذكور في السؤال يُبحث حصراً بـ CASH_NAME LIKE ''%كلمة%'' (قسّم الاسم واستخدم LIKE لكل كلمة).
+⚠ لا تستخدم CHART_CODE أو STORE_CODE أو CASH_ID كبديل عن CASH_NAME للبحث النصي — هذه أرقام وأكواد وليست نصوصاً.';
+
+COMMENT ON COLUMN CASHES.CASH_NAME_E IS
+'اسم الخزينة بالإنجليزي';
+
+COMMENT ON COLUMN CASHES.OPEN_BALANCE IS
+'الرصيد الافتتاحي للخزينة';
+
+COMMENT ON COLUMN CASHES.OPEN_BALANCE_DATE IS
+'تاريخ الرصيد الافتتاحي';
+
+COMMENT ON COLUMN CASHES.CHART_CODE IS
+'كود الحساب المرتبط بالخزينة في شجرة الحسابات: مرتبط بـ CHARTS.CHART_CODE';
+
+COMMENT ON COLUMN CASHES.PARENT_CASH_ID IS
+'رقم الخزينة الأب: للخزائن الفرعية
+⚠ لو PARENT_CASH_ID فيه قيمة يبقى الخزينة فرعية';
+
+COMMENT ON COLUMN CASHES.BANK_ACC_NO IS
+'رقم الحساب البنكي (للخزائن البنكية)';
+
+COMMENT ON COLUMN CASHES.BRANCH_ID IS
+'كود الفرع: مرتبط بـ BRANCHES';
+
+COMMENT ON COLUMN CASHES.COMPANY_CODE IS
+'كود الشركة: مرتبط بـ COMPANIES'; 
+-- =============================================================================
+-- End of Comments Script - Page 20 (STORE_TRANSACTION_FORM)
+-- =============================================================================
+-- =============================================================================
+-- نظام السداد - Page 30 + Page 46
+-- payed_system_comments.sql
+-- Tables : SAL_PURCH_TRANS_TYPE | PAYED | MAIN_INV_PAYED
+--        | INV_CATEGORIES | DEALER_DATA | INST (additions)
+-- Target Schema : JUSTCLICK2
+-- =============================================================================
+
+
+-- =============================================================================
+-- Page 30 - SAL_PURCH_TRANS_TYPE
+-- تكويد انواع حركات السداد (عملاء / موردون / مندوبون)
+-- =============================================================================
+-- التكامل مع شاشة السداد (Page 46) :
+--   PAYED.SDAD_TRANS_TYPE  → FK → SAL_PURCH_TRANS_TYPE.TRANS_CODE
+--   PAYED.SAL_PURCH        → يطابق SAL_PURCH_TRANS_TYPE.SAL_PURCH
+--   ⚠ الـ JOIN الصح دايما على الحقلين معا :
+--       PAYED.SDAD_TRANS_TYPE = SAL_PURCH_TRANS_TYPE.TRANS_CODE
+--       PAYED.SAL_PURCH       = SAL_PURCH_TRANS_TYPE.SAL_PURCH
+-- =============================================================================
+
+COMMENT ON TABLE SAL_PURCH_TRANS_TYPE IS
+    'تكويد انواع حركات السداد للعملاء والموردين والمندوبين.
+     المفتاح الاساسي المركب : (TRANS_CODE + SAL_PURCH).
+     SAL_PURCH : 0=عملاء , 1=موردون , 2=مندوبون.
+     ⚠ الربط مع PAYED يكون على (TRANS_CODE + SAL_PURCH) معا وليس TRANS_CODE وحده.
+
+     للاجابة على اسئلة التحليل :
+       مستحقات العملاء         : PAYED JOIN هذا الجدول WHERE SAL_PURCH=0 AND DEB_CRD=1
+       تحليل التحصيلات النقدية : WHERE CASH_TRANS_TYPE=1 (نقدي)
+       تحليل التحصيلات الآجلة  : WHERE CASH_TRANS_TYPE=0 (آجل/شيك/تحويل)
+
+     الـ SDAD_TRANS_TYPE المحظور تعديله يدويا في Page 46
+     (يتولد تلقائيا من الفاتورة) :
+       100,101,200,201,310,320,110,111,210,211,311,321
+
+     FORM_ID في APP_SEC :
+       51  = انواع حركات العملاء    (SAL_PURCH=0)
+       655 = انواع حركات الموردين   (SAL_PURCH=1)
+       64  = انواع حركات المندوبين  (SAL_PURCH=2)';
+
+COMMENT ON COLUMN SAL_PURCH_TRANS_TYPE.TRANS_CODE IS
+    'كود نوع حركة السداد - جزء من المفتاح الاساسي.
+     ⚠ ليس فريدا وحده - الفريد هو (TRANS_CODE + SAL_PURCH) معا.
+     يُخزن في PAYED.SDAD_TRANS_TYPE للربط بنوع الحركة.
+     الاكواد المحظور ادخالها يدويا في Page 46 (تولد من الفاتورة) :
+       100,101,200,201,310,320,110,111,210,211,311,321';
+
+COMMENT ON COLUMN SAL_PURCH_TRANS_TYPE.SAL_PURCH IS
+    'نوع الطرف - جزء من المفتاح الاساسي :
+     0 = عملاء / Customers
+     1 = موردون / Suppliers
+     2 = مندوبون / Dealers
+     ⚠ جزء اساسي من شرط JOIN مع PAYED - لا تحذفه.
+     يطابق PAYED.SAL_PURCH في كل الاستعلامات.';
+
+COMMENT ON COLUMN SAL_PURCH_TRANS_TYPE.TRANS_NAME_AR IS
+    'اسم نوع حركة السداد باللغة العربية - للعرض في الواجهة';
+
+COMMENT ON COLUMN SAL_PURCH_TRANS_TYPE.TRANS_NAME_EN IS
+    'اسم نوع حركة السداد باللغة الانجليزية - للعرض في الواجهة';
+
+COMMENT ON COLUMN SAL_PURCH_TRANS_TYPE.DEB_CRD IS
+    'اتجاه الحركة المحاسبي :
+     0 = مدين  / Debit  (العميل مدين للشركة - فاتورة بيع / مرتجع شراء)
+     1 = دائن  / Credit (العميل دائن للشركة - سداد / مرتجع بيع)
+     ⚠ هذا الحقل يحدد جانب القيد المحاسبي - لا تخلط بين قيمه.
+     للاستعلام عن المستحقات (العميل مدين) : WHERE DEB_CRD = 0
+     للاستعلام عن السدادات (العميل يسدد) : WHERE DEB_CRD = 1';
+
+COMMENT ON COLUMN SAL_PURCH_TRANS_TYPE.CASH_TRANS_TYPE IS
+    'تصنيف الحركة من حيث طريقة الدفع :
+     1 = نقدي   / Cash     (تحصيل فوري بالكاش)
+     0 = غير نقدي / Non-Cash (شيك / تحويل بنكي / آجل)
+     ⚠ هذا الحقل هو المفتاح لتحليل التحصيلات النقدية :
+       تحليل التحصيلات النقدية :
+         SELECT p.*, s.TRANS_NAME_AR
+           FROM PAYED p
+           JOIN SAL_PURCH_TRANS_TYPE s
+             ON p.SDAD_TRANS_TYPE = s.TRANS_CODE
+            AND p.SAL_PURCH       = s.SAL_PURCH
+          WHERE s.CASH_TRANS_TYPE = 1
+       تحليل التحصيلات الآجلة / الشيكات :
+         ... WHERE s.CASH_TRANS_TYPE = 0';
+
+COMMENT ON COLUMN SAL_PURCH_TRANS_TYPE.BENFIT_EFFECT IS
+    'تاثير الحركة على الفائدة / العمولة.
+     يحدد ما اذا كانت هذه الحركة تؤثر على حساب الفوائد المستحقة.
+     يُستخدم في حسابات الوكلاء والمندوبين (SAL_PURCH=2).';
+
+COMMENT ON COLUMN SAL_PURCH_TRANS_TYPE.DOC_ID IS
+    'رقم نوع المستند المحاسبي المرتبط بهذه الحركة.
+     يحدد القيد المحاسبي الذي يُنشا تلقائيا عند تسجيل السداد.';
+
+
+-- =============================================================================
+-- Page 46 - PayedForm (شاشة السداد)
+-- =============================================================================
+-- العلاقات الاساسية في نظام السداد :
 --
---  SELECT table_name, comments
---    FROM user_tab_comments
---   WHERE comments IS NOT NULL
---   ORDER BY table_name;
+--   PAYED (1) ────────────< MAIN_INV_PAYED (M)
+--     on: PAYED_ID + SDAD_TRANS_TYPE
 --
---  SELECT table_name, column_name, comments
---    FROM user_col_comments
---   WHERE comments IS NOT NULL
---   ORDER BY table_name, column_name;
--- ============================================================
+--   MAIN_INV (1) ─────────< MAIN_INV_PAYED (M)
+--     on: INV_KEY
+--
+--   CUST (1) ─────────────< PAYED (M)
+--     on: CUST_ID = CUSTID AND SAL_PURCH = CUST_TYPE
+--
+--   SAL_PURCH_TRANS_TYPE (1) < PAYED (M)
+--     on: SDAD_TRANS_TYPE = TRANS_CODE AND SAL_PURCH = SAL_PURCH
+--
+-- معادلات التحليل المالي :
+--   المستحق على عميل  = SUM(MAIN_INV.FINALTOTAL) - SUM(MAIN_INV_PAYED.SDAD)
+--                        WHERE INVTYPE=0 AND RETURN_FLAG=0 AND CUST_ID=x
+--   المتبقي على فاتورة = MAIN_INV.FINALTOTAL - SUM(MAIN_INV_PAYED.SDAD WHERE INV_KEY=x)
+--   التحصيلات النقدية  = PAYED JOIN SAL_PURCH_TRANS_TYPE WHERE CASH_TRANS_TYPE=1
+-- =============================================================================
+
+
+-- =============================================================================
+-- 1. PAYED  (راس ايصال السداد)
+-- =============================================================================
+COMMENT ON TABLE PAYED IS
+    'حركات السداد - راس ايصال السداد - كل صف = عملية سداد واحدة (تحصيل من عميل او سداد لمورد).
+     ⚠ لتفاصيل حركة السداد رقم X: استخدم هذا الجدول WHERE PAYED_ID = X — وليس CASH_TRANS_HEAD.
+     ⚠ CASH_TRANS_HEAD للخزائن النقدية فقط — سداد الديون والتحصيلات هنا في PAYED.
+     ⚠ SAL_PURCH يحدد نوع الطرف — استخدمه لما يذكر المستخدم نوع الطرف صراحةً:
+         إذا قال "عميل"   → أضف AND p.SAL_PURCH = 0
+         إذا قال "مورد"   → أضف AND p.SAL_PURCH = 1
+         إذا قال "مندوب"  → أضف AND p.SAL_PURCH = 2
+         إذا لم يذكر نوع الطرف → لا تضف فلتر SAL_PURCH
+     المفتاح الاساسي المركب : (PAYED_ID + SDAD_TRANS_TYPE).
+     SAL_PURCH : 0=عملاء , 1=موردون , 2=مندوبون.
+     DEB_CRD   : 0=مدين (فاتورة بيع / مرتجع شراء) , 1=دائن (سداد / مرتجع بيع).
+     ⚠ الربط مع MAIN_INV_PAYED يكون على (PAYED_ID + SDAD_TRANS_TYPE) معا.
+     ⚠ الربط مع CUST يكون على (CUST_ID=CUSTID AND SAL_PURCH=CUST_TYPE).
+     ⚠ الربط مع SAL_PURCH_TRANS_TYPE يكون على
+         (SDAD_TRANS_TYPE=TRANS_CODE AND SAL_PURCH=SAL_PURCH).
+
+     للاجابة على اسئلة التحليل المالي :
+
+       اكثر 10 عملاء سداد :
+         SELECT c.CUST_NAME, SUM(p.PAYED_AMOUNT) TOTAL
+           FROM PAYED p
+           JOIN CUST c ON c.CUSTID=p.CUST_ID AND c.CUST_TYPE=p.SAL_PURCH
+          WHERE p.SAL_PURCH=0
+          GROUP BY c.CUST_NAME
+          ORDER BY TOTAL DESC FETCH FIRST 10 ROWS ONLY
+
+       تحليل التحصيلات النقدية :
+         SELECT s.TRANS_NAME_AR, SUM(p.PAYED_AMOUNT)
+           FROM PAYED p
+           JOIN SAL_PURCH_TRANS_TYPE s
+             ON s.TRANS_CODE=p.SDAD_TRANS_TYPE AND s.SAL_PURCH=p.SAL_PURCH
+          WHERE s.CASH_TRANS_TYPE=1 AND p.SAL_PURCH=0
+          GROUP BY s.TRANS_NAME_AR';
+
+COMMENT ON COLUMN PAYED.PAYED_ID IS
+    'رقم ايصال السداد - جزء من المفتاح الاساسي.
+     ⚠ ليس فريدا وحده - الفريد هو (PAYED_ID + SDAD_TRANS_TYPE) معا.
+     يتولد تلقائيا : MAX(PAYED_ID)+1 لنفس SDAD_TRANS_TYPE و SAL_PURCH.';
+
+COMMENT ON COLUMN PAYED.SDAD_TRANS_TYPE IS
+    'نوع حركة السداد - جزء من المفتاح الاساسي.
+     FK → SAL_PURCH_TRANS_TYPE.TRANS_CODE (مع SAL_PURCH في الشرط).
+     ⚠ الربط الصح : SDAD_TRANS_TYPE=TRANS_CODE AND SAL_PURCH=SAL_PURCH.
+     الاكواد المحظور ادخالها يدويا (تولد تلقائيا من الفاتورة) :
+       100,101,200,201,310,320,110,111,210,211,311,321.
+     للتمييز بين نقدي وآجل : JOIN مع SAL_PURCH_TRANS_TYPE
+       WHERE CASH_TRANS_TYPE=1 (نقدي) او CASH_TRANS_TYPE=0 (آجل).';
+
+COMMENT ON COLUMN PAYED.CUST_ID IS
+    'كود العميل او المورد او المندوب - FK → CUST.CUSTID.
+     ⚠ الربط الصح : CUST_ID=CUST.CUSTID AND SAL_PURCH=CUST.CUST_TYPE.
+     | الاسم في CUST.CUST_NAME';
+
+COMMENT ON COLUMN PAYED.SAL_PURCH IS
+    'نوع الطرف في عملية السداد :
+     0 = عملاء / Customers  (تحصيل من عميل)
+     1 = موردون / Suppliers  (سداد لمورد)
+     2 = مندوبون / Dealers   (تسوية مع مندوب)
+     ⚠ جزء اساسي من شرط JOIN مع CUST و SAL_PURCH_TRANS_TYPE - لا تحذفه.';
+
+COMMENT ON COLUMN PAYED.PAYED_DATE IS
+    'تاريخ ايصال السداد.
+     للفلترة : WHERE TRUNC(PAYED_DATE) BETWEEN :from_date AND :to_date
+     للتجميع الشهري : TRUNC(PAYED_DATE, ''MM'')';
+
+COMMENT ON COLUMN PAYED.PAYED_AMOUNT IS
+    'اجمالي مبلغ السداد في هذا الايصال.
+     ⚠ هذا الاجمالي قد يُوزَّع على اكثر من فاتورة في MAIN_INV_PAYED.
+     التوزيع التفصيلي : SELECT SUM(SDAD) FROM MAIN_INV_PAYED
+                         WHERE PAYED_ID=x AND SDAD_TRANS_TYPE=y';
+
+COMMENT ON COLUMN PAYED.NOTES IS
+    'ملاحظات ايصال السداد';
+
+COMMENT ON COLUMN PAYED.DEB_CRD IS
+    'اتجاه الحركة المحاسبي :
+     0 = مدين  (العميل مدين للشركة - فاتورة بيع / مرتجع شراء)
+     1 = دائن  (العميل دائن للشركة - سداد من عميل / مرتجع بيع)
+     ⚠ تفسير DEB_CRD يعتمد على SAL_PURCH معا :
+       SAL_PURCH=0 AND DEB_CRD=1 → تحصيل من عميل (بيع آجل)
+       SAL_PURCH=0 AND DEB_CRD=0 → رد مبلغ لعميل (مرتجع بيع)
+       SAL_PURCH=1 AND DEB_CRD=0 → سداد لمورد (شراء آجل)
+       SAL_PURCH=1 AND DEB_CRD=1 → استرداد من مورد (مرتجع شراء)';
+
+COMMENT ON COLUMN PAYED.DEALER_ID IS
+    'كود المندوب المرتبط بعملية السداد - FK → DEALER_DATA.DEALER_ID
+     | الاسم في DEALER_DATA.NAME_AR
+     يُملا عند ربط السداد بمندوب مبيعات محدد.';
+
+COMMENT ON COLUMN PAYED.PARENT_PAYED IS
+    'رقم الايصال الاصلي في حالة التعديل او الالغاء - FK → PAYED.PAYED_ID.
+     يُستخدم لتتبع سلسلة التعديلات على نفس عملية السداد.';
+
+COMMENT ON COLUMN PAYED.INV_CAT IS
+    'تصنيف الفاتورة المرتبط بالسداد - FK → INV_CATEGORIES.INV_CAT
+     | الاسم في INV_CATEGORIES.INV_CAT_NAME_AR.
+     يُستخدم لتصنيف السدادات حسب نوع الفاتورة (نقدي / آجل / إلخ).';
+
+COMMENT ON COLUMN PAYED.STORE_CODE IS
+    'كود المخزن المرتبط بعملية السداد - FK → STORE.STORE_CODE
+     | الاسم في STORE.STORE_NAME';
+
+COMMENT ON COLUMN PAYED.COMPANY_CODE IS
+    'كود الشركة - Tenant identifier (SaaS isolation)';
+
+COMMENT ON COLUMN PAYED.FISCAL_YEAR IS
+    'السنة المالية';
+
+COMMENT ON COLUMN PAYED.BRANCH_ID IS
+    'كود الفرع';
+
+
+-- =============================================================================
+-- 2. MAIN_INV_PAYED  (توزيع السداد على الفواتير)
+-- =============================================================================
+COMMENT ON TABLE MAIN_INV_PAYED IS
+    'توزيع مبلغ السداد على الفواتير - كل صف = جزء من سداد موزَّع على فاتورة واحدة.
+     المفتاح الاساسي المركب : (PAYED_ID + SDAD_TRANS_TYPE + INVID + CHILD_CUSTID).
+     ⚠ JOIN مع PAYED يكون على (PAYED_ID + SDAD_TRANS_TYPE) معا.
+     ⚠ JOIN مع MAIN_INV يكون على INV_KEY (وليس INVID).
+     ⚠ INV_KEY قابل للـ NULL - استخدم LEFT JOIN و NVL عند الجمع.
+
+     لحساب المتبقي على فاتورة :
+       SELECT m.FINALTOTAL - NVL(SUM(mp.SDAD),0) AS REMAIN
+         FROM MAIN_INV m
+         LEFT JOIN MAIN_INV_PAYED mp ON mp.INV_KEY = m.INV_KEY
+        WHERE m.INV_KEY = :inv_key
+        GROUP BY m.FINALTOTAL
+
+     لحساب اجمالي مستحقات العملاء :
+       SELECT m.CUST_ID,
+              SUM(m.FINALTOTAL) - NVL(SUM(mp.SDAD),0) AS OUTSTANDING
+         FROM MAIN_INV m
+         LEFT JOIN MAIN_INV_PAYED mp ON mp.INV_KEY = m.INV_KEY
+        WHERE m.INVTYPE=0 AND m.RETURN_FLAG=0
+        GROUP BY m.CUST_ID
+        ORDER BY OUTSTANDING DESC';
+
+COMMENT ON COLUMN MAIN_INV_PAYED.PAYED_ID IS
+    'رقم ايصال السداد - جزء من المفتاح الاساسي.
+     FK → PAYED.PAYED_ID (مع SDAD_TRANS_TYPE في الشرط).';
+
+COMMENT ON COLUMN MAIN_INV_PAYED.SDAD_TRANS_TYPE IS
+    'نوع حركة السداد - جزء من المفتاح الاساسي.
+     FK → PAYED.SDAD_TRANS_TYPE = SAL_PURCH_TRANS_TYPE.TRANS_CODE.
+     ⚠ جزء اساسي من شرط JOIN مع PAYED - لا تحذفه.';
+
+COMMENT ON COLUMN MAIN_INV_PAYED.INVID IS
+    'رقم الفاتورة للعرض - جزء من المفتاح الاساسي.
+     ⚠ للعرض فقط - استخدم INV_KEY في الـ JOIN مع MAIN_INV.';
+
+COMMENT ON COLUMN MAIN_INV_PAYED.INV_KEY IS
+    'المفتاح الداخلي للفاتورة - FK → MAIN_INV.INV_KEY.
+     ⚠ قابل للـ NULL في بعض الحالات - استخدم LEFT JOIN و NVL.
+     ⚠ استخدم INV_KEY دائما في الـ JOIN مع MAIN_INV وليس INVID.';
+
+COMMENT ON COLUMN MAIN_INV_PAYED.SAL_PURCH IS
+    'نوع الحركة : 0=بيع , 1=شراء.
+     يطابق MAIN_INV.INVTYPE للتحقق من تطابق نوع الفاتورة مع نوع السداد.';
+
+COMMENT ON COLUMN MAIN_INV_PAYED.SDAD IS
+    'المبلغ الموزَّع على هذه الفاتورة تحديدا من اجمالي الايصال.
+     ⚠ SUM(SDAD) WHERE INV_KEY=x = اجمالي ما سُدِّد على الفاتورة.
+     ⚠ MAIN_INV.FINALTOTAL - SUM(SDAD) = المتبقي على الفاتورة.';
+
+COMMENT ON COLUMN MAIN_INV_PAYED.CHILD_CUSTID IS
+    'كود العميل الفرعي - جزء من المفتاح الاساسي.
+     يُستخدم عند السداد باسم عميل فرعي مرتبط بعميل رئيسي
+     (PARENT_CUST_CODE في جدول CUST).
+     FK → CUST.CUSTID';
+
+COMMENT ON COLUMN MAIN_INV_PAYED.COMPANY_CODE IS
+    'كود الشركة - Tenant identifier (SaaS isolation)';
+
+COMMENT ON COLUMN MAIN_INV_PAYED.FISCAL_YEAR IS
+    'السنة المالية';
+
+COMMENT ON COLUMN MAIN_INV_PAYED.BRANCH_ID IS
+    'كود الفرع';
+
+
+-- =============================================================================
+-- 3. INV_CATEGORIES  (تصنيفات الفواتير)
+-- =============================================================================
+COMMENT ON TABLE INV_CATEGORIES IS
+    'تصنيفات الفواتير - يحدد نوع الفاتورة المحاسبي والقيود المرتبطة بها.
+     المفتاح الاساسي : INV_CAT.
+     INV_CAT_TYPE : يصنف التصنيف نفسه (1=مخصص للسداد , غيره=فواتير عادية).
+     يُستخدم في Page 46 لتحديد نوع قيد السداد المحاسبي.';
+
+COMMENT ON COLUMN INV_CATEGORIES.INV_CAT IS
+    'كود تصنيف الفاتورة - المفتاح الاساسي.
+     يُخزن في PAYED.INV_CAT و MAIN_INV.INV_CAT.';
+
+COMMENT ON COLUMN INV_CATEGORIES.INV_CAT_NAME_AR IS
+    'اسم تصنيف الفاتورة باللغة العربية - للعرض في الواجهة';
+
+COMMENT ON COLUMN INV_CATEGORIES.INV_CAT_NAME_EN IS
+    'اسم تصنيف الفاتورة باللغة الانجليزية - للعرض في الواجهة';
+
+COMMENT ON COLUMN INV_CATEGORIES.INV_CAT_TYPE IS
+    'نوع التصنيف :
+     1       = مخصص للسداد (يظهر في LOV شاشة السداد Page 46)
+     غير 1   = تصنيف فواتير عادية (يظهر في LOV شاشة الفواتير Page 52/53)
+     ⚠ عند جلب تصنيفات السداد    : WHERE inv_cat_type = 1
+     ⚠ عند جلب تصنيفات الفواتير  : WHERE inv_cat_type != 1';
+
+COMMENT ON COLUMN INV_CATEGORIES.CHART_CODE IS
+    'كود الحساب المحاسبي المرتبط بهذا التصنيف - FK → CHARTS_ELEMENTS.CHART_CODE
+     يحدد الحساب الذي يُقيَّد فيه عند استخدام هذا التصنيف.';
+
+COMMENT ON COLUMN INV_CATEGORIES.COST_CODE IS
+    'مركز التكلفة المرتبط بهذا التصنيف - FK → COST_CENTERS.COST_CODE
+     | الاسم في COST_CENTERS.COST_NAME';
+
+COMMENT ON COLUMN INV_CATEGORIES.COMPANY_CODE IS
+    'كود الشركة - Tenant identifier (SaaS isolation)';
+
+COMMENT ON COLUMN INV_CATEGORIES.FISCAL_YEAR IS
+    'السنة المالية';
+
+COMMENT ON COLUMN INV_CATEGORIES.BRANCH_ID IS
+    'كود الفرع';
+
+
+-- =============================================================================
+-- 4. DEALER_DATA  (بيانات الوكلاء والمندوبين)
+-- =============================================================================
+COMMENT ON TABLE DEALER_DATA IS
+    'بيانات الوكلاء والمندوبين. كل صف = وكيل او مندوب.
+     المفتاح الاساسي المركب : (DEALER_ID + DEALER_TYPE).
+     ⚠ اي JOIN مع DEALER_DATA لازم يشمل DEALER_TYPE في الشرط.
+     DEALER_TYPE : 0=وكيل مبيعات (يظهر في LOV Page 46)
+                   2=وكيل مرتبط بعميل (في CUST.DEALER_ID و MAIN_INV.DEALER_ID)
+     يُستخدم في شاشة السداد لتحديد المندوب المسؤول عن التحصيل.';
+
+COMMENT ON COLUMN DEALER_DATA.DEALER_ID IS
+    'كود الوكيل / المندوب - جزء من المفتاح الاساسي.
+     ⚠ ليس فريدا وحده - الفريد هو (DEALER_ID + DEALER_TYPE) معا.
+     يُخزن في PAYED.DEALER_ID و MAIN_INV.DEALER_ID و CUST.DEALER_ID.';
+
+COMMENT ON COLUMN DEALER_DATA.DEALER_TYPE IS
+    'نوع الوكيل - جزء من المفتاح الاساسي :
+     0 = وكيل مبيعات / Sales Dealer (يظهر في LOV السداد)
+     2 = وكيل مرتبط بعميل (في بيانات العميل والفاتورة)
+     ⚠ جزء اساسي من شرط JOIN - لا تحذفه ابدا.';
+
+COMMENT ON COLUMN DEALER_DATA.NAME_AR IS
+    'اسم الوكيل / المندوب باللغة العربية - للعرض في الواجهة';
+
+COMMENT ON COLUMN DEALER_DATA.NAME_EN IS
+    'اسم الوكيل / المندوب باللغة الانجليزية - للعرض في الواجهة';
+
+COMMENT ON COLUMN DEALER_DATA.PARENT_DEALER_ID IS
+    'كود الوكيل الاب في التسلسل الهرمي - FK → DEALER_DATA.DEALER_ID';
+
+COMMENT ON COLUMN DEALER_DATA.PARENT_DEALER_TYPE IS
+    'نوع الوكيل الاب - FK → DEALER_DATA.DEALER_TYPE
+     ⚠ لازم يُستخدم مع PARENT_DEALER_ID في الـ JOIN على DEALER_DATA.';
+
+COMMENT ON COLUMN DEALER_DATA.PERCENT IS
+    'نسبة العمولة % للوكيل / المندوب.
+     تُستخدم في حساب عمولات المبيعات المرتبطة بالفواتير والتحصيلات.';
+
+COMMENT ON COLUMN DEALER_DATA.CHART_CODE IS
+    'كود الحساب المحاسبي للوكيل - FK → CHARTS_ELEMENTS.CHART_CODE
+     يحدد الحساب الذي تُقيَّد فيه العمولات.';
+
+COMMENT ON COLUMN DEALER_DATA.COMPANY_CODE IS
+    'كود الشركة - Tenant identifier (SaaS isolation)';
+
+COMMENT ON COLUMN DEALER_DATA.FISCAL_YEAR IS
+    'السنة المالية';
+
+COMMENT ON COLUMN DEALER_DATA.BRANCH_ID IS
+    'كود الفرع';
+
+
+-- =============================================================================
+-- 5. INST  (حقول اضافية اتكشفت من Page 46)
+-- =============================================================================
+COMMENT ON COLUMN INST.DEALER_IN_INV IS
+    'علم ربط المندوب بالفاتورة تلقائيا : 1=مفعل , 0=معطل.
+     يُحدد ما اذا كان يجب اختيار مندوب عند انشاء الفاتورة.';
+
+COMMENT ON COLUMN INST.DEALER_SDAD_TYPE IS
+    'كود نوع حركة السداد الخاص بعمولات المندوبين.
+     FK → SAL_PURCH_TRANS_TYPE.TRANS_CODE (SAL_PURCH=2)';
+
+COMMENT ON COLUMN INST.COMM_ON_INV IS
+    'علم احتساب العمولة على الفاتورة : 1=محتسب , 0=غير محتسب.';
+
+COMMENT ON COLUMN INST.NOTCASH_SELL_SDAD_TYPE IS
+    'كود نوع حركة السداد الآجل للبيع (غير نقدي).
+     FK → SAL_PURCH_TRANS_TYPE.TRANS_CODE WHERE SAL_PURCH=0 AND CASH_TRANS_TYPE=0
+     يُملا تلقائيا في PAYED.SDAD_TRANS_TYPE عند انشاء سداد بيع آجل.';
+
+COMMENT ON COLUMN INST.CASH_SELL_SDAD_TYPE IS
+    'كود نوع حركة السداد النقدي للبيع.
+     FK → SAL_PURCH_TRANS_TYPE.TRANS_CODE WHERE SAL_PURCH=0 AND CASH_TRANS_TYPE=1
+     يُملا تلقائيا في PAYED.SDAD_TRANS_TYPE عند انشاء سداد بيع نقدي.';
+
+COMMENT ON COLUMN INST.NOTCASH_PURCH_SDAD_TYPE IS
+    'كود نوع حركة السداد الآجل للشراء (غير نقدي).
+     FK → SAL_PURCH_TRANS_TYPE.TRANS_CODE WHERE SAL_PURCH=1 AND CASH_TRANS_TYPE=0';
+
+COMMENT ON COLUMN INST.CASH_PURCH_SDAD_TYPE IS
+    'كود نوع حركة السداد النقدي للشراء.
+     FK → SAL_PURCH_TRANS_TYPE.TRANS_CODE WHERE SAL_PURCH=1 AND CASH_TRANS_TYPE=1';
+
+COMMENT ON COLUMN INST.INV_CAT_CHK IS
+    'علم الزامية اختيار تصنيف الفاتورة في السداد :
+     1 = الزامي اختيار INV_CAT في شاشة السداد
+     0 = اختياري';
+
+
+-- =============================================================================
+-- End of Comments Script - Payment System (Page 30 + Page 46)
+-- Tables : SAL_PURCH_TRANS_TYPE | PAYED | MAIN_INV_PAYED
+--        | INV_CATEGORIES | DEALER_DATA | INST (additions)
+-- =============================================================================
+
+
+-- =============================================================================
+-- SQL Examples for LLM Guidance
+-- هذا القسم يُقرأ تلقائياً من schema_loader.get_sql_examples()
+-- ويُحقن في system prompt — هو جزء من مصدر المعنى الوحيد.
+-- لتعديل أي مثال: عدّل هنا فقط — التغيير يسري فوراً بدون restart.
+-- الصيغة: كل مثال بين علامتي SQL_EXAMPLE_START و SQL_EXAMPLE_END
+-- =============================================================================
+
+-- @SQL_EXAMPLE_START
+-- ══ مثال صحيح لاستعلام حركات الخزينة ══
+-- سؤال: "حركات الخزينة على رفائع الجيمش"
+-- SQL الصح:
+-- SELECT h.TRANS_DATE, h.TRANS_CODE, h.TRANS_TYPE, h.NOTES,
+--        d.AMOUNT, d.AMOUNT_BEFOR_TAX, d.TAX, c.CASH_NAME
+-- FROM CASH_TRANS_HEAD h
+-- JOIN CASH_TRANS_DETAIL d ON d.TRANS_ID = h.TRANS_ID
+-- JOIN CASHES c ON c.CASH_ID = h.CASH_ID
+-- WHERE c.CASH_NAME LIKE '%رفائع الجيمش%'
+-- FETCH FIRST 200 ROWS ONLY
+--
+-- لاحظ: لا يوجد VOUCH_POSTED ولا TRANS_TYPE لأن المستخدم لم يطلبهما.
+-- @SQL_EXAMPLE_END
+
+-- @SQL_EXAMPLE_START
+-- ══ مثال صحيح لاستعلام تفاصيل الفاتورة ══
+-- سؤال: "تفاصيل الفاتورة رقم 5"
+-- SQL الصح:
+-- SELECT m.INVID, m.INVTYPE, i.ITEMNAME,
+--        d.QTY, d.PRICE, d.ADD_VAL, d.SUB_VAL,
+--        (d.QTY * d.PRICE) + d.ADD_VAL - d.SUB_VAL AS TOTAL_PRICE
+-- FROM DETAIL_INV d
+-- JOIN MAIN_INV m ON m.INV_KEY = d.INV_KEY
+-- JOIN ITEMS i ON i.ITEMID = d.ITEMID
+-- WHERE m.INVID = 5
+-- FETCH FIRST 200 ROWS ONLY
+--
+-- سؤال: "فاتورة مبيعات رقم 5"
+-- SQL الصح:
+-- SELECT m.INVID, m.INVTYPE, i.ITEMNAME,
+--        d.QTY, d.PRICE, d.ADD_VAL, d.SUB_VAL,
+--        (d.QTY * d.PRICE) + d.ADD_VAL - d.SUB_VAL AS TOTAL_PRICE
+-- FROM DETAIL_INV d
+-- JOIN MAIN_INV m ON m.INV_KEY = d.INV_KEY
+-- JOIN ITEMS i ON i.ITEMID = d.ITEMID
+-- WHERE m.INVID = 5 AND m.INVTYPE = 0
+-- FETCH FIRST 200 ROWS ONLY
+--
+-- لاحظ:
+-- - WHERE على m.INVID وليس d.INV_KEY — INV_KEY رقم داخلي وليس رقم الفاتورة.
+-- - لا INNER JOIN على UNITS أو ITEMGROUP — قد تكون NULL فتُحذف كل البنود.
+-- - INVTYPE: إذا قال المستخدم "مبيعات" → AND m.INVTYPE = 0 | "مشتريات" أو "شراء" → AND m.INVTYPE = 1 | بدون ذكر نوع → بدون فلتر INVTYPE على الإطلاق.
+-- @SQL_EXAMPLE_END
+
+-- @SQL_EXAMPLE_START
+-- ══ مثال صحيح لاستعلام تفاصيل حركة السداد ══
+-- سؤال: "تفاصيل حركة السداد رقم 20"
+-- SQL الصح:
+-- SELECT p.PAYED_ID, p.PAYED_DATE, p.PAYED_AMOUNT, p.NOTES,
+--        c.CUST_NAME, mp.SDAD, m.INVID
+-- FROM PAYED p
+-- JOIN CUST c ON c.CUSTID = p.CUST_ID AND c.CUST_TYPE = p.SAL_PURCH
+-- LEFT JOIN MAIN_INV_PAYED mp ON mp.PAYED_ID = p.PAYED_ID AND mp.SDAD_TRANS_TYPE = p.SDAD_TRANS_TYPE
+-- LEFT JOIN MAIN_INV m ON m.INV_KEY = mp.INV_KEY
+-- WHERE p.PAYED_ID = 20
+-- FETCH FIRST 200 ROWS ONLY
+--
+-- سؤال: "تفاصيل حركة السداد عميل رقم السداد 16"
+-- SQL الصح:
+-- SELECT p.PAYED_ID, p.PAYED_DATE, p.PAYED_AMOUNT, p.NOTES,
+--        c.CUST_NAME, mp.SDAD, m.INVID
+-- FROM PAYED p
+-- JOIN CUST c ON c.CUSTID = p.CUST_ID AND c.CUST_TYPE = p.SAL_PURCH
+-- LEFT JOIN MAIN_INV_PAYED mp ON mp.PAYED_ID = p.PAYED_ID AND mp.SDAD_TRANS_TYPE = p.SDAD_TRANS_TYPE
+-- LEFT JOIN MAIN_INV m ON m.INV_KEY = mp.INV_KEY
+-- WHERE p.PAYED_ID = 16 AND p.SAL_PURCH = 0
+-- FETCH FIRST 200 ROWS ONLY
+--
+-- لاحظ:
+-- - PAYED هو جدول سداد الديون — وليس CASH_TRANS_HEAD الذي للخزائن النقدية فقط.
+-- - WHERE على p.PAYED_ID = الرقم — وليس TRANS_CODE في CASH_TRANS_HEAD.
+-- - JOIN مع MAIN_INV_PAYED على (PAYED_ID + SDAD_TRANS_TYPE) معاً.
+-- - SAL_PURCH: إذا قال المستخدم "عميل" → SAL_PURCH=0 | "مورد" → SAL_PURCH=1 | "مندوب" → SAL_PURCH=2 | بدون ذكر → بدون فلتر.
+-- @SQL_EXAMPLE_END
+
+-- @SQL_EXAMPLE_START
+-- ══ مثال صحيح لاستعلام شجرة الحسابات مع DECODE ══
+-- عند عرض نوع الحساب أو طبيعته استخدم DECODE هكذا:
+--
+-- SELECT
+--   c.CHART_CODE,
+--   c.CHART_NAME,
+--   DECODE(c.CHART_TYPE,   0, 'ميزانية',     1, 'قائمة الدخل') AS CHART_TYPE_AR,
+--   DECODE(c.CHART_NATURE, 0, 'حساب رئيسي', 1, 'حساب مساعد')  AS CHART_NATURE_AR,
+--   c.PARENT_CHART_CODE
+-- FROM CHARTS c
+-- WHERE c.COMPANY_CODE = :company_code
+-- ORDER BY c.CHART_CODE;
+--
+-- ملاحظات:
+-- CHART_TYPE:   0 = ميزانية (أصول/خصوم),  1 = قائمة الدخل (إيرادات/مصروفات)
+-- CHART_NATURE: 0 = حساب رئيسي (main),    1 = حساب مساعد (sub/leaf)
+-- للشجرة الهرمية: START WITH PARENT_CHART_CODE IS NULL CONNECT BY PRIOR CHART_CODE = PARENT_CHART_CODE
+-- @SQL_EXAMPLE_END
+
+-- @SQL_EXAMPLE_START
+-- ══ مثال صحيح لاستعلام رصيد المخزون (TRANSACTION_TOT) ══
+-- دائماً استخدم TRANSACTION_TOT للأرصدة الحالية — أسرع وأصح من TRANSACTION:
+--
+-- SELECT
+--   i.ITEMNAME,
+--   i.ITEMID,
+--   s.STORE_NAME,
+--   t.QTY,
+--   t.PRICE,
+--   (t.QTY * t.PRICE) AS STOCK_VALUE
+-- FROM TRANSACTION_TOT t
+-- JOIN ITEMS i ON i.ITEMID = t.ITEMID
+-- JOIN STORE s ON s.STORE_CODE = t.STORE_CODE
+-- WHERE t.QTY <> 0
+--   AND t.COMPANY_CODE = :company_code
+-- ORDER BY t.QTY DESC;
+--
+-- ملاحظات:
+-- WHERE QTY <> 0 : لاستبعاد الأصناف التي نفد رصيدها (مهم للأداء)
+-- لا تستخدم TRANSACTION مباشرة للأرصدة — استخدم TRANSACTION_TOT دائماً
+-- @SQL_EXAMPLE_END
+

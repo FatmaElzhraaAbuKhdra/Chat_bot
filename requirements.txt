@@ -7,3 +7,6 @@ google-generativeai
 httpx
 pyyaml
 python-multipart
+sentence-transformers
+pydantic
+PyJWT>=2.8.0

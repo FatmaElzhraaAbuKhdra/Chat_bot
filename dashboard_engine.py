@@ -6,15 +6,20 @@ and transforms data for Chart.js / KPI card rendering.
 Each dashboard = collection of widgets (KPI cards, charts, tables).
 All SQL verified against justclick_comments.sql column names.
 """
+import os
 import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Optional
 
-from db import execute_query
+from db import execute_read_query as execute_query
 from sql_safety import validate_sql
 
 log = logging.getLogger("dashboard")
+
+# Concurrency limiter: prevents overwhelming Oracle with parallel widget queries
+_MAX_CONCURRENT_WIDGETS = int(os.getenv("DASHBOARD_MAX_CONCURRENT", "5"))
+_widget_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_WIDGETS)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -792,6 +797,12 @@ async def execute_dashboard(dashboard_id: str) -> Optional[dict]:
 
 
 async def _execute_widget(widget: WidgetDef) -> dict:
+    """Execute a single widget query and transform data (concurrency-limited)."""
+    async with _widget_semaphore:
+        return await _execute_widget_inner(widget)
+
+
+async def _execute_widget_inner(widget: WidgetDef) -> dict:
     """Execute a single widget query and transform data."""
     sql = widget.sql.strip()
     try:

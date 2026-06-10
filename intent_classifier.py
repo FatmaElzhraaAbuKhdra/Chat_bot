@@ -1,9 +1,8 @@
 """
 intent_classifier.py — ERP Intelligence Router (v2)
-3-Level classification:
+2-Level classification:
   Level 1: Regex fast-path         → confidence 0.95  (< 1ms)
-  Level 2: Keyword scoring         → confidence 0.75-0.90  (< 1ms)
-  Level 3: LLM micro-classify      → confidence 0.80-0.90  (200ms)
+  Level 2: LLM micro-classify      → confidence 0.80-0.90  (200ms)
 
 Plus:
   - Context-need detection (does the question need conversation history?)
@@ -27,6 +26,7 @@ class Intent:
     confidence: float = 1.0
     needs_history: bool = False  # هل السؤال محتاج context من المحادثة السابقة؟
     original_question: str = ""
+    source: str = "none"       # regex | keywords | llm | none
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -43,6 +43,7 @@ _GREETINGS = re.compile(
 # ── Help patterns ────────────────────────────────────────────────
 _HELP = re.compile(
     r"(ايه الاسئلة|اقدر اسال|تقدر تعمل|ممكن تساعدني|المساعد|"
+    r"مساعده?|ساعدني|محتاج\s*مساعد|"
     r"what can you|help|how to use|ازاي اسال|ازاي استخدم)",
     re.IGNORECASE
 )
@@ -101,19 +102,24 @@ DOMAIN_SIGNALS = {
 SUB_INTENT_PATTERNS = {
     # Accounting
     "account_balance":    r"(رصيد\s*(حساب|الحساب)|balance\s*of\s*account|رصيد\s*\d+)",
-    "account_statement":  r"(كشف\s*(حساب|الحساب)|حركات?\s*(حساب|الحساب)|statement|حركة)",
+    "account_statement":  r"(كشف\s*(حساب|الحساب)|حركات?\s*(حساب|الحساب)|statement)",
     "trial_balance":      r"(ميزان\s*المراجعة|trial\s*balance|ميزان)",
-    "chart_of_accounts":  r"(شجرة\s*الحسابات|دليل\s*الحسابات|chart\s*of\s*accounts|الحسابات\s*(الفرعية|الرئيسية))",
+    "chart_of_accounts":  r"(شجرة\s*الحسابات|دليل\s*الحسابات|chart\s*of\s*accounts|الحسابات\s*(الفرعية|الرئيسية)|حسابات\s*(تبد[اأ]|اللي\s*تبد[اأ]|بتبد[اأ])\s*ب)",
     "account_info":       r"(نوع\s*(الحساب|حساب)|بيانات?\s*(الحساب|حساب)|معلومات?\s*(الحساب|حساب)|تفاصيل?\s*(الحساب|حساب))",
+    "revenue_expenses":   r"(الإيرادات\s*وال?مصروفات|الايرادات\s*وال?مصروفات|إيرادات\s*و?مصروفات|ايرادات\s*و?مصروفات|مصروفات\s*و?إيرادات|مصروفات\s*و?ايرادات|income\s*(and|&)\s*expense|revenue.+expense|قائمة\s*الدخل|income\s*statement)",
     "voucher_details":    r"(تفاصيل?\s*(القيد|قيد)|بيانات?\s*(القيد|قيد)|voucher\s*detail)",
     "journal_entries":    r"(قيود?\s*اليومية|يومية|journal\s*entries)",
 
     # Invoicing
-    "invoice_detail":     r"(تفاصيل?\s*(الفاتور[ةه]|فاتور[ةه])|بيانات?\s*(الفاتور[ةه]|فاتور[ةه])|invoice\s*detail)",
+    # invoice_count* MUST precede sales_summary/invoice_detail so "عدد فواتير"
+    # is read as a COUNT (all-time) and not mis-scored as a today sales summary.
+    "invoice_count_purchase": r"(عدد\s*(ال)?فوات[يی]ر\s*(ال)?(مشتريات|شراء)|كم\s*فاتور[ةه]\s*(مشتريات|شراء)|count\s*(of\s*)?purchase\s*invoices?)",
+    "invoice_count":          r"(عدد\s*(ال)?فوات[يی]ر|كم\s*(عدد\s*)?(ال)?فوات[يی]ر|كم\s*فاتور[ةه]|count\s*(of\s*)?invoices?|how\s*many\s*invoices?)",
+    "invoice_detail":     r"(تفاصيل?\s*(الفاتور[ةه]|فاتور[ةه])|بيانات?\s*(الفاتور[ةه]|فاتور[ةه])|invoice\s*detail|فاتور[ةه]\s*(رقم|مبيعات|مشتريات)\s*\d+|فاتور[ةه]\s+\d+)",
     "sales_summary":      r"(إجمالي\s*المبيعات|مبيعات\s*(اليوم|الشهر|السنة)|total\s*sales|sales\s*summary|اجمالي\s*المبيعات)",
     "purchase_summary":   r"(إجمالي\s*المشتريات|مشتريات\s*(اليوم|الشهر|السنة)|total\s*purchase|اجمالي\s*المشتريات)",
-    "top_customers":      r"(أكثر|اكثر|أعلى|اعلى|top)\s*(\d+\s*)?(عمي?لاء|عملاء|customer)",
-    "top_items":          r"(أكثر|اكثر|أعلى|اعلى|top)\s*(\d+\s*)?(أصناف|اصناف|صنف|item|منتج|منتجات)",
+    "top_customers":      r"(?:ل)?(أكثر|اكثر|أعلى|اعلى|أعلي|اعلي|top)\s*(\d+\s*)?(عمي?لاء|عملاء|customer)",
+    "top_items":          r"(?:ل)?(أكثر|اكثر|أعلى|اعلى|أعلي|اعلي|top)\s*(\d+\s*)?(أصناف|اصناف|صنف|item|منتج|منتجات)",
     "outstanding":        r"(مستحق|متبقي|مديونية|مديون|outstanding|owing|unpaid|غير\s*مسدد)",
 
     # Inventory
@@ -135,123 +141,95 @@ SUB_INTENT_PATTERNS = {
 
 
 # ══════════════════════════════════════════════════════════════════
-# Level 2: Keyword Scoring System
-# ══════════════════════════════════════════════════════════════════
-# كل sub_intent فيه keywords ووزنها — لو المجموع >= threshold يتم اعتماده
-
-_KEYWORD_SCORES: dict[str, dict[str, float]] = {
-    "account_balance": {
-        "رصيد": 3.0, "حساب": 2.0, "balance": 3.0, "account": 2.0,
-        "كام": 1.5, "كم": 1.5, "بكام": 1.5,
-    },
-    "account_statement": {
-        "كشف": 3.0, "حساب": 2.0, "حركات": 2.5, "حركة": 2.5,
-        "statement": 3.0, "قيود": 1.5,
-    },
-    "sales_summary": {
-        "مبيعات": 3.0, "إجمالي": 2.0, "اجمالي": 2.0, "بيع": 2.0,
-        "اليوم": 1.5, "الشهر": 1.5, "sales": 3.0, "total": 2.0,
-    },
-    "purchase_summary": {
-        "مشتريات": 3.0, "إجمالي": 2.0, "اجمالي": 2.0, "شراء": 2.0,
-        "purchase": 3.0,
-    },
-    "invoice_detail": {
-        "فاتورة": 3.0, "فاتوره": 3.0, "تفاصيل": 2.0, "بيانات": 1.5,
-        "invoice": 3.0, "رقم": 1.0,
-    },
-    "stock_balance": {
-        "مخزن": 3.0, "مخزون": 3.0, "مخازن": 3.0, "أصناف": 2.0, "اصناف": 2.0,
-        "كمية": 2.0, "رصيد": 1.5, "حركات": 1.5, "stock": 3.0,
-        "inventory": 3.0, "store": 2.0, "منتج": 2.0, "منتجات": 2.0,
-    },
-    "item_info": {
-        "صنف": 3.0, "أصناف": 2.5, "اصناف": 2.5, "بيانات": 1.5,
-        "سعر": 1.5, "item": 3.0, "منتج": 2.5,
-    },
-    "outstanding": {
-        "مستحق": 3.0, "مديونية": 3.0, "مديون": 3.0, "متبقي": 2.5,
-        "عليه": 1.5, "فاضل": 2.0, "outstanding": 3.0,
-    },
-    "top_customers": {
-        "أكثر": 2.0, "اكثر": 2.0, "أعلى": 2.0, "اعلى": 2.0,
-        "عملاء": 3.0, "عميل": 2.0, "top": 2.0, "customer": 2.0,
-    },
-    "top_items": {
-        "أكثر": 2.0, "اكثر": 2.0, "أعلى": 2.0, "اعلى": 2.0,
-        "أصناف": 3.0, "اصناف": 3.0, "صنف": 2.0, "منتج": 2.0,
-        "مبيعاً": 1.5, "top": 2.0, "item": 2.0,
-    },
-    "customer_list": {
-        "قائمة": 2.0, "عملاء": 3.0, "كل": 1.5, "العملاء": 3.0,
-        "list": 2.0, "customer": 2.0,
-    },
-    "employee_count": {
-        "عدد": 2.5, "كم": 2.5, "موظف": 3.0, "موظفين": 3.0,
-        "employee": 3.0, "count": 2.0,
-    },
-    "employee_list": {
-        "قائمة": 2.0, "موظفين": 3.0, "الموظفين": 3.0, "كل": 1.5,
-        "list": 2.0, "employee": 2.0,
-    },
-    "trial_balance": {
-        "ميزان": 3.5, "مراجعة": 2.0, "trial": 3.0, "balance": 1.5,
-    },
-}
-
-_KEYWORD_THRESHOLD = 4.5  # minimum score to accept keyword-based match
-
-
-def _keyword_score_classify(question: str) -> tuple[str, float]:
-    """
-    Level 2: Score-based keyword matching.
-    Returns (sub_intent, confidence) or ("", 0.0) if no match.
-    """
-    q_lower = question.lower()
-    best_intent = ""
-    best_score = 0.0
-
-    for intent_name, keywords in _KEYWORD_SCORES.items():
-        score = 0.0
-        for kw, weight in keywords.items():
-            if kw in q_lower:
-                score += weight
-        if score > best_score:
-            best_score = score
-            best_intent = intent_name
-
-    if best_score >= _KEYWORD_THRESHOLD:
-        # Normalize confidence: 4.5→0.75, 6→0.82, 8+→0.90
-        confidence = min(0.90, 0.65 + (best_score / 40.0))
-        return best_intent, round(confidence, 2)
-
-    return "", 0.0
-
-
-# ══════════════════════════════════════════════════════════════════
 # Entity extraction
 # ══════════════════════════════════════════════════════════════════
 
 ENTITY_PATTERNS = {
-    "account_code":  r"(?:حساب|كود|رقم|account|code)?\s*[#]?(\d{4,10})",
-    "invoice_id":    r"(?:فاتور[ةه]|رقم|invoice|inv)?\s*[#]?(\d{5,12})",
+    "account_code":  r"(?:حساب|حسابات|كود|رقم|account|code|ب)\s*[#]?(\d{1,10})",
+    "invoice_id":    r"(?:فاتور[ةه]|رقم|invoice|inv)?\s*[#]?(\d{1,12})",
     "customer_name": r"(?:عميل|اسم|customer)\s+([^\d\s].{2,30})",
     "date_single":   r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
-    "top_n":         r"(?:أكثر|اكثر|أعلى|اعلى|أقل|اقل|top|bottom)\s*(\d+)",
+    # P1: explicit "today" signal (whole word — must NOT match اليومية/journal).
+    # Templates that filter by SYSDATE require this entity, so a time-less query
+    # falls through to the all-time default instead of a silent today filter.
+    "time_today":    r"(?:^|\s)(اليوم|النهارده|today)(?:\s|$|؟|\?)",
+    "top_n":         r"(?:ل)?(?:أكثر|اكثر|أعلى|اعلى|أعلي|اعلي|أقل|اقل|top|bottom)\s*(\d+)",
     "year":          r"(?:سنة|عام|year)\s*(\d{4})",
     "month":         r"(?:شهر|month)\s*(\d{1,2})",
     "store_name":    r"(?:مخزن|مستودع|store)\s+([^\d\s].{2,30})",
     "employee_name": r"(?:موظف|اسم|employee)\s+([^\d\s].{2,30})",
 }
 
+# ── Arabic month names → month number ────────────────────────────
+# Covers Egyptian, Gulf, and Levantine Arabic month names so date-range
+# questions like "من يناير لمارس" or "شهر آذار" are correctly detected.
+# Used only for entity extraction — business meaning still comes from comments.
+_AR_MONTHS: dict[str, int] = {
+    # Egyptian / international
+    'يناير': 1,  'جانفي': 1,  'كانون الثاني': 1,
+    'فبراير': 2, 'فيفري': 2,  'شباط': 2,
+    'مارس': 3,   'آذار': 3,
+    'أبريل': 4,  'إبريل': 4,  'ابريل': 4,  'نيسان': 4,
+    'مايو': 5,   'أيار': 5,
+    'يونيو': 6,  'يونيه': 6,  'حزيران': 6,
+    'يوليو': 7,  'يوليه': 7,  'تموز': 7,
+    'أغسطس': 8,  'اغسطس': 8,  'آب': 8,
+    'سبتمبر': 9, 'أيلول': 9,
+    'أكتوبر': 10,'اكتوبر': 10,'تشرين الأول': 10,
+    'نوفمبر': 11,'تشرين الثاني': 11,
+    'ديسمبر': 12,'كانون الأول': 12,
+}
+
+# Month names sorted longest-first so the multi-word names match before
+# single-word ones (e.g. "تشرين الأول" before "تشرين").
+_AR_MONTH_PATTERN = re.compile(
+    '(' + '|'.join(re.escape(m) for m in
+                   sorted(_AR_MONTHS, key=len, reverse=True)) + ')',
+    re.UNICODE,
+)
+
+# "من يناير لـمارس" / "من يناير إلى مارس" / "بين يناير و مارس"
+_DATE_RANGE_RE = re.compile(
+    r'(?:من|بين)\s+'
+    r'(' + '|'.join(re.escape(m) for m in sorted(_AR_MONTHS, key=len, reverse=True)) + r')'
+    r'\s+(?:ل(?:ـ\s*|\s+)?|إلى\s+|الى\s+|حتى\s+|و\s*)'
+    r'(' + '|'.join(re.escape(m) for m in sorted(_AR_MONTHS, key=len, reverse=True)) + r')',
+    re.UNICODE,
+)
+
 
 def _extract_entities(question: str) -> dict:
-    """Extract named entities from the question."""
-    entities = {}
+    """Extract named entities from the question.
+
+    In addition to the ENTITY_PATTERNS regex table, detects:
+      • Arabic month-range  → date_month_from / date_month_to  (1-12)
+      • Single Arabic month → date_month_from  (1-12)
+    These two extra entities are used by the semantic gate in pipeline.py
+    to demote templates that can't honor a specific month range to the LLM path.
+    """
+    entities: dict = {}
     for name, pattern in ENTITY_PATTERNS.items():
         match = re.search(pattern, question, re.IGNORECASE)
         if match:
             entities[name] = match.group(1).strip()
+
+    # ── Arabic month range ──────────────────────────────────────
+    m = _DATE_RANGE_RE.search(question)
+    if m:
+        f = _AR_MONTHS.get(m.group(1))
+        t = _AR_MONTHS.get(m.group(2))
+        if f:
+            entities['date_month_from'] = str(f)
+        if t:
+            entities['date_month_to'] = str(t)
+    else:
+        # Single month name (no range)
+        sm = _AR_MONTH_PATTERN.search(question)
+        if sm:
+            num = _AR_MONTHS.get(sm.group(1))
+            if num:
+                entities['date_month_from'] = str(num)
+
     return entities
 
 
@@ -302,12 +280,22 @@ def _detect_needs_history(question: str, history: list = None) -> bool:
 
 def classify_intent(question: str, history: list = None) -> Intent:
     """
-    3-Level intent classification:
+    2-Level intent classification:
       Level 1: Regex exact match → confidence 0.95
-      Level 2: Keyword scoring   → confidence 0.75-0.90
-      Level 3: LLM fallback      → confidence 0.80-0.90
+      Level 2: LLM fallback      → confidence 0.80-0.90
     """
     q = question.strip()
+
+    # Pre-normalize Arabic: collapse repeats, fix informal ة/ه, Levenshtein-1 typos
+    try:
+        from normalizer import normalize_question
+        q_fixed, _corr = normalize_question(q)
+        if _corr:
+            log.info(f"[INTENT] Arabic corrected: {_corr}")
+            q = q_fixed
+    except Exception:
+        pass
+
     q_lower = q.lower()
 
     # ── Greeting ──
@@ -351,16 +339,7 @@ def classify_intent(question: str, history: list = None) -> Intent:
             source = "regex"
             break
 
-    # ══ Level 2: Keyword scoring (if regex missed) ══
-    if not sub_intent:
-        kw_intent, kw_conf = _keyword_score_classify(q)
-        if kw_intent:
-            sub_intent = kw_intent
-            confidence = kw_conf
-            source = "keywords"
-            log.info(f"[INTENT] Keyword scoring: {kw_intent} (conf={kw_conf})")
-
-    # ══ Level 3: LLM fallback (if both missed) ══
+    # ══ Level 2: LLM fallback (if regex missed) ══
     if not sub_intent:
         llm_result = _llm_classify(q, history)
         if llm_result:
@@ -385,8 +364,13 @@ def classify_intent(question: str, history: list = None) -> Intent:
     category = _determine_category(q_lower, sub_intent, entities)
 
     # ── Infer domain from sub_intent ──
-    if not domain and sub_intent:
-        domain = _infer_domain_from_sub_intent(sub_intent)
+    # When regex gives a high-confidence match (0.95), sub_intent domain
+    # overrides DOMAIN_SIGNALS keyword detection (e.g. "رصيد المخزن" has
+    # both "رصيد"→accounting and "مخزن"→inventory — sub_intent wins).
+    if sub_intent:
+        inferred = _infer_domain_from_sub_intent(sub_intent)
+        if inferred and (not domain or (source == "regex" and confidence >= 0.95)):
+            domain = inferred
 
     # ── Default domain ──
     if not domain and category == "data_query":
@@ -403,6 +387,7 @@ def classify_intent(question: str, history: list = None) -> Intent:
         confidence=confidence,
         needs_history=needs_history,
         original_question=q,
+        source=source,
     )
 
 
@@ -446,6 +431,7 @@ def _infer_domain_from_sub_intent(sub_intent: str) -> str:
         "chart_":   "accounting",
         "voucher_": "accounting",
         "journal_": "accounting",
+        "revenue_": "accounting",
         "invoice_": "invoicing",
         "sales_":   "invoicing",
         "purchase_": "invoicing",
