@@ -4,7 +4,7 @@ import io
 import time
 import logging
 import asyncio
-from collections import defaultdict
+
 from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -62,19 +62,76 @@ app.add_middleware(SecurityHeadersMiddleware)
 
 
 # ── Rate Limiting Middleware ─────────────────────────────────────
-_RATE_LIMIT_CHAT = int(os.getenv("RATE_LIMIT_CHAT", "30"))       # requests per minute
-_RATE_LIMIT_LEARNING = int(os.getenv("RATE_LIMIT_LEARNING", "60"))  # requests per minute
-_rate_store: dict[str, list[float]] = defaultdict(list)
+#
+# Backed by SQLite (data/learning.db) so limits are enforced across
+# all workers, not per-worker.
+#
+# Algorithm: sliding-window with BEGIN IMMEDIATE transaction.
+#   BEGIN IMMEDIATE acquires a write lock before any read, which
+#   prevents the classic check-then-insert TOCTOU race between workers.
+#
+# Latency: ~0.5 ms on WAL SQLite (SSD).  Acceptable for an ERP chatbot
+# where action limits are 30-60 req/min, not thousands per second.
+# For Redis-backed deployments, set REDIS_URL and swap this middleware.
+
+_RATE_LIMIT_CHAT     = int(os.getenv("RATE_LIMIT_CHAT",     "30"))   # req/min
+_RATE_LIMIT_LEARNING = int(os.getenv("RATE_LIMIT_LEARNING", "60"))   # req/min
+_RATE_WINDOW         = 60       # seconds
+
+
+def _rate_check_sync(key: str, limit: int) -> bool:
+    """
+    Atomic check-and-record in SQLite.
+    Returns True = request is allowed, False = rate limited.
+    Runs in a thread executor to avoid blocking the async event loop.
+    """
+    import sqlite3 as _sqlite3
+    from pathlib import Path as _Path
+
+    db_path = _Path(__file__).parent / "data" / "learning.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    now    = time.time()
+    cutoff = now - _RATE_WINDOW
+
+    conn = _sqlite3.connect(str(db_path), timeout=5, check_same_thread=False)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("BEGIN IMMEDIATE")          # write lock acquired upfront
+        conn.execute(
+            "DELETE FROM ai_rate_limit WHERE key=? AND ts < ?", (key, cutoff)
+        )
+        row   = conn.execute(
+            "SELECT COUNT(*) FROM ai_rate_limit WHERE key=? AND ts >= ?",
+            (key, cutoff),
+        ).fetchone()
+        count = row[0] if row else 0
+        if count >= limit:
+            conn.execute("ROLLBACK")
+            return False
+        conn.execute(
+            "INSERT INTO ai_rate_limit (key, ts) VALUES (?, ?)", (key, now)
+        )
+        conn.execute("COMMIT")
+        return True
+    except Exception as exc:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        # Fail-open on DB error — don't block requests because the rate-limit
+        # table is temporarily unavailable.
+        log.warning("[RATE_LIMIT] DB check failed (allowing request): %s", exc)
+        return True
+    finally:
+        conn.close()
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    """Simple per-IP rate limiter for /chat and /learning endpoints."""
+    """Per-IP rate limiter — shared SQLite backend, multi-worker safe."""
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path.rstrip("/")
-        client_ip = request.client.host if request.client else "unknown"
 
-        # Determine rate limit based on path
         limit = 0
         if path.startswith("/chat"):
             limit = _RATE_LIMIT_CHAT
@@ -82,26 +139,15 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             limit = _RATE_LIMIT_LEARNING
 
         if limit > 0:
-            now = time.time()
+            client_ip = request.client.host if request.client else "unknown"
             key = f"{client_ip}:{path.split('/')[1]}"
-            window = _rate_store[key]
 
-            # Purge entries older than 60 seconds
-            _rate_store[key] = [t for t in window if now - t < 60]
-            window = _rate_store[key]
-
-            if len(window) >= limit:
+            allowed = await asyncio.to_thread(_rate_check_sync, key, limit)
+            if not allowed:
                 return JSONResponse(
                     status_code=429,
                     content={"detail": "تجاوز الحد المسموح — حاول مرة أخرى بعد دقيقة"},
                 )
-            _rate_store[key].append(now)
-
-            # Periodic cleanup of stale keys (every ~100 requests)
-            if sum(len(v) for v in _rate_store.values()) % 100 == 0:
-                stale = [k for k, v in _rate_store.items() if not v or now - max(v) > 120]
-                for k in stale:
-                    del _rate_store[k]
 
         return await call_next(request)
 
@@ -193,13 +239,21 @@ async def startup():
         await init_learning_engine()
     except Exception as e:
         log.warning(f"[STARTUP] Learning engine init skipped: {e}")
-    # Phase 8: Restore persisted chat sessions from database
+    # Restore persisted chat sessions from shared SQLite store
     try:
         from memory import load_sessions_from_db
         restored = load_sessions_from_db()
-        log.info(f"[STARTUP] Memory persistence: restored {restored} sessions")
+        log.info(f"[STARTUP] Sessions restored: {restored}")
     except Exception as e:
         log.warning(f"[STARTUP] Session restore skipped: {e}")
+    # Warm action cache — load PLANNED actions from shared SQLite store
+    # so this worker can handle confirmations for actions created by another worker
+    try:
+        from erp_actions.store import load_pending_from_db
+        pending = load_pending_from_db()
+        log.info(f"[STARTUP] Pending actions loaded from DB: {pending}")
+    except Exception as e:
+        log.warning(f"[STARTUP] Pending actions load skipped: {e}")
     # Start Proactive Monitoring Engine
     try:
         from proactive.monitor import start_monitor

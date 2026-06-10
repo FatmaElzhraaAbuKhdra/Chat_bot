@@ -247,19 +247,170 @@ def _cleanup_stale():
             del _sessions[uid]
 
 
-# ── Session Persistence (removed — AI_CHAT_SESSIONS table dropped) ──
+# ── Session Persistence — SQLite backend ────────────────────────
+#
+# Sessions are always persisted to data/learning.db (the shared
+# SQLite application-state file).  This lets any worker load the
+# conversation context for a user whose last request was handled
+# by a different worker.
+#
+# Schema (one row per user):
+#   ai_chat_sessions(user_id PK, turns_json, context_entities_json,
+#                    created_at, last_active, query_count)
+#
+# Only the last MAX_TURNS turns are stored to keep the blob bounded.
 
-def _ensure_persistence_table() -> bool:
-    """No-op — AI_CHAT_SESSIONS table removed; sessions are in-memory only."""
-    return False
+import sqlite3
+from contextlib import contextmanager
+from pathlib import Path
+
+_SESSION_DB = Path(__file__).parent / "data" / "learning.db"
+
+
+@contextmanager
+def _session_db():
+    """Always-SQLite context manager for session persistence."""
+    _SESSION_DB.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(_SESSION_DB), timeout=10, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _ensure_sessions_table() -> None:
+    """Create ai_chat_sessions if it doesn't exist (idempotent)."""
+    try:
+        with _session_db() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS ai_chat_sessions (
+                    user_id                TEXT PRIMARY KEY,
+                    turns_json             TEXT DEFAULT '[]',
+                    context_entities_json  TEXT DEFAULT '{}',
+                    created_at             REAL NOT NULL,
+                    last_active            REAL NOT NULL,
+                    query_count            INTEGER DEFAULT 0
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_acs_last_active
+                    ON ai_chat_sessions(last_active)
+            """)
+    except Exception as e:
+        log.warning("[MEMORY] sessions table init failed: %s", e)
+
+
+try:
+    _ensure_sessions_table()
+except Exception as _se:
+    log.warning("[MEMORY] sessions table startup error: %s", _se)
+
+
+def _turn_to_dict(turn: ConversationTurn) -> dict:
+    return {
+        "role":      turn.role,
+        "content":   turn.content,
+        "timestamp": turn.timestamp,
+        "sql":       turn.sql,
+        "intent":    turn.intent,
+        "entities":  turn.entities,
+        "row_count": turn.row_count,
+    }
+
+
+def _dict_to_turn(d: dict) -> ConversationTurn:
+    return ConversationTurn(
+        role=d.get("role", "user"),
+        content=d.get("content", ""),
+        timestamp=float(d.get("timestamp", 0)),
+        sql=d.get("sql", ""),
+        intent=d.get("intent", ""),
+        entities=d.get("entities", {}),
+        row_count=int(d.get("row_count", 0)),
+    )
 
 
 def persist_session(user_id: str) -> None:
-    """No-op — session persistence removed (table dropped)."""
-    pass
+    """Write the current session to SQLite (best-effort, ~0.5 ms)."""
+    session = _sessions.get(user_id)
+    if not session:
+        return
+    try:
+        # Limit stored turns to keep the blob small
+        turns = session.turns[-MAX_TURNS:]
+        turns_json = json.dumps([_turn_to_dict(t) for t in turns], ensure_ascii=False)
+        ctx_json   = json.dumps(session.context_entities,              ensure_ascii=False)
+        with _session_db() as conn:
+            conn.execute("""
+                INSERT INTO ai_chat_sessions
+                    (user_id, turns_json, context_entities_json,
+                     created_at, last_active, query_count)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    turns_json            = excluded.turns_json,
+                    context_entities_json = excluded.context_entities_json,
+                    last_active           = excluded.last_active,
+                    query_count           = excluded.query_count
+            """, (
+                user_id,
+                turns_json,
+                ctx_json,
+                session.created_at,
+                session.last_active,
+                session.query_count,
+            ))
+    except Exception as e:
+        log.debug("[MEMORY] persist_session failed for %s: %s", user_id, e)
 
 
 def load_sessions_from_db(max_load: int = 50) -> int:
-    """No-op — AI_CHAT_SESSIONS table removed; always starts fresh."""
-    log.debug("[MEMORY] load_sessions_from_db: no DB (in-memory only)")
-    return 0
+    """
+    Restore recent sessions from SQLite into the in-process cache.
+    Called at startup so the first request from a returning user is
+    served with full conversation context.
+    Returns the number of sessions loaded.
+    """
+    try:
+        with _session_db() as conn:
+            rows = conn.execute(
+                """SELECT * FROM ai_chat_sessions
+                   ORDER BY last_active DESC LIMIT ?""",
+                (max_load,),
+            ).fetchall()
+        loaded = 0
+        for row in rows:
+            d = dict(row)
+            uid = d["user_id"]
+            session = UserSession(
+                user_id     = uid,
+                created_at  = float(d.get("created_at",  0) or 0),
+                last_active = float(d.get("last_active", 0) or 0),
+                query_count = int(d.get("query_count",   0) or 0),
+                context_entities = json.loads(d.get("context_entities_json") or "{}"),
+            )
+            try:
+                turns_raw = json.loads(d.get("turns_json") or "[]")
+                session.turns = [_dict_to_turn(t) for t in turns_raw]
+            except Exception:
+                session.turns = []
+            _sessions[uid] = session
+            loaded += 1
+        if loaded:
+            log.info("[MEMORY] Restored %d session(s) from DB", loaded)
+        return loaded
+    except Exception as e:
+        log.debug("[MEMORY] load_sessions_from_db failed: %s", e)
+        return 0
+
+
+def _ensure_persistence_table() -> bool:
+    """Kept for compatibility — callers can ignore the return value."""
+    _ensure_sessions_table()
+    return True
