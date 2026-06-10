@@ -42,11 +42,12 @@ class CacheEntry:
 
 def _make_key(question: str, company_code: str = "1", fiscal_year: str = "2024",
               session_ctx: str = "", user_role: str = "") -> str:
-    """Generate cache key from question + context + session state + user role.
+    """Generate cache key from question + context + session state + permission fingerprint.
 
-    user_role is included so that users with different permission levels never
-    share a cache entry — a viewer cannot receive a cached admin response that
-    exposes masked columns or restricted data.
+    user_role is the caller-supplied permission fingerprint string. The pipeline
+    passes "role:domain1,domain2:branch1,branch2" so that two users who share
+    the same role-string but have different domain or branch assignments never
+    share a cache entry and cannot receive each other's data.
 
     session_ctx carries session-dependent values (e.g. txn_context INVTYPE) so
     that the same question with different session states gets different entries.

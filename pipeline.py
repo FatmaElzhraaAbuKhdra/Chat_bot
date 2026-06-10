@@ -438,12 +438,20 @@ async def process_question(
             )
 
     # ── Response cache check (AFTER company validation) ──
-    # user_role is included in the cache key so users with different permission levels
-    # never share a cache entry (a viewer cannot receive a cached admin response that
-    # exposes masked columns / restricted data).
-    # session_ctx encodes INVTYPE context so the same question in different sessions
-    # gets distinct entries.
+    # _perm_fp is a permission fingerprint included in the cache key so two users
+    # who share the same role-string but have different domain or branch assignments
+    # never receive each other's cached response (e.g. two "manager" users assigned
+    # to different branches would see different data — they need separate entries).
+    # Format: "role:domain1,domain2:branch1,branch2"
     _user_role = _user_perms.role if _user_perms else "viewer"
+    if _user_perms:
+        _domains  = ",".join(sorted(_user_perms.allowed_domains or []))
+        _branches = ",".join(sorted(
+            b for b in (_user_perms.allowed_branches or []) if b != "*"
+        ))
+        _perm_fp = f"{_user_role}:{_domains}:{_branches}"
+    else:
+        _perm_fp = _user_role   # fallback: "viewer" (no extra info)
     _session_ctx = ""
     try:
         from learning.conversation_bi import get_context as _bi_get_ctx
@@ -457,7 +465,7 @@ async def process_question(
         import response_cache
         cached = response_cache.get(
             question, company_code, fiscal_year,
-            session_ctx=_session_ctx, user_role=_user_role,
+            session_ctx=_session_ctx, user_role=_perm_fp,
         )
         if cached:
             return PipelineResult(
@@ -755,7 +763,7 @@ async def process_question(
                 insights=result.insights,
                 template_used=result.template_used,
                 session_ctx=_session_ctx,
-                user_role=_user_role,   # role-scoped key prevents cross-permission leaks
+                user_role=_perm_fp,     # full perm fingerprint (role:domains:branches)
             )
         except Exception:
             pass
