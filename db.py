@@ -20,6 +20,16 @@ _pool = None
 _read_pool = None
 _READ_DB_CONFIGURED = False  # True only when a dedicated read user exists
 
+# ── DML pool (erp_actions executor INSERT/UPDATE/DELETE) ─────────
+# Uses DB_DML_USER / DB_DML_PASS when configured.
+# Those credentials should have only:
+#   INSERT, UPDATE on CUST / ITEMS / PAYED / AI_ACTION_REQUESTS
+#   SELECT on CUST / ITEMS / PAYED  (fallback MAX(ID))
+#   SELECT on CUST_SEQ / ITEMS_SEQ / PAYED_SEQ  (NEXTVAL)
+# If absent, falls back to _pool (DB_USER) with WARNING.
+_dml_pool = None
+_DML_DB_CONFIGURED = False
+
 
 async def get_pool():
     global _pool
@@ -69,6 +79,47 @@ async def get_read_pool():
         _READ_DB_CONFIGURED = False
 
     return _read_pool
+
+
+async def get_dml_pool():
+    """Return the DML-capable connection pool used by erp_actions executor.
+
+    Priority:
+      1. DB_DML_USER / DB_DML_PASS set → dedicated Oracle user with minimal
+         INSERT/UPDATE grants only (CUST, ITEMS, PAYED, AI_ACTION_REQUESTS).
+         Cannot SELECT from chat tables — DML and SELECT are fully isolated.
+      2. Not set → shares the main pool (DB_USER) + logs WARNING.
+
+    Run scripts/gen_oracle_grants.py to generate the Oracle SQL that creates
+    this user with the correct minimum-privilege grants.
+    """
+    global _dml_pool, _DML_DB_CONFIGURED
+    if _dml_pool is not None:
+        return _dml_pool
+
+    dml_user = os.getenv("DB_DML_USER", "").strip()
+    dml_pass = os.getenv("DB_DML_PASS", "").strip()
+
+    if dml_user and dml_pass:
+        _dml_pool = oracledb.create_pool(
+            user=dml_user,
+            password=dml_pass,
+            dsn=f"{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_SID')}",
+            min=1, max=5, increment=1   # smaller pool — actions are rare events
+        )
+        _DML_DB_CONFIGURED = True
+        log.info("[DB] DML pool created (DB_DML_USER=%s)", dml_user)
+    else:
+        log.warning(
+            "[DB] DB_DML_USER not configured — action executor uses the main pool. "
+            "Run scripts/gen_oracle_grants.py and set DB_DML_USER / DB_DML_PASS in .env "
+            "to isolate DML privileges from the application pool."
+        )
+        await get_pool()
+        _dml_pool = _pool
+        _DML_DB_CONFIGURED = False
+
+    return _dml_pool
 
 
 def _clean_sql(sql: str) -> str:

@@ -262,13 +262,15 @@ def _get_id_column(table: str) -> str:
 async def _execute_dml(sql: str, params: dict) -> int:
     """
     Execute a DML statement against Oracle.
-    Uses the shared connection pool from db.py.
+    Uses the dedicated DML pool (DB_DML_USER) when configured — that user has
+    only INSERT/UPDATE on action tables and cannot SELECT from chat tables.
+    Falls back to the main pool (DB_USER) when DB_DML_USER is not set.
     Returns the number of affected rows.
     """
     import asyncio
-    from db import get_pool
+    from db import get_dml_pool
 
-    pool = await get_pool()
+    pool = await get_dml_pool()
 
     def _run():
         conn = pool.acquire()
