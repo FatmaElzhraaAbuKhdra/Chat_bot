@@ -148,29 +148,100 @@ def _get_comment_words() -> set[str]:
     return _comment_words
 
 
-def _question_has_comment_word(question: str) -> bool:
-    """True if any token of the question appears in the schema COMMENTS, after Arabic
-    normalization. Fail-open: on any internal error returns True so a real question is
-    never wrongly blocked.
+def _char_ngrams(text: str, n: int = 3) -> "Counter":
+    """Character n-gram vector — represents a word as a bag of char trigrams.
 
-    Also handles concatenated Arabic (e.g. "سدادرقم" contains "سداد") by doing a
-    substring scan when word-level matching fails — catches common typing where users
-    omit spaces between domain noun + رقم/كود/تاريخ.
+    Example: "سداد" → {"سدا":1, "داد":1}
+    Two words with overlapping trigrams → high cosine similarity.
+    This is the same mathematical idea as word vectors but computed on
+    characters, so it handles misspellings, concatenation, and Arabic
+    morphological variation without any model download.
+    """
+    from collections import Counter
+    return Counter(text[i:i + n] for i in range(max(0, len(text) - n + 1)))
+
+
+def _cosine_sim(v1: "Counter", v2: "Counter") -> float:
+    """Cosine similarity between two n-gram frequency vectors (0.0 – 1.0)."""
+    shared = set(v1) & set(v2)
+    num    = sum(v1[x] * v2[x] for x in shared)
+    denom  = (sum(x ** 2 for x in v1.values()) *
+              sum(x ** 2 for x in v2.values())) ** 0.5
+    return num / denom if denom else 0.0
+
+
+# Pre-built comment-word n-gram cache (rebuilt on comment file change)
+_cw_ngrams_cache: "dict | None" = None
+_cw_ngrams_mtime: float = -1.0
+
+
+def _get_cw_ngrams() -> "dict[str, Counter]":
+    """Return {word: trigram_vector} for every word in the comment vocabulary.
+    Rebuilt lazily when the comment file changes (same hot-reload as _comment_words).
+    """
+    global _cw_ngrams_cache, _cw_ngrams_mtime
+    import schema_loader as _sl
+    if _cw_ngrams_cache is None or _sl._comments_mtime != _cw_ngrams_mtime:
+        cw = _get_comment_words()
+        _cw_ngrams_cache = {w: _char_ngrams(w) for w in cw if len(w) >= 3}
+        _cw_ngrams_mtime = _sl._comments_mtime
+    return _cw_ngrams_cache
+
+
+def _question_has_comment_word(question: str) -> bool:
+    """True if the question shares domain vocabulary with the schema COMMENTS.
+
+    Three-tier matching — each tier is a superset of the previous:
+
+    Tier 1 — Exact word match (fastest):
+        Normalized question token ∈ comment vocabulary.
+        "فواتير" → "فاتوره" (via _BROKEN_PLURALS) → found in MAIN_INV comment ✓
+
+    Tier 2 — Substring match (concatenated words):
+        Comment word is a substring of the question token.
+        "سدادرقم" contains "سداد" → found ✓
+
+    Tier 3 — Vector similarity (character n-gram cosine):
+        Question token trigrams vs. comment word trigrams.
+        "سدادرقم" shares {سدا, داد} with "سداد" → cosine ≥ 0.75 → found ✓
+        Also catches: typos, dialectal spelling, partial matches.
+
+    Fail-open: any exception → True (never block a real query on error).
     """
     try:
         from schema_loader import _normalize_concept
         cw = _get_comment_words()
-        # 1. Word-level match (fast path)
-        for w in re.findall(r'[؀-ۿA-Za-z]+', question or ''):
+        q_words = re.findall(r'[؀-ۿA-Za-z]+', question or '')
+
+        # ── Tier 1: exact word match ──────────────────────────────────
+        for w in q_words:
             if _normalize_concept(w) in cw:
                 return True
-        # 2. Substring match — handles "سدادرقم" containing "سداد"
-        #    Only Arabic chars, min word length 4 to avoid noise.
+
+        # ── Tier 2: substring (handles "سدادرقم" → contains "سداد") ──
         q_arabic = re.sub(r'[^؀-ۿ]', '', question or '')
         q_norm   = _normalize_concept(q_arabic)
         for cword in cw:
             if len(cword) >= 4 and cword in q_norm:
                 return True
+
+        # ── Tier 3: character n-gram vector similarity ────────────────
+        # Compute cosine similarity between each question token and every
+        # comment word.  Threshold 0.75 accepts morphological variants and
+        # common misspellings while rejecting completely unrelated words.
+        cw_ngrams = _get_cw_ngrams()
+        for w in q_words:
+            n_w = _normalize_concept(w)
+            if len(n_w) < 3:
+                continue
+            v_q = _char_ngrams(n_w)
+            for cword, v_c in cw_ngrams.items():
+                if abs(len(n_w) - len(cword)) > 4:   # quick length pre-filter
+                    continue
+                if _cosine_sim(v_q, v_c) >= 0.75:
+                    log.debug("[GATE] vector match: %r ~ %r", n_w, cword)
+                    return True
+
         return False
     except Exception:
         return True
@@ -1015,17 +1086,31 @@ async def _handle_data_query(
 
     # ── CHANGE 2: gate the no-template fallback on COMMENT vocabulary ──
     # No usable template was produced. Before handing the question to the LLM,
-    # require that it shares at least one word with the schema comments. If it
-    # does not (and it is not a contextual follow-up that relies on prior turns),
-    # there is no comment-grounded basis to answer → return a clear message
-    # instead of letting the LLM answer from outside the comments.
+    # require that it shares at least one word with the schema comments.
+    #
+    # Exception: if the intent classifier is confident this IS an ERP question
+    # (data_query / aggregation / detail_lookup / comparison) we bypass the gate
+    # and let Groq handle it directly.  The classifier is smarter than a word-
+    # matching gate for ambiguous or colloquial phrasing.
+    _ERP_INTENTS = frozenset({"data_query", "aggregation", "detail_lookup", "comparison"})
+    _intent_is_erp = (
+        intent is not None
+        and intent.category in _ERP_INTENTS
+        and intent.confidence >= 0.70
+    )
+
     if not _needs_history_context(intent, history) \
-            and not _question_has_comment_word(question):
+            and not _question_has_comment_word(question) \
+            and not _intent_is_erp:
         is_arabic = any('؀' <= c <= 'ۿ' for c in question)
         msg = ("لم أجد تعريفاً لهذا في تعليقات قاعدة البيانات" if is_arabic
                else "Term not found in database comments.")
         log.info("[PIPELINE] no comment-vocabulary match -> not-found message (no LLM)")
         return PipelineResult(answer=msg, method="error", intent=intent)
+
+    if _intent_is_erp and not _question_has_comment_word(question):
+        log.info("[PIPELINE] gate bypassed — ERP intent=%s conf=%.2f → Groq",
+                 intent.category, intent.confidence)
 
     # ── Fallback: controlled LLM SQL generation (comments only) ──
     result = await _execute_llm_controlled(
