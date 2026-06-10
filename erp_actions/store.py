@@ -95,6 +95,24 @@ def get_action_history(
         return results[:limit]
 
 
+def get_last_undoable_action(user_id: str) -> Optional[ActionPlan]:
+    """Return the most recent completed, undoable action for a user.
+
+    An action is undoable when executor._build_undo_info() populated its
+    undo_sql field after execution.  Already-rolled-back actions are excluded.
+    """
+    with _lock:
+        candidates = [
+            p for p in _actions.values()
+            if p.user_id == user_id
+            and p.status == ActionStatus.COMPLETED.value
+            and getattr(p, "undo_sql", "")   # non-empty undo SQL
+        ]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda x: x.completed_at or 0)
+
+
 def get_action_stats() -> dict:
     """Aggregate action statistics."""
     with _lock:

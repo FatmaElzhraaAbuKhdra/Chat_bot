@@ -14,6 +14,55 @@ from .registry import get_action_def, ACTIONS
 
 log = logging.getLogger("erp_actions.planner")
 
+# ── Undo intent ───────────────────────────────────────────────────
+_UNDO_PATTERN = re.compile(
+    r"^(?:تراجع|تراجع\s+عن|undo|rollback"
+    r"|عكس\s+(?:آخر|اخر)"
+    r"|الغ\s+(?:آخر|اخر)\s+(?:إجراء|عملية|تغيير))\s*$",
+    re.IGNORECASE,
+)
+
+# ── Queries used to fetch current DB values before showing confirm card ──
+# action_type -> (SELECT sql, [required param keys])
+_CURRENT_VALUE_QUERIES: dict[str, tuple[str, list[str]]] = {
+    "update_item_price": (
+        "SELECT ITEMNAME, SELLPRICE, TOTAL_BUYPRICE FROM ITEMS "
+        "WHERE ITEMID = :itemid AND COMPANY_CODE = :company_code "
+        "FETCH FIRST 1 ROWS ONLY",
+        ["itemid"],
+    ),
+    "update_item": (
+        "SELECT ITEMNAME, SELLPRICE, TOTAL_BUYPRICE FROM ITEMS "
+        "WHERE ITEMID = :itemid AND COMPANY_CODE = :company_code "
+        "FETCH FIRST 1 ROWS ONLY",
+        ["itemid"],
+    ),
+    "update_customer": (
+        "SELECT CUST_NAME, MOB, TAX_NO, CREDIT_LIMIT, ACTIVE FROM CUST "
+        "WHERE CUSTID = :custid AND CUST_TYPE = 0 AND COMPANY_CODE = :company_code "
+        "FETCH FIRST 1 ROWS ONLY",
+        ["custid"],
+    ),
+    "update_supplier": (
+        "SELECT CUST_NAME, MOB, TAX_NO, CREDIT_LIMIT, ACTIVE FROM CUST "
+        "WHERE CUSTID = :custid AND CUST_TYPE = 1 AND COMPANY_CODE = :company_code "
+        "FETCH FIRST 1 ROWS ONLY",
+        ["custid"],
+    ),
+    "deactivate_customer": (
+        "SELECT CUST_NAME, ACTIVE FROM CUST "
+        "WHERE CUSTID = :custid AND COMPANY_CODE = :company_code "
+        "FETCH FIRST 1 ROWS ONLY",
+        ["custid"],
+    ),
+    "deactivate_supplier": (
+        "SELECT CUST_NAME, ACTIVE FROM CUST "
+        "WHERE CUSTID = :custid AND CUST_TYPE = 1 AND COMPANY_CODE = :company_code "
+        "FETCH FIRST 1 ROWS ONLY",
+        ["custid"],
+    ),
+}
+
 # ══════════════════════════════════════════════════════════════════
 # Action Intent Detection
 # ══════════════════════════════════════════════════════════════════
@@ -244,6 +293,42 @@ def plan_action(
     log.info(f"[PLANNER] Plan created: {plan.id} type={action_type} "
              f"params={list(params.keys())} missing={missing}")
     return plan
+
+
+def detect_undo_intent(question: str) -> bool:
+    """True if the user is requesting a rollback of their last action."""
+    return bool(_UNDO_PATTERN.match(question.strip()))
+
+
+async def enrich_plan_with_current_values(plan: ActionPlan, company_code: str) -> None:
+    """Fetch current DB values for UPDATE/DEACTIVATE plans and store in plan.current_values.
+
+    Called after plan_action() and before save_action() so that the confirmation
+    card can display "current value ⟶ new value" instead of just the new value.
+
+    Silently no-ops when:
+    - the action type has no query defined (INSERT / payment actions)
+    - the required ID param is missing from the plan (regex missed it)
+    - the DB is unreachable (non-blocking — card still works without enrichment)
+    """
+    query_info = _CURRENT_VALUE_QUERIES.get(plan.action_type)
+    if not query_info:
+        return
+    sql, required_keys = query_info
+    params: dict = {**plan.parameters, "company_code": company_code}
+    for key in required_keys:
+        if key not in params:
+            log.debug("[PLANNER] enrich_plan: missing %s for %s — skipping", key, plan.action_type)
+            return
+    try:
+        from db import execute_read_query
+        rows = await execute_read_query(sql, params)
+        if rows:
+            plan.current_values = {k.upper(): v for k, v in rows[0].items()}
+            log.info("[PLANNER] current_values fetched for %s: %s",
+                     plan.action_type, list(plan.current_values.keys()))
+    except Exception as exc:
+        log.warning("[PLANNER] enrich_plan DB fetch failed (%s): %s", plan.action_type, exc)
 
 
 def generate_missing_params_prompt(plan: ActionPlan) -> str:

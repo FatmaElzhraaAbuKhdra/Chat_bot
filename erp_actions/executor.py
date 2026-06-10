@@ -47,7 +47,11 @@ async def confirm_and_execute(action_id: str, user_id: str) -> ActionPlan:
         detail="User confirmed action",
     ))
 
-    # Execute
+    # Rollback plans: execute the stored undo_sql on the original action
+    if plan.action_type == "rollback":
+        return await _execute_rollback_plan(plan, user_id)
+
+    # Normal execution
     return await execute_action(plan)
 
 
@@ -106,6 +110,11 @@ async def execute_action(plan: ActionPlan) -> ActionPlan:
         plan.status = ActionStatus.COMPLETED.value
         plan.affected_rows = affected
         plan.completed_at = time.time()
+        # Store undo info while current_values (pre-exec snapshot) is still present
+        _undo_sql, _undo_params, _undo_snap = _build_undo_info(plan)
+        plan.undo_sql      = _undo_sql
+        plan.undo_params   = _undo_params
+        plan.undo_snapshot = _undo_snap
         plan.result_message = _build_success_message(plan, affected)
         action_store.save_action(plan)
         action_store.add_audit(AuditEntry(
@@ -114,11 +123,12 @@ async def execute_action(plan: ActionPlan) -> ActionPlan:
             action_type=plan.action_type,
             status_from=ActionStatus.EXECUTING.value,
             status_to=ActionStatus.COMPLETED.value,
-            detail=f"Success: {affected} rows affected",
+            detail=f"Success: {affected} rows affected | undo={'yes' if _undo_sql else 'no'}",
             sql_executed=sql[:500],
         ))
 
-        log.info(f"[EXECUTOR] Action {plan.id} completed: {affected} rows")
+        log.info(f"[EXECUTOR] Action {plan.id} completed: {affected} rows | "
+                 f"undo={'available' if _undo_sql else 'n/a'}")
 
     except Exception as e:
         plan.status = ActionStatus.FAILED.value
@@ -315,6 +325,162 @@ def _get_table_for_id(id_col: str) -> str:
         "itemid": "ITEMS",
         "payed_id": "PAYED",
     }.get(id_col, "DUAL")
+
+
+def _build_undo_info(plan: ActionPlan) -> tuple[str, dict, dict]:
+    """Return (undo_sql, undo_params, undo_snapshot) for a completed plan.
+
+    Uses plan.current_values (the DB state captured BEFORE the DML ran) as the
+    snapshot to restore.  Returns ("", {}, {}) for non-reversible action types
+    (payments, collections, workflow approvals) — those are immutable records.
+    """
+    at  = plan.action_type
+    p   = plan.parameters
+    cv  = plan.current_values   # pre-execution DB values
+    co  = plan.company_code
+
+    if at == "update_item_price":
+        prev = cv.get("SELLPRICE")
+        if prev is None:
+            return "", {}, {}
+        return (
+            "UPDATE ITEMS SET SELLPRICE = :prev_sellprice "
+            "WHERE ITEMID = :itemid AND COMPANY_CODE = :company_code",
+            {"prev_sellprice": prev, "itemid": p.get("itemid"), "company_code": co},
+            {"SELLPRICE": prev, "ITEMNAME": cv.get("ITEMNAME"), "ITEMID": p.get("itemid")},
+        )
+
+    elif at == "update_item":
+        if not cv:
+            return "", {}, {}
+        _col_map = {
+            "itemname": "ITEMNAME", "sellprice": "SELLPRICE",
+            "total_buyprice": "TOTAL_BUYPRICE",
+        }
+        set_cls, undo_p = [], {"itemid": p.get("itemid"), "company_code": co}
+        for param, col in _col_map.items():
+            if param in p and col in cv:
+                set_cls.append(f"{col} = :prev_{param}")
+                undo_p[f"prev_{param}"] = cv[col]
+        if not set_cls:
+            return "", {}, {}
+        return (
+            f"UPDATE ITEMS SET {', '.join(set_cls)} "
+            "WHERE ITEMID = :itemid AND COMPANY_CODE = :company_code",
+            undo_p, cv,
+        )
+
+    elif at in ("update_customer", "update_supplier"):
+        if not cv:
+            return "", {}, {}
+        _col_map = {
+            "cust_name": "CUST_NAME", "mob": "MOB",
+            "credit_limit": "CREDIT_LIMIT", "tax_no": "TAX_NO",
+        }
+        set_cls, undo_p = [], {"custid": p.get("custid"), "company_code": co}
+        for param, col in _col_map.items():
+            if param in p and col in cv:
+                set_cls.append(f"{col} = :prev_{param}")
+                undo_p[f"prev_{param}"] = cv[col]
+        if not set_cls:
+            return "", {}, {}
+        return (
+            f"UPDATE CUST SET {', '.join(set_cls)} "
+            "WHERE CUSTID = :custid AND COMPANY_CODE = :company_code",
+            undo_p, cv,
+        )
+
+    elif at in ("deactivate_customer", "deactivate_supplier"):
+        # Reactivate the record (set ACTIVE back to '1')
+        return (
+            "UPDATE CUST SET ACTIVE = '1' "
+            "WHERE CUSTID = :custid AND COMPANY_CODE = :company_code",
+            {"custid": p.get("custid"), "company_code": co},
+            cv,
+        )
+
+    elif at in ("create_customer", "create_supplier"):
+        # Soft-delete the newly created record (deactivate instead of DELETE)
+        new_id = p.get("custid")
+        if not new_id:
+            return "", {}, {}
+        return (
+            "UPDATE CUST SET ACTIVE = '0' "
+            "WHERE CUSTID = :custid AND COMPANY_CODE = :company_code",
+            {"custid": new_id, "company_code": co},
+            {"CUSTID": new_id, "CUST_NAME": p.get("cust_name")},
+        )
+
+    elif at == "create_item":
+        new_id = p.get("itemid")
+        if not new_id:
+            return "", {}, {}
+        return (
+            "UPDATE ITEMS SET ACTIVE = '0' "
+            "WHERE ITEMID = :itemid AND COMPANY_CODE = :company_code",
+            {"itemid": new_id, "company_code": co},
+            {"ITEMID": new_id, "ITEMNAME": p.get("itemname")},
+        )
+
+    # create_payment, create_collection, approve_request, reject_request:
+    # financial / immutable records — no undo
+    return "", {}, {}
+
+
+async def _execute_rollback_plan(plan: ActionPlan, user_id: str) -> ActionPlan:
+    """Execute a rollback plan: run undo_sql and mark the original as ROLLED_BACK."""
+    original_id = plan.parameters.get("original_action_id", "")
+    original = action_store.get_action(original_id) if original_id else None
+
+    try:
+        if not plan.undo_sql:
+            raise ValueError("لا يوجد SQL للتراجع — هذا الإجراء لا يمكن عكسه")
+
+        plan.status     = ActionStatus.EXECUTING.value
+        plan.executed_at = time.time()
+        action_store.save_action(plan)
+
+        affected = await _execute_dml(plan.undo_sql, plan.undo_params or {})
+
+        plan.status      = ActionStatus.COMPLETED.value
+        plan.affected_rows = affected
+        plan.completed_at  = time.time()
+        orig_desc = original.description_ar if original else "الإجراء"
+        plan.result_message = f"✅ تم التراجع عن: {orig_desc}"
+        action_store.save_action(plan)
+        action_store.add_audit(AuditEntry(
+            action_id=plan.id,
+            user_id=user_id,
+            action_type="rollback",
+            status_from=ActionStatus.CONFIRMED.value,
+            status_to=ActionStatus.COMPLETED.value,
+            detail=f"Rollback executed: {affected} rows | original={original_id}",
+            sql_executed=plan.undo_sql[:500],
+        ))
+
+        # Mark the original action as ROLLED_BACK
+        if original and original.status == ActionStatus.COMPLETED.value:
+            original.status = ActionStatus.ROLLED_BACK.value
+            action_store.save_action(original)
+            action_store.add_audit(AuditEntry(
+                action_id=original.id,
+                user_id=user_id,
+                action_type=original.action_type,
+                status_from=ActionStatus.COMPLETED.value,
+                status_to=ActionStatus.ROLLED_BACK.value,
+                detail=f"Rolled back by plan {plan.id}",
+            ))
+
+        log.info("[EXECUTOR] Rollback %s completed: %d rows | original=%s",
+                 plan.id, affected, original_id)
+
+    except Exception as exc:
+        plan.status        = ActionStatus.FAILED.value
+        plan.error_message = str(exc)[:500]
+        action_store.save_action(plan)
+        log.error("[EXECUTOR] Rollback %s failed: %s", plan.id, exc)
+
+    return plan
 
 
 def _build_success_message(plan: ActionPlan, affected: int) -> str:

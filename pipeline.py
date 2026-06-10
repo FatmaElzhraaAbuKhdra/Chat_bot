@@ -40,9 +40,12 @@ from copilot import (
 )
 
 # ERP Operator imports
-from erp_actions.planner import detect_action_intent, is_confirmation, is_rejection, plan_action
+from erp_actions.planner import (
+    detect_action_intent, is_confirmation, is_rejection, plan_action,
+    detect_undo_intent, enrich_plan_with_current_values,
+)
 from erp_actions.executor import confirm_and_execute, reject_action
-from erp_actions.store import get_user_pending, save_action
+from erp_actions.store import get_user_pending, save_action, get_last_undoable_action
 from erp_actions.workflows import is_workflow_query, get_pending_approvals, get_request_status, get_approval_summary
 from erp_actions.apex_nav import detect_navigation_intent, find_pages
 from export_engine import detect_export_intent, ExportRequest, generate_export, ExportFormat
@@ -377,6 +380,104 @@ def _intent_to_query(intent_name: str) -> str:
 
 
 # ══════════════════════════════════════════════════════════════════
+# ERP Action Feature Gate
+# ══════════════════════════════════════════════════════════════════
+
+def _can_execute_actions(user_id: str, user_perms) -> bool:
+    """Three-tier feature gate for ERP write actions.
+
+    ACTIONS_ENABLED env var:
+      "0"     — disabled for everyone (default; safe for dev/staging)
+      "pilot" — admin/manager role AND user_id in ACTIONS_PILOT_USERS list
+      "1"     — admin/manager role (RBAC-gated, no pilot list needed)
+
+    ACTIONS_PILOT_USERS — comma-separated user IDs for pilot mode.
+      If the list is empty when mode="pilot", all admin/manager users qualify.
+    """
+    mode = os.getenv("ACTIONS_ENABLED", "0").strip().lower()
+    if mode == "0":
+        return False
+    # RBAC check: only roles with can_execute_actions=True (admin, manager)
+    if user_perms and not user_perms.can_execute_actions:
+        return False
+    if mode == "pilot":
+        pilot_csv = os.getenv("ACTIONS_PILOT_USERS", "").strip()
+        if pilot_csv:
+            pilot_users = {u.strip() for u in pilot_csv.split(",") if u.strip()}
+            if user_id not in pilot_users:
+                return False
+    return True
+
+
+async def _handle_undo_intent(
+    user_id: str, company_code: str, fiscal_year: str, start: float,
+) -> Optional[PipelineResult]:
+    """Show a rollback confirmation card for the user's last undoable action.
+
+    Finds the last completed action that has a stored undo_sql, creates a
+    rollback ActionPlan (stored as pending), and returns a PipelineResult with
+    a human-readable before/after snapshot the user can confirm or cancel.
+    Returns None if no undoable action is found.
+    """
+    last = get_last_undoable_action(user_id)
+    if not last:
+        return PipelineResult(
+            answer="لا يوجد إجراء يمكن التراجع عنه حالياً.",
+            method="action",
+            execution_time_ms=int((time.time() - start) * 1000),
+        )
+
+    # Build rollback plan
+    from erp_actions.models import ActionPlan as _AP, ActionStatus as _AS, ActionRisk as _AR
+    rb_plan = _AP(
+        action_type="rollback",
+        status=_AS.PLANNED.value,
+        risk_level=_AR.HIGH.value,
+        user_id=user_id,
+        company_code=company_code,
+        fiscal_year=fiscal_year,
+        description_ar=f"التراجع عن: {last.description_ar}",
+        description_en=f"Rollback: {last.description_en}",
+        parameters={"original_action_id": last.id},
+        undo_sql=last.undo_sql,
+        undo_params=last.undo_params,
+        undo_snapshot=last.undo_snapshot,
+    )
+    save_action(rb_plan)
+
+    # Build snapshot display
+    _SNAP_LABELS = {
+        "SELLPRICE": "سعر البيع", "TOTAL_BUYPRICE": "سعر الشراء",
+        "ITEMNAME": "اسم الصنف",  "CUST_NAME": "اسم العميل/المورد",
+        "MOB": "الموبايل",         "CREDIT_LIMIT": "حد الائتمان",
+        "ACTIVE": "الحالة",
+    }
+    _SKIP = {"CUSTID", "ITEMID", "COMPANY_CODE", "FISCAL_YEAR"}
+    snap_items = [(k, v) for k, v in (last.undo_snapshot or {}).items()
+                  if k.upper() not in _SKIP and v is not None]
+
+    lines = [f"⟲ **التراجع عن**: {last.description_ar}"]
+    if snap_items:
+        lines.append("\n**سيُعاد الحال إلى:**")
+        for col, val in snap_items:
+            lbl = _SNAP_LABELS.get(col.upper(), col)
+            lines.append(f"- {lbl}: **{val}**")
+    lines += ["", "⚠️ اكتب *نعم* للتراجع أو *لا* للإلغاء."]
+
+    return PipelineResult(
+        answer="\n".join(lines),
+        method="action",
+        action_card=rb_plan.confirmation_card(),
+        action_id=rb_plan.id,
+        execution_time_ms=int((time.time() - start) * 1000),
+        suggestions=[
+            {"label": "نعم، تراجع", "query": "نعم", "icon": "alert", "source": "action"},
+            {"label": "لا، إبقاء",  "query": "لا",   "icon": "new",   "source": "action"},
+        ],
+    )
+
+
+# ══════════════════════════════════════════════════════════════════
 # Main Pipeline
 # ══════════════════════════════════════════════════════════════════
 
@@ -488,67 +589,79 @@ async def process_question(
     #          exports, navigation, executive reports
     # ══════════════════════════════════════════════════════════════
 
-    # ── Operator: Confirmation/Rejection of pending action ──
-    pending_action = get_user_pending(user_id)
-    if pending_action:
-        if is_confirmation(question):
-            log.info(f"[PIPELINE] User confirmed action {pending_action.id}")
-            executed = await confirm_and_execute(pending_action.id, user_id)
-            if executed:
+    # ── (ب) Write actions: ACTIONS_ENABLED flag + RBAC role gate ─────────────
+    # Workflow queries (further below) are always enabled — they are read-only.
+    if _can_execute_actions(user_id, _user_perms):
+
+        # (ج) Undo/rollback intent — checked before pending-action confirmation
+        if detect_undo_intent(question):
+            _undo_res = await _handle_undo_intent(user_id, company_code, fiscal_year, start)
+            if _undo_res:
+                return _undo_res
+
+        # ── Operator: Confirmation/Rejection of pending action ──
+        pending_action = get_user_pending(user_id)
+        if pending_action:
+            if is_confirmation(question):
+                log.info(f"[PIPELINE] User confirmed action {pending_action.id}")
+                executed = await confirm_and_execute(pending_action.id, user_id)
+                if executed:
+                    return PipelineResult(
+                        answer=executed.result_message or "✅ تم تنفيذ الإجراء بنجاح.",
+                        method="action",
+                        action_card=executed.result_card(),
+                        action_id=executed.id,
+                        execution_time_ms=int((time.time() - start) * 1000),
+                    )
+                else:
+                    return PipelineResult(
+                        answer="❌ فشل تنفيذ الإجراء. يرجى المحاولة مرة أخرى.",
+                        method="action",
+                        action_id=pending_action.id,
+                        execution_time_ms=int((time.time() - start) * 1000),
+                    )
+            elif is_rejection(question):
+                log.info(f"[PIPELINE] User rejected action {pending_action.id}")
+                await reject_action(pending_action.id, user_id, "رفض المستخدم")
                 return PipelineResult(
-                    answer=executed.result_message or "✅ تم تنفيذ الإجراء بنجاح.",
-                    method="action",
-                    action_card=executed.result_card(),
-                    action_id=executed.id,
-                    execution_time_ms=int((time.time() - start) * 1000),
-                )
-            else:
-                return PipelineResult(
-                    answer="❌ فشل تنفيذ الإجراء. يرجى المحاولة مرة أخرى.",
+                    answer="تم إلغاء الإجراء.",
                     method="action",
                     action_id=pending_action.id,
                     execution_time_ms=int((time.time() - start) * 1000),
                 )
-        elif is_rejection(question):
-            log.info(f"[PIPELINE] User rejected action {pending_action.id}")
-            await reject_action(pending_action.id, user_id, "رفض المستخدم")
-            return PipelineResult(
-                answer="تم إلغاء الإجراء.",
-                method="action",
-                action_id=pending_action.id,
-                execution_time_ms=int((time.time() - start) * 1000),
-            )
 
-    # ── Operator: Action Intent Detection ──
-    action_intent = detect_action_intent(question)
-    if action_intent:
-        action_type, params = action_intent
-        log.info(f"[PIPELINE] Action detected: {action_type} params={params}")
-        try:
-            plan = plan_action(
-                action_type=action_type,
-                params=params,
-                user_id=user_id,
-                company_code=company_code,
-                fiscal_year=fiscal_year,
-            )
-            if plan:
-                save_action(plan)
-                card = plan.confirmation_card()
-                return PipelineResult(
-                    answer=card.get("message", "هل تريد تنفيذ هذا الإجراء؟"),
-                    method="action",
-                    action_card=card,
-                    action_id=plan.id,
-                    execution_time_ms=int((time.time() - start) * 1000),
-                    suggestions=[
-                        {"label": "نعم، نفّذ", "query": "نعم", "icon": "new", "source": "workflow"},
-                        {"label": "لا، إلغاء", "query": "لا", "icon": "alert", "source": "workflow"},
-                    ],
+        # ── Operator: Action Intent Detection ──
+        action_intent = detect_action_intent(question)
+        if action_intent:
+            action_type, params = action_intent
+            log.info(f"[PIPELINE] Action detected: {action_type} params={params}")
+            try:
+                plan = plan_action(
+                    action_type=action_type,
+                    params=params,
+                    user_id=user_id,
+                    company_code=company_code,
+                    fiscal_year=fiscal_year,
                 )
-        except Exception as e:
-            log.warning(f"[PIPELINE] Action planning failed: {e}")
-            # Fall through to standard pipeline — don't silently fail
+                if plan:
+                    # (أ) Fetch current DB values for before/after confirmation card
+                    await enrich_plan_with_current_values(plan, company_code)
+                    save_action(plan)
+                    card = plan.confirmation_card()
+                    return PipelineResult(
+                        answer=card.get("message", "هل تريد تنفيذ هذا الإجراء؟"),
+                        method="action",
+                        action_card=card,
+                        action_id=plan.id,
+                        execution_time_ms=int((time.time() - start) * 1000),
+                        suggestions=[
+                            {"label": "نعم، نفّذ", "query": "نعم", "icon": "new", "source": "workflow"},
+                            {"label": "لا، إلغاء", "query": "لا", "icon": "alert", "source": "workflow"},
+                        ],
+                    )
+            except Exception as e:
+                log.warning(f"[PIPELINE] Action planning failed: {e}")
+                # Fall through to standard pipeline — don't silently fail
 
     # ── Operator: Workflow Queries ──
     workflow_type = is_workflow_query(question)

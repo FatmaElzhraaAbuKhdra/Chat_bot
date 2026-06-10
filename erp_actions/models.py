@@ -128,6 +128,18 @@ class ActionPlan:
     executed_at: float = 0.0
     completed_at: float = 0.0
 
+    # ── Confirmation enrichment (populated by enrich_plan_with_current_values) ──
+    # Current DB values fetched BEFORE the user confirms, so the card can show
+    # "currently 180 → will become 250" instead of only the new value.
+    current_values: dict = field(default_factory=dict)
+
+    # ── Undo / rollback ──────────────────────────────────────────────────────
+    # Populated by executor._build_undo_info() after successful execution.
+    # undo_sql is empty for non-reversible actions (payments, collections).
+    undo_snapshot: dict = field(default_factory=dict)   # values to restore
+    undo_sql: str = ""                                    # compensating SQL
+    undo_params: dict = field(default_factory=dict)       # params for undo SQL
+
     def __post_init__(self):
         if not self.id:
             self.id = uuid.uuid4().hex[:16]
@@ -156,29 +168,107 @@ class ActionPlan:
             "result_message": self.result_message,
             "affected_rows": self.affected_rows,
             "error_message": self.error_message,
-            "created_at": self.created_at,
-            "confirmed_at": self.confirmed_at,
-            "executed_at": self.executed_at,
+            "created_at":     self.created_at,
+            "confirmed_at":   self.confirmed_at,
+            "executed_at":    self.executed_at,
+            "undo_available": bool(self.undo_sql),
+            "undo_snapshot":  self.undo_snapshot,
         }
 
     def confirmation_card(self) -> dict:
-        """Generate an action confirmation card for the frontend."""
-        label_ar, _ = ACTION_LABELS.get(
-            self.action_type, ("إجراء", "Action")
+        """Generate an action confirmation card for the frontend.
+
+        When current_values is populated (via enrich_plan_with_current_values),
+        the card includes a before_after list so the user sees:
+            سعر البيع: 180 ⟶ 250
+        instead of only the new value.  The message field is the full
+        human-readable Arabic text shown in the chat bubble.
+        """
+        label_ar, _ = ACTION_LABELS.get(self.action_type, ("إجراء", "Action"))
+
+        # ── Param → DB-column mapping for before/after comparison ──────────
+        _PARAM_TO_COL: dict[str, str] = {
+            "sellprice":      "SELLPRICE",
+            "total_buyprice": "TOTAL_BUYPRICE",
+            "itemname":       "ITEMNAME",
+            "cust_name":      "CUST_NAME",
+            "mob":            "MOB",
+            "credit_limit":   "CREDIT_LIMIT",
+            "tax_no":         "TAX_NO",
+        }
+        _COL_AR: dict[str, str] = {
+            "SELLPRICE":      "سعر البيع",
+            "TOTAL_BUYPRICE": "سعر الشراء",
+            "ITEMNAME":       "اسم الصنف",
+            "CUST_NAME":      "اسم العميل/المورد",
+            "MOB":            "الموبايل",
+            "CREDIT_LIMIT":   "حد الائتمان",
+            "TAX_NO":         "الرقم الضريبي",
+            "ACTIVE":         "الحالة",
+        }
+
+        before_after: list[dict] = []
+        if self.current_values:
+            for param, col in _PARAM_TO_COL.items():
+                if param in self.parameters and col in self.current_values:
+                    cur = self.current_values[col]
+                    new = self.parameters[param]
+                    if str(cur) != str(new):
+                        before_after.append({
+                            "field":   col,
+                            "label":   _COL_AR.get(col, col),
+                            "current": cur,
+                            "new":     new,
+                        })
+
+        # ── Human-readable confirmation message ─────────────────────────────
+        _record_name = (
+            self.current_values.get("ITEMNAME")
+            or self.current_values.get("CUST_NAME")
+            or ""
         )
-        params_display = []
-        for k, v in self.parameters.items():
-            params_display.append({"key": k, "value": str(v)})
+        _record_id = (
+            str(self.parameters.get("itemid", ""))
+            or str(self.parameters.get("custid", ""))
+        )
+        _name_hint = (
+            f" **{_record_name}**" + (f" (كود: {_record_id})" if _record_id else "")
+            if _record_name else
+            (f" (كود: {_record_id})" if _record_id else "")
+        )
+
+        msg_lines = [f"هل تريد {self.description_ar}?{_name_hint}"]
+        if before_after:
+            msg_lines.append("")
+            for ba in before_after:
+                msg_lines.append(
+                    f"**{ba['label']}**: {ba['current']} ⟶ **{ba['new']}**"
+                )
+        msg_lines += ["", "اكتب *نعم* للتنفيذ أو *لا* للإلغاء."]
+        if self.warnings:
+            msg_lines.append("")
+            for w in self.warnings:
+                msg_lines.append(f"⚠️ {w}")
+
+        # params_display omits fields already shown in before_after
+        _ba_cols = {ba["field"].lower() for ba in before_after}
+        params_display = [
+            {"key": k, "value": str(v)}
+            for k, v in self.parameters.items()
+            if k not in _ba_cols
+        ]
 
         return {
-            "type": "action_confirmation",
-            "action_id": self.id,
-            "action_type": self.action_type,
-            "action_label": label_ar,
-            "risk_level": self.risk_level,
-            "description": self.description_ar,
-            "parameters": params_display,
-            "warnings": self.warnings,
+            "type":             "action_confirmation",
+            "action_id":        self.id,
+            "action_type":      self.action_type,
+            "action_label":     label_ar,
+            "risk_level":       self.risk_level,
+            "description":      self.description_ar,
+            "message":          "\n".join(msg_lines),
+            "parameters":       params_display,
+            "before_after":     before_after,
+            "warnings":         self.warnings,
             "requires_approval": self.requires_approval,
         }
 
