@@ -151,12 +151,25 @@ def _get_comment_words() -> set[str]:
 def _question_has_comment_word(question: str) -> bool:
     """True if any token of the question appears in the schema COMMENTS, after Arabic
     normalization. Fail-open: on any internal error returns True so a real question is
-    never wrongly blocked."""
+    never wrongly blocked.
+
+    Also handles concatenated Arabic (e.g. "سدادرقم" contains "سداد") by doing a
+    substring scan when word-level matching fails — catches common typing where users
+    omit spaces between domain noun + رقم/كود/تاريخ.
+    """
     try:
         from schema_loader import _normalize_concept
         cw = _get_comment_words()
+        # 1. Word-level match (fast path)
         for w in re.findall(r'[؀-ۿA-Za-z]+', question or ''):
             if _normalize_concept(w) in cw:
+                return True
+        # 2. Substring match — handles "سدادرقم" containing "سداد"
+        #    Only Arabic chars, min word length 4 to avoid noise.
+        q_arabic = re.sub(r'[^؀-ۿ]', '', question or '')
+        q_norm   = _normalize_concept(q_arabic)
+        for cword in cw:
+            if len(cword) >= 4 and cword in q_norm:
                 return True
         return False
     except Exception:

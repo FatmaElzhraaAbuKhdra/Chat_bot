@@ -115,6 +115,7 @@ SUB_INTENT_PATTERNS = {
     # is read as a COUNT (all-time) and not mis-scored as a today sales summary.
     "invoice_count_purchase": r"(عدد\s*(ال)?فوات[يی]ر\s*(ال)?(مشتريات|شراء)|كم\s*فاتور[ةه]\s*(مشتريات|شراء)|count\s*(of\s*)?purchase\s*invoices?)",
     "invoice_count":          r"(عدد\s*(ال)?فوات[يی]ر|كم\s*(عدد\s*)?(ال)?فوات[يی]ر|كم\s*فاتور[ةه]|count\s*(of\s*)?invoices?|how\s*many\s*invoices?)",
+    "payment_detail":     r"(سدادا?\s*رقم?\s*\d+|سدادا?\d+|ايصال\s*(سداد\s*)?رقم?\s*\d+|تفاصيل?\s*(ال)?سداد|بيانات?\s*(ال)?سداد|payment\s*(detail|number|no)?\s*\d*)",
     "invoice_detail":     r"(تفاصيل?\s*(الفاتور[ةه]|فاتور[ةه])|بيانات?\s*(الفاتور[ةه]|فاتور[ةه])|invoice\s*detail|فاتور[ةه]\s*(رقم|مبيعات|مشتريات)\s*\d+|فاتور[ةه]\s+\d+)",
     "sales_summary":      r"(إجمالي\s*المبيعات|مبيعات\s*(اليوم|الشهر|السنة)|total\s*sales|sales\s*summary|اجمالي\s*المبيعات)",
     "purchase_summary":   r"(إجمالي\s*المشتريات|مشتريات\s*(اليوم|الشهر|السنة)|total\s*purchase|اجمالي\s*المشتريات)",
