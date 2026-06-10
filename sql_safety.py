@@ -294,7 +294,7 @@ def _strip_line_comments(sql: str) -> str:
     """Remove SQL single-line comments (-- ...) that are outside string literals.
 
     LLMs often append explanatory '-- ملاحظة' comments to generated SQL; these
-    trigger the injection-detection pattern r'--\s*\w' even though they are
+    trigger the injection-detection pattern r'--\\s*\\w' even though they are
     harmless.  Stripping them before the safety checks prevents false positives
     while still blocking real injections (UNION, DML, UTL_, …).
 
