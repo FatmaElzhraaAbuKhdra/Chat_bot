@@ -119,7 +119,7 @@ async def validate_company_access(user_id: str, company_code: str) -> bool:
 async def get_user_companies(user_id: str) -> list[dict]:
     """Return list of companies available to the user."""
     try:
-        from db import execute_query
+        from db import execute_read_query as execute_query
         data = await execute_query(
             "SELECT COMPANY_CODE, COMPANY_NAME_AR, COMPANY_NAME_EN "
             "FROM COMPANIES ORDER BY COMPANY_CODE "

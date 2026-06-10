@@ -4,7 +4,10 @@ Validates, sanitizes, and audits SQL before execution.
 Prevents dangerous operations, enforces row limits, blocks DML.
 """
 import re
+import logging
 from dataclasses import dataclass
+
+log = logging.getLogger("sql_safety")
 
 
 @dataclass
@@ -183,8 +186,19 @@ def validate_sql(sql: str) -> SafetyResult:
         # Complexity warning
         if ast_result.complexity_score > 70:
             warnings.append(f"High complexity score: {ast_result.complexity_score}/100")
-    except Exception:
-        pass  # AST validation failure should not block the query
+    except Exception as _ast_exc:
+        # AST parser raised unexpectedly — DO NOT silently discard.
+        # Crafted input that crashes the parser is inherently suspicious;
+        # log it at WARNING so operators can see it in the audit trail.
+        # The query is still allowed through because:
+        #   (a) regex + DML-keyword check already passed above, and
+        #   (b) if DB_READ_USER is configured, Oracle itself blocks DML.
+        warnings.append(f"AST_PARSE_ERROR({type(_ast_exc).__name__})")
+        log.warning(
+            "[SAFETY] AST validation raised %s (len=%d) — "
+            "falling through without structural analysis.",
+            type(_ast_exc).__name__, len(cleaned),
+        )
 
     return SafetyResult(
         is_safe=True,

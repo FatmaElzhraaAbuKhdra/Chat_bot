@@ -164,8 +164,28 @@ async def execute_read_query(sql: str, params: dict = None) -> list[dict]:
     any DML that slips past sql_safety is rejected at the database layer.
     When DB_READ_USER is absent, falls back to the main pool (same behaviour
     as execute_query, but logs a warning at startup so the gap is visible).
+
+    Hard SELECT guard: raises ValueError on any non-SELECT/WITH statement so
+    that even a complete failure of the sql_safety regex + AST layers cannot
+    result in DML being executed on this path.
     """
     sql = _clean_sql(sql)
+
+    # ── Hard SELECT-only enforcement (last line of defence) ──────────
+    # Run AFTER _clean_sql so markdown fences / semicolons are already stripped.
+    # CTEs begin with WITH, then contain the actual SELECT — both are allowed.
+    _first = sql.lstrip()[:6].upper()
+    if not (_first.startswith("SELECT") or _first.startswith("WITH")):
+        log.error(
+            "[DB] execute_read_query blocked non-SELECT (first=%r). "
+            "sql_safety was bypassed. SQL preview: %s",
+            _first, sql[:200],
+        )
+        raise ValueError(
+            "execute_read_query: only SELECT / WITH … SELECT is allowed. "
+            f"Got: {sql[:60]!r}"
+        )
+
     pool = await get_read_pool()
 
     last_err = None
