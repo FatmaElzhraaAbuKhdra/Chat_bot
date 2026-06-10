@@ -52,6 +52,11 @@ async def init_schema_context() -> None:
             _comments_mtime = 0.0
         log.info(f"[SCHEMA] parsed {len(_table_comments)} tables, "
                  f"{sum(len(v) for v in _column_comments.values())} columns from {comments_file.name}")
+        log.info(f"[SCHEMA] startup tables: {sorted(_table_comments.keys())}")
+        # Identify tables lacking any column comments (potential coverage gaps)
+        no_cols = [t for t in _table_comments if not _column_comments.get(t)]
+        if no_cols:
+            log.info(f"[SCHEMA] tables without column comments: {no_cols}")
     else:
         log.warning(f"[SCHEMA] {comments_file.name} not found")
 
@@ -151,6 +156,93 @@ def _maybe_reload_comments() -> None:
         log.warning(f"[SCHEMA] comment hot-reload failed, keeping previous cache: {e}")
 
 
+def force_reload_schema() -> dict:
+    """Force immediate reload of justclick_comments.sql + invalidate all caches.
+
+    Called by POST /chat/reload-schema.  Resets _comments_mtime to 0 so the
+    next _maybe_reload_comments() call always re-parses the file, even if the
+    mtime hasn't changed on disk (e.g. file was saved in-place by an editor).
+    Returns a status dict with table/column counts and cache-cleared counts.
+    """
+    global _comments_mtime
+    # Reset mtime outside the lock — CPython float assignment is atomic.
+    # _maybe_reload_comments() will see mtime != 0.0 and reload.
+    _comments_mtime = 0.0
+    _maybe_reload_comments()
+    counts: dict = {}
+    try:
+        from cache import schema_cache, sql_cache
+        counts["schema_cache"] = schema_cache.invalidate()
+        counts["sql_cache"] = sql_cache.invalidate()
+    except Exception:
+        pass
+    try:
+        import response_cache
+        counts["response_cache"] = response_cache.invalidate_all()
+    except Exception:
+        pass
+    return {
+        "tables": len(_table_comments),
+        "columns": sum(len(v) for v in _column_comments.values()),
+        "caches_cleared": counts,
+        "mtime": _comments_mtime,
+    }
+
+
+def get_schema_debug_info(question: str = "") -> dict:
+    """Return debug info about schema selection — for GET /chat/schema-debug.
+
+    Returns table scores, selected tables, context length, mtime, blocked tables,
+    and a sample of the flag-concept map derived from comments.
+    """
+    _maybe_reload_comments()
+    idx = _get_table_tokens()
+    blocked = _get_blocked_tables()
+
+    scores: dict = {}
+    selected: dict = {}
+    schema_ctx_len = 0
+
+    if question.strip():
+        q_tokens = _comment_tokens(question)
+        for t, toks in idx.items():
+            if t in blocked:
+                continue
+            overlap = len(q_tokens & toks)
+            if overlap > 0:
+                scores[t] = overlap
+
+        try:
+            primary, referenced = _select_tables_tiered(question)
+            selected = {"primary": primary, "referenced": sorted(referenced)}
+        except Exception:
+            pass
+
+        try:
+            ctx = get_relevant_schema(question)
+            schema_ctx_len = len(ctx)
+        except Exception:
+            pass
+
+    try:
+        fmap = get_flag_concept_map()
+        flag_sample = {k: v for k, v in list(fmap.items())[:10]}
+    except Exception:
+        flag_sample = {}
+
+    return {
+        "question": question or "(no question)",
+        "table_scores": dict(sorted(scores.items(), key=lambda x: -x[1])),
+        "selected_tables": selected,
+        "schema_context_length": schema_ctx_len,
+        "comments_mtime": _comments_mtime,
+        "total_commented_tables": len(_table_comments),
+        "total_commented_columns": sum(len(v) for v in _column_comments.values()),
+        "blocked_tables": sorted(blocked),
+        "flag_map_sample": flag_sample,
+    }
+
+
 def get_relevant_schema(question: str) -> str:
     """Build schema context with only relevant tables for the question.
 
@@ -201,12 +293,11 @@ def _parse_comments_file(sql_text: str) -> tuple[dict, dict]:
     return table_comments, column_comments
 
 
-_MAX_PRIMARY = 4    # cap on comment-matched primary tables — raised from 3→4 so that
-                    # lower-scoring but genuinely relevant tables (e.g. PAYED when the
-                    # question uses "حركات السداد") are not displaced by alphabetically
-                    # earlier tables that share only one token.
-                    # 4 tables ≈ 4000 chars ≈ 2000 tokens — safe for 8B model even when
-                    # conversation history is included (avoids Groq 413 payload limit).
+_MAX_PRIMARY = 6    # cap on comment-matched primary tables — raised from 4→6 so that
+                    # multi-domain questions (e.g. invoice+payment+customer) get all their
+                    # key tables with full descriptions.
+                    # llama-3.3-70b-versatile (128k context) eliminates 413 errors —
+                    # 6 primary tables ≈ 5500 chars ≈ well within budget even with history.
 
 _table_tokens: Optional[dict] = None
 _table_tokens_mtime: float = -1.0
@@ -332,6 +423,17 @@ def _select_tables_tiered(question: str) -> tuple[list[str], set[str]]:
 
     q_tokens = _comment_tokens(question)
 
+    # ── Direct table-name mention: if the question explicitly contains a known
+    # table name as a whole word, force-include it regardless of comment-token
+    # overlap — critical for diagnostic queries like "أعطني بيانات TRANSACTION_TOT"
+    # or cases where the table token overlap is low despite direct naming.
+    q_upper = question.upper()
+    direct_forced = [
+        t for t in all_known
+        if t not in blocked
+        and re.search(r'(?<![A-Z_0-9])' + re.escape(t) + r'(?![A-Z_0-9])', q_upper)
+    ]
+
     # Sort by descending overlap score; ties broken by ascending table name (A→Z)
     # so MAIN_INV (M) is processed before TRANSACTION (T) and VOUCHERS (V)
     # when all have the same token overlap — this ensures the more canonical ERP
@@ -340,7 +442,23 @@ def _select_tables_tiered(question: str) -> tuple[list[str], set[str]]:
         ((-len(q_tokens & toks), t) for t, toks in idx.items()
          if (q_tokens & toks) and t not in blocked),
     )
-    matched = [t for _, t in scored[:_MAX_PRIMARY]]
+    scored_tables = [t for _, t in scored[:_MAX_PRIMARY]]
+
+    # Log top token-overlap scores for observability
+    top_log = [(t, -s) for s, t in scored[:_MAX_PRIMARY + 2]]
+    if top_log or direct_forced:
+        log.info(f"[SCHEMA] token scores={top_log}  direct_forced={direct_forced}")
+
+    # Merge: direct-forced first (explicit > implicit), then token-scored, dedup, cap
+    seen_m: set[str] = set()
+    merged: list[str] = []
+    for t in (direct_forced + scored_tables):
+        if t not in seen_m:
+            merged.append(t)
+            seen_m.add(t)
+        if len(merged) >= _MAX_PRIMARY:
+            break
+    matched = merged
 
     if matched:
         # Build ranked primary: matched tables in relevance order (≤ _MAX_PRIMARY).

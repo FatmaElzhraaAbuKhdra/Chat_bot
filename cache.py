@@ -3,7 +3,7 @@ cache.py — Unified Caching Layer (LRU + TTL)
 يدعم 3 مستويات:
   1. SQL Results    — hash(sql)           — TTL 5 دقايق
   2. Dashboard      — dash_id + company   — TTL 10 دقايق
-  3. Schema Context — hash(question)      — TTL 30 دقيقة
+  3. Schema Context — hash(question)      — TTL 5 دقايق
 
 Thread-safe باستخدام threading.Lock.
 بدون dependencies خارجية (Redis-ready interface لو محتاج ترقية).
@@ -22,7 +22,8 @@ log = logging.getLogger("cache")
 # ── Cache TTL defaults (seconds) ─────────────────────────────────
 TTL_SQL = 300           # 5 minutes
 TTL_DASHBOARD = 600     # 10 minutes
-TTL_SCHEMA = 1800       # 30 minutes
+TTL_SCHEMA = 300        # 5 minutes — short TTL so justclick_comments.sql edits
+                        # propagate within one cache window (hot-reload backs this up)
 
 # ── Max entries per cache tier ───────────────────────────────────
 MAX_SQL_ENTRIES = 500

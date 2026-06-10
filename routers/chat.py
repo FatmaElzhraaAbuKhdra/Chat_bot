@@ -315,3 +315,40 @@ async def list_companies(user_id: str = "web_user"):
     """قائمة الشركات المتاحة للمستخدم."""
     companies = await get_user_companies(user_id)
     return {"companies": companies}
+
+
+# ── Schema debug / reload endpoints ─────────────────────────────
+
+@router.get("/schema-debug")
+async def schema_debug(question: str = ""):
+    """Debug schema selection for a question.
+
+    Returns which tables were selected (primary/referenced), their token-overlap
+    scores, context length, comments file mtime, cache hit status, blocked tables,
+    and a sample of the flag-concept map derived from comments.
+
+    Example: GET /chat/schema-debug?question=أعلى 5 عملاء
+    """
+    from schema_loader import get_schema_debug_info
+    from cache import schema_cache, make_schema_key
+
+    # Check cache BEFORE calling get_schema_debug_info (which may populate it)
+    cache_hit = False
+    if question.strip():
+        cache_hit = schema_cache.get(make_schema_key(question)) is not None
+
+    info = get_schema_debug_info(question)
+    return {**info, "cache_hit": cache_hit}
+
+
+@router.post("/reload-schema")
+async def reload_schema():
+    """Force reload of justclick_comments.sql and clear all schema/response caches.
+
+    Use this after editing justclick_comments.sql to apply changes immediately
+    without waiting for the 5-minute cache TTL or the hot-reload mtime check.
+    """
+    from schema_loader import force_reload_schema
+    result = force_reload_schema()
+    log.info(f"[SCHEMA] force-reloaded via POST /chat/reload-schema: {result}")
+    return {"status": "ok", **result}

@@ -101,8 +101,40 @@ _SEED_KNOWLEDGE = [
 
 
 def seed_knowledge() -> int:
-    """No-op — ERP knowledge DB removed."""
-    return 0
+    """Seed initial ERP knowledge into SQLite using INSERT OR IGNORE.
+
+    Won't overwrite trained/learned entries that share the same concept name.
+    Called once at startup by learning/engine.py → init_learning_engine().
+    """
+    from .store import get_knowledge_conn
+    count = 0
+    for entry in _SEED_KNOWLEDGE:
+        try:
+            with get_knowledge_conn() as conn:
+                conn.execute(
+                    """INSERT OR IGNORE INTO erp_knowledge
+                           (concept, description_ar, description_en, domain,
+                            tables_json, terms_ar_json, terms_en_json,
+                            sql_patterns, source, confidence)
+                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        entry["concept"],
+                        entry.get("description_ar", ""),
+                        entry.get("description_en", ""),
+                        entry.get("domain", ""),
+                        entry.get("tables_json", "[]"),
+                        entry.get("terms_ar_json", "[]"),
+                        entry.get("terms_en_json", "[]"),
+                        entry.get("sql_patterns", "[]"),
+                        "seed",
+                        1.0,
+                    )
+                )
+            count += 1
+        except Exception as e:
+            log.warning(f"[KNOWLEDGE] seed entry '{entry.get('concept','')}' failed: {e}")
+    log.info(f"[KNOWLEDGE] seeded {count}/{len(_SEED_KNOWLEDGE)} entries")
+    return count
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -121,19 +153,116 @@ def add_knowledge(
     source: str = "learned",
     confidence: float = 0.8,
 ) -> bool:
-    """No-op — ERP knowledge DB removed. Logs the concept name."""
-    log.info(f"[KNOWLEDGE] add_knowledge concept={concept} domain={domain} source={source} (no-db)")
-    return True
+    """INSERT or UPDATE knowledge entry in SQLite (UPSERT on concept key).
+
+    Uses SQLite always — no Oracle tables created.
+    """
+    try:
+        from .store import get_knowledge_conn
+        with get_knowledge_conn() as conn:
+            conn.execute(
+                """INSERT INTO erp_knowledge
+                       (concept, description_ar, description_en, domain,
+                        tables_json, terms_ar_json, terms_en_json,
+                        sql_patterns, source, confidence, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?, datetime('now'))
+                   ON CONFLICT(concept) DO UPDATE SET
+                       description_ar = excluded.description_ar,
+                       description_en = excluded.description_en,
+                       domain         = excluded.domain,
+                       tables_json    = excluded.tables_json,
+                       terms_ar_json  = excluded.terms_ar_json,
+                       terms_en_json  = excluded.terms_en_json,
+                       sql_patterns   = excluded.sql_patterns,
+                       source         = excluded.source,
+                       confidence     = excluded.confidence,
+                       updated_at     = datetime('now')""",
+                (
+                    concept,
+                    description_ar or "",
+                    description_en or "",
+                    domain or "",
+                    json.dumps(tables or [], ensure_ascii=False),
+                    json.dumps(terms_ar or [], ensure_ascii=False),
+                    json.dumps(terms_en or [], ensure_ascii=False),
+                    json.dumps(sql_patterns or [], ensure_ascii=False),
+                    source or "learned",
+                    float(confidence),
+                )
+            )
+        log.info(f"[KNOWLEDGE] stored: concept={concept} domain={domain} source={source}")
+        return True
+    except Exception as e:
+        log.error(f"[KNOWLEDGE] add_knowledge failed: {e}")
+        return False
+
+
+def _parse_knowledge_row(r) -> dict:
+    """Convert a sqlite3.Row to a plain dict, deserializing JSON fields."""
+    d = dict(r)
+    for fld in ("tables_json", "terms_ar_json", "terms_en_json"):
+        try:
+            d[fld] = json.loads(d[fld] or "[]")
+        except Exception:
+            d[fld] = []
+    try:
+        d["sql_patterns"] = json.loads(d["sql_patterns"] or "[]")
+    except Exception:
+        d["sql_patterns"] = []
+    return d
 
 
 def get_knowledge(domain: str = "") -> list[dict]:
-    """No DB — returns empty list."""
-    return []
+    """SELECT from erp_knowledge, optionally filtered by domain.
+
+    Returns up to 100 entries sorted by confidence descending.
+    Uses SQLite always — no Oracle queries.
+    """
+    try:
+        from .store import get_knowledge_conn
+        with get_knowledge_conn() as conn:
+            if domain:
+                rows = conn.execute(
+                    "SELECT * FROM erp_knowledge WHERE domain=? ORDER BY confidence DESC LIMIT 50",
+                    (domain,)
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM erp_knowledge ORDER BY confidence DESC LIMIT 100"
+                ).fetchall()
+        return [_parse_knowledge_row(r) for r in rows]
+    except Exception as e:
+        log.warning(f"[KNOWLEDGE] get_knowledge failed: {e}")
+        return []
 
 
 def search_knowledge(query: str) -> list[dict]:
-    """No DB — returns empty list."""
-    return []
+    """LIKE-based text search across concept, description, and terms fields.
+
+    No hardcoded keyword lists — searches in stored data only.
+    Used as fallback by search_knowledge_smart() when token extraction fails.
+    """
+    if not query.strip():
+        return []
+    try:
+        from .store import get_knowledge_conn
+        # Escape LIKE wildcards in the query, then wrap with %
+        safe_q = query[:100].replace("%", "").replace("_", "")
+        q_like = f"%{safe_q}%"
+        with get_knowledge_conn() as conn:
+            rows = conn.execute(
+                """SELECT * FROM erp_knowledge
+                    WHERE description_ar LIKE ?
+                       OR description_en LIKE ?
+                       OR concept        LIKE ?
+                       OR terms_ar_json  LIKE ?
+                   ORDER BY confidence DESC LIMIT 10""",
+                (q_like, q_like, q_like, q_like)
+            ).fetchall()
+        return [_parse_knowledge_row(r) for r in rows]
+    except Exception as e:
+        log.warning(f"[KNOWLEDGE] search_knowledge failed: {e}")
+        return []
 
 
 # RC4: canonicalize common table aliases so ontology edges & JOIN hints stay

@@ -230,16 +230,21 @@ def _get_sqlite_path() -> Path:
 # ═══════════════════════════════════════════════════════════════════
 
 def init_learning_db() -> None:
-    """Initialize learning database — Oracle or SQLite based on backend."""
+    """Initialize learning database.
+
+    Primary backend (Oracle or SQLite) is auto-detected.
+    SQLite is ALWAYS initialized regardless of backend because the knowledge
+    base (erp_knowledge) uses SQLite-only storage — no Oracle tables are created.
+    """
     global _BACKEND
     _BACKEND = _detect_backend()
 
     if _BACKEND == "oracle":
         _init_oracle()
-    else:
-        _init_sqlite()
+    # Always init SQLite — knowledge persistence is SQLite-only even on Oracle
+    _init_sqlite()
 
-    log.info(f"[STORE] Backend: {_BACKEND}")
+    log.info(f"[STORE] Backend: {_BACKEND} (knowledge: SQLite always)")
 
 
 def _init_oracle():
@@ -296,13 +301,55 @@ _ORACLE_TABLES: dict = {}
 
 _ORACLE_INDEXES: list = []
 
-# No SQLite tables — all persistence removed.
-_SQLITE_SCHEMA = ""
+# Knowledge persistence: SQLite ONLY (no Oracle tables created).
+# erp_knowledge stores learned ERP concepts, seeded patterns, and trained reports.
+_SQLITE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS erp_knowledge (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    concept        TEXT    NOT NULL UNIQUE,
+    description_ar TEXT    DEFAULT '',
+    description_en TEXT    DEFAULT '',
+    domain         TEXT    DEFAULT '',
+    tables_json    TEXT    DEFAULT '[]',
+    terms_ar_json  TEXT    DEFAULT '[]',
+    terms_en_json  TEXT    DEFAULT '[]',
+    sql_patterns   TEXT    DEFAULT '[]',
+    source         TEXT    DEFAULT 'learned',
+    confidence     REAL    DEFAULT 0.8,
+    created_at     TEXT    DEFAULT (datetime('now')),
+    updated_at     TEXT    DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_knowledge_domain  ON erp_knowledge(domain);
+CREATE INDEX IF NOT EXISTS idx_knowledge_concept ON erp_knowledge(concept);
+CREATE INDEX IF NOT EXISTS idx_knowledge_source  ON erp_knowledge(source);
+"""
 
 
 # ═══════════════════════════════════════════════════════════════════
 # SQL Helpers — backend-agnostic
 # ═══════════════════════════════════════════════════════════════════
+
+@contextmanager
+def get_knowledge_conn():
+    """Always returns a SQLite connection for erp_knowledge — regardless of the
+    primary backend. Knowledge persistence is SQLite-only: no Oracle tables are
+    created and no Oracle credentials are needed for the knowledge layer.
+    """
+    db_path = _get_sqlite_path()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path), timeout=10)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
 
 def is_oracle() -> bool:
     return get_backend() == "oracle"
