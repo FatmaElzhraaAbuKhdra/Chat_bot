@@ -43,6 +43,7 @@ _GREETINGS = re.compile(
 # ── Help patterns ────────────────────────────────────────────────
 _HELP = re.compile(
     r"(ايه الاسئلة|اقدر اسال|تقدر تعمل|ممكن تساعدني|المساعد|"
+    r"مساعده?|ساعدني|محتاج\s*مساعد|"
     r"what can you|help|how to use|ازاي اسال|ازاي استخدم)",
     re.IGNORECASE
 )

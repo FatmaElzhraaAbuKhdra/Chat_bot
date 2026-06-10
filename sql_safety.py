@@ -381,7 +381,7 @@ _PROMPT_INJECTION_PATTERNS = [
     re.compile(r"(أهمل|اتجاهل|إتجاهل)\s*.{0,25}(التعليمات|القواعد|الأوامر|الضوابط)", re.UNICODE),
 
     # ── Arabic: انسَ (forget context/instructions) ─────────────────
-    re.compile(r"انس[َيى]?\s*.{0,30}(كل\s*شيء|التعليمات|القواعد|السابق|ما\s*قبل)", re.UNICODE),
+    re.compile(r"انس[َيى]?\s*.{0,30}(كل\s*(?:شيء|حاجه?)|التعليمات|القواعد|السابق|ما\s*قبل)", re.UNICODE),
 
     # ── Arabic: role-switch / identity override ────────────────────
     # "أنت الآن نظام مختلف", "تصرف كـ مدير", "افترض أنك admin"
