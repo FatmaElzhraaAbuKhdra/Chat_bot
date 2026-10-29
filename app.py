@@ -163,11 +163,17 @@ _PUBLIC_PATHS = {"/", "/health", "/docs", "/openapi.json", "/redoc"}
 
 
 class ApiKeyMiddleware(BaseHTTPMiddleware):
-    """Require X-API-Key header when API_KEY is set in .env."""
+    """Require X-API-Key header when API_KEY is set in .env (skipped in jwt mode)."""
 
     async def dispatch(self, request: Request, call_next):
-        # Skip if no API_KEY configured (dev mode)
-        if not _API_KEY:
+        from rbac import _AUTH_MODE as _rbac_auth_mode
+
+        # Skip entirely in JWT mode — rbac.authenticate_request handles auth per-route
+        if not _API_KEY or _rbac_auth_mode == "jwt":
+            return await call_next(request)
+
+        # CORS preflight must not be blocked by API-key check
+        if request.method == "OPTIONS":
             return await call_next(request)
 
         path = request.url.path.rstrip("/")
