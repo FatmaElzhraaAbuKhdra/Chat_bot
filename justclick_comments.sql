@@ -3677,7 +3677,7 @@ COMMENT ON TABLE V_HEALTH_LATEST IS 'آخر لقطة لصحة النظام / vie
 COMMENT ON TABLE V_PAGE_ACCESS_COVERAGE IS 'تغطية الصلاحيات للصفحات / view v_page_access_coverage';
 COMMENT ON TABLE V_PAGE_FORMS IS 'ربط الصفحات بالشاشات / view v_page_forms';
 COMMENT ON TABLE V_PAGE_ACCESS_IMPACT IS 'أثر تفعيل صلاحيات الصفحات / view v_page_access_impact';
-COMMENT ON TABLE V_TRANSFER_STATUS IS 'تحويلات المخازن: مستلم / في الطريق / استلام جزئي (نوع حركة 5) / view v_transfer_status';
+COMMENT ON TABLE V_TRANSFER_STATUS IS 'تحويلات المخازن: مستلم / في الطريق / استلام جزئي (نوع حركة 5) / view v_transfer_status. ⚠ لاستعلام غير المستلم استخدم: WHERE STATE != ''تم الاستلام'' — لا تفلتر بقيمة STATE محددة لأن غير المستلم يشمل أكثر من حالة';
 COMMENT ON TABLE V_TRANSFER_IN_TRANSIT IS 'المنتظر بين كل فرعين وأقدمه / view v_transfer_in_transit';
 COMMENT ON TABLE V_AUTOPOST_PENDING IS 'قيود وسيطة لسه ما اترحلتش للأستاذ وحالتها (جاهز/غير متزن/حساب غير موجود/فترة مقفولة) / view v_autopost_pending';
 COMMENT ON TABLE V_CONS_UNMAPPED IS 'حسابات شركات غير مربوطة بحسابات المجموعة / view v_cons_unmapped';
