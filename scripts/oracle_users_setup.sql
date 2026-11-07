@@ -139,6 +139,45 @@ GRANT SELECT ON justclick.UNITS TO justclick_read;
 GRANT SELECT ON justclick.VOUCHERS TO justclick_read;
 GRANT SELECT ON justclick.VOUCHERS_DET TO justclick_read;
 
+-- Sales module tables (added with schema expansion)
+GRANT SELECT ON justclick.ORDERS TO justclick_read;
+GRANT SELECT ON justclick.SAL_QUOTE TO justclick_read;
+GRANT SELECT ON justclick.SAL_QUOTE_LINE TO justclick_read;
+GRANT SELECT ON justclick.SAL_ORDER TO justclick_read;
+GRANT SELECT ON justclick.SAL_ORDER_LINE TO justclick_read;
+GRANT SELECT ON justclick.SAL_NOTE TO justclick_read;
+
+-- Finance / HR expansion tables
+GRANT SELECT ON justclick.REC_JE TO justclick_read;
+GRANT SELECT ON justclick.REC_JE_LINE TO justclick_read;
+GRANT SELECT ON justclick.REC_JE_LOG TO justclick_read;
+GRANT SELECT ON justclick.EXP_CLAIM TO justclick_read;
+GRANT SELECT ON justclick.EXP_CLAIM_LINE TO justclick_read;
+GRANT SELECT ON justclick.CON_CONTRACT TO justclick_read;
+GRANT SELECT ON justclick.CON_BILL TO justclick_read;
+GRANT SELECT ON justclick.ALLOC_RULE TO justclick_read;
+GRANT SELECT ON justclick.ALLOC_TARGET TO justclick_read;
+GRANT SELECT ON justclick.ALLOC_LOG TO justclick_read;
+GRANT SELECT ON justclick.INT_GUARD TO justclick_read;
+GRANT SELECT ON justclick.PUR_PO TO justclick_read;
+GRANT SELECT ON justclick.PUR_PO_LINE TO justclick_read;
+GRANT SELECT ON justclick.CONS_TB TO justclick_read;
+GRANT SELECT ON justclick.BANK_STMT_LINE TO justclick_read;
+GRANT SELECT ON justclick.TAX_BRACKET TO justclick_read;
+
+-- Sales/transfer analytical views
+GRANT SELECT ON justclick.V_SAL_QUOTE_TOTAL TO justclick_read;
+GRANT SELECT ON justclick.V_SAL_QUOTE_FUNNEL TO justclick_read;
+GRANT SELECT ON justclick.V_SAL_ORDER_STATUS TO justclick_read;
+GRANT SELECT ON justclick.V_SAL_NOTE_STATUS TO justclick_read;
+GRANT SELECT ON justclick.V_TRANSFER_STATUS TO justclick_read;
+GRANT SELECT ON justclick.V_TRANSFER_IN_TRANSIT TO justclick_read;
+GRANT SELECT ON justclick.V_OPEN_BALANCE TO justclick_read;
+GRANT SELECT ON justclick.V_REORDER TO justclick_read;
+GRANT SELECT ON justclick.V_ORDER_MATCH TO justclick_read;
+GRANT SELECT ON justclick.V_SALES_BY_DEALER TO justclick_read;
+GRANT SELECT ON justclick.V_SALES_FORECAST TO justclick_read;
+
 -- SELECT on workflow tracking table (queries via execute_read_query)
 GRANT SELECT ON justclick.AI_ACTION_REQUESTS TO justclick_read;
 
