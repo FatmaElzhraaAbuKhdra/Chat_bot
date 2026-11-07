@@ -3089,7 +3089,7 @@ COMMENT ON COLUMN SAL_QUOTE_LINE.UNIT_ID IS 'الوحدة (UNIT_ID)';
 COMMENT ON COLUMN SAL_QUOTE_LINE.QTY IS 'الكمية (QTY)';
 COMMENT ON COLUMN SAL_QUOTE_LINE.PRICE IS 'السعر (PRICE)';
 COMMENT ON COLUMN SAL_QUOTE_LINE.DISCOUNT_PCT IS 'الخصم % (DISCOUNT_PCT)';
-COMMENT ON TABLE SAL_ORDER IS 'أوامر البيع (ناتجة من قبول عرض سعر) / sales orders. STATUS: DRAFT, CONFIRMED مؤكد, PARTIAL تسليم جزئي, DELIVERED, CANCELLED. INV_KEY = رقم الفاتورة الفعلية MAIN_INV.INV_KEY (بيتربط يدوي). ⚠ الفاتورة نفسها مابتتعملش تلقائي';
+COMMENT ON TABLE SAL_ORDER IS 'أوامر البيع (ناتجة من قبول عرض سعر) / sales orders. STATUS: DRAFT, CONFIRMED مؤكد, PARTIAL تسليم جزئي, DELIVERED, CANCELLED. INV_KEY = رقم الفاتورة الفعلية MAIN_INV.INV_KEY (بيتربط يدوي). ⚠ الفاتورة نفسها مابتتعملش تلقائي. ⚠ لاسم العميل: JOIN justclick.CUST c ON c.CUSTID = SAL_ORDER.CUST_ID ثم استخدم c.CUSTNAME — لا يوجد عمود CUSTOMER_NAME في هذا الجدول';
 COMMENT ON COLUMN SAL_ORDER.ORDER_ID IS 'رقم أمر البيع (ORDER_ID)';
 COMMENT ON COLUMN SAL_ORDER.QUOTE_ID IS 'رقم عرض السعر (QUOTE_ID) - FK → SAL_QUOTE.QUOTE_ID';
 COMMENT ON COLUMN SAL_ORDER.CUST_ID IS 'كود العميل (CUST_ID)';
@@ -3661,7 +3661,7 @@ COMMENT ON TABLE V_MNT_DUE IS 'خطط الصيانة المستحقة أو ال�
 COMMENT ON TABLE V_MNT_COST IS 'تكلفة الصيانة لكل أصل / view v_mnt_cost';
 COMMENT ON TABLE V_AST_COUNT_DIFF IS 'نتيجة جرد الأصول: موجود / غير موجود / كود غير معروف / view v_ast_count_diff';
 COMMENT ON TABLE V_SAL_QUOTE_TOTAL IS 'إجمالي كل عرض سعر وصلاحيته / view v_sal_quote_total';
-COMMENT ON TABLE V_SAL_ORDER_STATUS IS 'أوامر البيع: نسبة التسليم والفوترة / view v_sal_order_status';
+COMMENT ON TABLE V_SAL_ORDER_STATUS IS 'أوامر البيع: نسبة التسليم والفوترة / view v_sal_order_status. يحتوي CUST_ID وليس CUSTOMER_NAME — للاسم JOIN justclick.CUST c ON c.CUSTID = s.CUST_ID واستخدم c.CUSTNAME';
 COMMENT ON TABLE V_SAL_QUOTE_FUNNEL IS 'قمع عروض الأسعار حسب الحالة / view v_sal_quote_funnel';
 COMMENT ON TABLE V_REC_JE_STATUS IS 'حالة قوالب القيود الدورية (مستحق/متوقف/غير متزن) / view v_rec_je_status';
 COMMENT ON TABLE V_SAL_NOTE_STATUS IS 'الإشعارات الدائنة والمدينة وقيدها الجاهز / view v_sal_note_status';
