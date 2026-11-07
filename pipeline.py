@@ -1366,6 +1366,10 @@ async def _execute_llm_controlled(
         _schema_q = question
         if intent and intent.sub_intent == "warehouse_transfer":
             _schema_q = question + " V_TRANSFER_STATUS"
+        elif intent and intent.sub_intent == "credit_limit":
+            # "الحد الائتماني" tokenizes to no primary tables (tokenizer misses ائتماني≈ائتمان),
+            # so CUST never enters the schema context and the LLM refuses. Force it in.
+            _schema_q = question + " CUST"
         s_key = make_schema_key(_schema_q)
         schema_ctx = schema_cache.get(s_key)
         if schema_ctx is None:

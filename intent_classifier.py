@@ -83,7 +83,7 @@ DOMAIN_SIGNALS = {
     "inventory": [
         "صنف", "أصناف", "مخزون", "مخزن", "مخازن", "كارت", "كمية",
         "وحدة", "وحدات", "رصيد مخزن", "حركة مخزن", "جرد", "اصناف",
-        "منتج", "منتجات", "بضاعة",
+        "منتج", "منتجات", "بضاعة", "تحويل", "تحويلات",
         "item", "stock", "inventory", "store", "warehouse", "quantity",
         "unit", "card", "product",
     ],
@@ -126,13 +126,13 @@ SUB_INTENT_PATTERNS = {
 
     # Inventory — warehouse_transfer MUST precede stock_balance so "تحويل بين مخزنين"
     # is NOT mis-routed as stock_balance by the store_name override.
-    "warehouse_transfer": r"(تحويلات?\s*(بين|من|إلى|الى)\s*(ال)?مخازن?|تحويلات?\s*(مخزن|مستودع|المخازن)|حالات?\s*(ال)?تحويلات?|توزيع\s*(ال)?تحويلات?|تحويلات?\s*(لسه|غير|لم)\s*(مستلم[ةه]?|تستلم)|V_TRANSFER_STATUS|في\s*الطريق.*مخزن|مخزن.*في\s*الطريق|كام\s*تحويل|عدد\s*(ال)?تحويلات?)",
+    "warehouse_transfer": r"(تحويلات?\s*(بين|من|إلى|الى|لل?)\s*(ال)?مخا?زن?|تحويلات?\s*(مخا?زن?|مستودع|المخازن)|حالات?\s*(ال)?تحويلات?|توزيع\s*(ال)?تحويلات?|تحويلات?.*استلام|V_TRANSFER_STATUS|في\s*الطريق.*مخا?زن?|مخا?زن?.*في\s*الطريق|كام\s*(ال)?تحويل|عدد\s*(ال)?تحويلات?)",
     "stock_balance":      r"(رصيد\s*(المخزن|المخزون|مخزن)|كمية\s*(المخزن|المخزون)|stock\s*balance|اعرض\s*(المخازن|المخزن|مخازن|مخزن)|المخازن\s*كل|كل\s*المخازن|كم\s*مخزن|عدد\s*المخازن|ال?حركات?\s*(المخزن|مخزن|على\s*مخزن|اللي\s*على\s*مخزن)|عايز[هة]?\s*ال?حركات?\s*(اللي\s*)?(على|في|من|ع)\s*مخزن|حركات?\s*مخزن)",
     "item_card":          r"(كارت?\s*(الصنف|صنف)|حركات?\s*(الصنف|صنف)|item\s*card)",
     "item_info":          r"(بيانات?\s*(الصنف|صنف)|معلومات?\s*(الصنف|صنف)|تفاصيل?\s*(الصنف|صنف)|اعرض\s*(الاصناف|الأصناف|أصناف|اصناف)|كل\s*(الاصناف|الأصناف)|كم\s*صنف|عدد\s*الاصناف)",
 
     # Customers
-    "credit_limit":       r"(حد\s*(ال)?ائتمان|الحد\s*(ال)?ائتمان|CREDIT_LIMIT|ائتمان\s*(ال)?عمي?لاء?|حد\s*الائتمان\s*(لل?عملاء)?)",
+    "credit_limit":       r"(حد\s*(ال)?ائتمان[يةه]?|الحد\s*(ال)?ائتمان[يةه]?|CREDIT_LIMIT|ائتمان[يةه]?\s*(ال)?عمي?لاء?|حد\s*الائتمان\s*(لل?عملاء)?|(الحد|حدود)\s*الائتمان[يةه]?\s*(للعملاء|للعميل)?|حدود?\s*(الائتمان|ائتمان))",
     "customer_list":      r"(قائمة\s*العملاء|عملاء\s*(نشط|فعال)|list\s*customer|كل\s*العملاء)",
     "customer_info":      r"(بيانات?\s*(العميل|عميل)|معلومات?\s*(العميل|عميل)|تفاصيل?\s*(العميل|عميل)|customer\s*info)",
     "supplier_list":      r"(قائمة\s*الموردين|موردين\s*(نشط|فعال)|list\s*supplier|كل\s*الموردين)",
@@ -453,11 +453,13 @@ def _infer_domain_from_sub_intent(sub_intent: str) -> str:
         "stock_":          "inventory",
         "item_":           "inventory",
         "warehouse_":      "inventory",
-        "customer_": "customers",
-        "supplier_": "customers",
-        "employee_": "hr",
-        "salary_":  "hr",
-        "attendance": "hr",
+        "credit_limit":    "customers",
+        "customer_":       "customers",
+        "supplier_":       "customers",
+        "autoprep_gaps":   "accounting",
+        "employee_":       "hr",
+        "salary_":         "hr",
+        "attendance":      "hr",
     }
     for prefix, domain in mapping.items():
         if sub_intent.startswith(prefix) or sub_intent == prefix:
