@@ -224,6 +224,9 @@ def _get_sqlite_path() -> Path:
         return Path(custom)
     return _SQLITE_PATH
 
+# public alias kept for callers that import without the leading underscore
+get_sqlite_path = _get_sqlite_path
+
 
 # ═══════════════════════════════════════════════════════════════════
 # Schema Initialization
