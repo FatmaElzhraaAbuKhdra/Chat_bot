@@ -124,12 +124,15 @@ SUB_INTENT_PATTERNS = {
     "top_items":          r"(?:ل)?(أكثر|اكثر|أعلى|اعلى|أعلي|اعلي|top)\s*(\d+\s*)?(أصناف|اصناف|صنف|item|منتج|منتجات)",
     "outstanding":        r"(مستحق|متبقي|مديونية|مديون|outstanding|owing|unpaid|غير\s*مسدد)",
 
-    # Inventory
+    # Inventory — warehouse_transfer MUST precede stock_balance so "تحويل بين مخزنين"
+    # is NOT mis-routed as stock_balance by the store_name override.
+    "warehouse_transfer": r"(تحويلات?\s*(بين|من|إلى|الى)\s*(ال)?مخازن?|تحويلات?\s*(مخزن|مستودع|المخازن)|حالات?\s*(ال)?تحويلات?|توزيع\s*(ال)?تحويلات?|تحويلات?\s*(لسه|غير|لم)\s*(مستلم[ةه]?|تستلم)|V_TRANSFER_STATUS|في\s*الطريق.*مخزن|مخزن.*في\s*الطريق|كام\s*تحويل|عدد\s*(ال)?تحويلات?)",
     "stock_balance":      r"(رصيد\s*(المخزن|المخزون|مخزن)|كمية\s*(المخزن|المخزون)|stock\s*balance|اعرض\s*(المخازن|المخزن|مخازن|مخزن)|المخازن\s*كل|كل\s*المخازن|كم\s*مخزن|عدد\s*المخازن|ال?حركات?\s*(المخزن|مخزن|على\s*مخزن|اللي\s*على\s*مخزن)|عايز[هة]?\s*ال?حركات?\s*(اللي\s*)?(على|في|من|ع)\s*مخزن|حركات?\s*مخزن)",
     "item_card":          r"(كارت?\s*(الصنف|صنف)|حركات?\s*(الصنف|صنف)|item\s*card)",
     "item_info":          r"(بيانات?\s*(الصنف|صنف)|معلومات?\s*(الصنف|صنف)|تفاصيل?\s*(الصنف|صنف)|اعرض\s*(الاصناف|الأصناف|أصناف|اصناف)|كل\s*(الاصناف|الأصناف)|كم\s*صنف|عدد\s*الاصناف)",
 
     # Customers
+    "credit_limit":       r"(حد\s*(ال)?ائتمان|الحد\s*(ال)?ائتمان|CREDIT_LIMIT|ائتمان\s*(ال)?عمي?لاء?|حد\s*الائتمان\s*(لل?عملاء)?)",
     "customer_list":      r"(قائمة\s*العملاء|عملاء\s*(نشط|فعال)|list\s*customer|كل\s*العملاء)",
     "customer_info":      r"(بيانات?\s*(العميل|عميل)|معلومات?\s*(العميل|عميل)|تفاصيل?\s*(العميل|عميل)|customer\s*info)",
     "supplier_list":      r"(قائمة\s*الموردين|موردين\s*(نشط|فعال)|list\s*supplier|كل\s*الموردين)",
@@ -360,7 +363,7 @@ def classify_intent(question: str, history: list = None) -> Intent:
     entities = _extract_entities(q)
 
     # ── Entity-based overrides ──
-    if "store_name" in entities:
+    if "store_name" in entities and sub_intent != "warehouse_transfer":
         domain = "inventory"
         if not sub_intent or sub_intent in ("sales_summary", "invoice_detail", "customer_list"):
             sub_intent = "stock_balance"
@@ -444,8 +447,9 @@ def _infer_domain_from_sub_intent(sub_intent: str) -> str:
         "top_customers": "invoicing",
         "top_items": "invoicing",
         "outstanding": "invoicing",
-        "stock_":   "inventory",
-        "item_":    "inventory",
+        "stock_":          "inventory",
+        "item_":           "inventory",
+        "warehouse_":      "inventory",
         "customer_": "customers",
         "supplier_": "customers",
         "employee_": "hr",

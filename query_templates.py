@@ -688,6 +688,27 @@ SELECT CUSTID,
 
 
 # ══════════════════════════════════════════════════════════════════
+_register(QueryTemplate(
+    name="credit_limit",
+    description="حدود الائتمان للعملاء / Customer credit limits",
+    domain="customers",
+    sub_intent="credit_limit",
+    sql="""
+SELECT CUSTID,
+       CUST_NAME,
+       CREDIT_LIMIT
+  FROM CUST
+ WHERE CUST_TYPE = {{flag:CUST_TYPE:عميل}}
+   AND ACTIVE = '{{flag:ACTIVE:نشط}}'
+   AND CREDIT_LIMIT > 0
+ ORDER BY CREDIT_LIMIT DESC
+ FETCH FIRST 100 ROWS ONLY
+""",
+    required_params=[],
+    result_type="table",
+))
+
+
 # HR Templates
 # ══════════════════════════════════════════════════════════════════
 

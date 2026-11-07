@@ -463,6 +463,7 @@ _INTENT_LABELS = {
     "stock_balance": "رصيد المخزون",
     "account_balance": "رصيد الحساب",
     "account_statement": "كشف حساب",
+    "credit_limit": "الحد الائتماني",
     "customer_balance": "رصيد العميل",
     "outstanding": "المديونيات",
     "employee_count": "عدد الموظفين",
@@ -483,6 +484,7 @@ _INTENT_QUERIES = {
     "stock_balance": "رصيد المخازن",
     "account_balance": "أرصدة الحسابات الرئيسية",
     "account_statement": "كشف حساب",
+    "credit_limit": "حدود الائتمان للعملاء",
     "customer_balance": "أرصدة العملاء المستحقة",
     "outstanding": "المديونيات المتأخرة",
     "employee_count": "كم عدد الموظفين",
@@ -1356,10 +1358,16 @@ async def _execute_llm_controlled(
     """Controlled LLM SQL generation with safety checks."""
     try:
         # Schema context with caching
-        s_key = make_schema_key(question)
+        # For warehouse_transfer, force V_TRANSFER_STATUS into the schema context
+        # by appending its name to the schema-lookup question (triggers direct_forced
+        # in schema_loader, which otherwise misses it when other tables score higher).
+        _schema_q = question
+        if intent and intent.sub_intent == "warehouse_transfer":
+            _schema_q = question + " V_TRANSFER_STATUS"
+        s_key = make_schema_key(_schema_q)
         schema_ctx = schema_cache.get(s_key)
         if schema_ctx is None:
-            schema_ctx = get_relevant_schema(question)
+            schema_ctx = get_relevant_schema(_schema_q)
             schema_cache.set(s_key, schema_ctx)
         else:
             log.info("[PIPELINE] Schema context cache HIT")
@@ -1376,6 +1384,14 @@ async def _execute_llm_controlled(
         extra_context = ""
         if followup_context:
             extra_context += f"\n{followup_context}\n"
+
+        # Sub-intent forced table hints
+        if intent and intent.sub_intent == "warehouse_transfer":
+            extra_context += (
+                "\n[HINT] استخدم V_TRANSFER_STATUS للتحويلات بين المخازن. "
+                "لاستعلام غير المستلم: WHERE STATE != 'تم الاستلام'. "
+                "لا تستخدم جدول TRANSACTION لهذا السؤال.\n"
+            )
 
         # FOLLOW-UP (Phase 5): trained-report semantic injection REMOVED.
         # search_knowledge_smart returns a learned/trained layer (AI_ERP_KNOWLEDGE)
