@@ -27,13 +27,20 @@ def get_usage() -> dict:
     return dict(_usage)
 
 
-def _track_usage(prompt_tokens: int, completion_tokens: int):
+def _track_usage(prompt_tokens: int, completion_tokens: int, user_id: str = ""):
     _usage["last_prompt"] = prompt_tokens
     _usage["last_completion"] = completion_tokens
     _usage["total_prompt"] += prompt_tokens
     _usage["total_completion"] += completion_tokens
     _usage["total_tokens"] = _usage["total_prompt"] + _usage["total_completion"]
     _usage["request_count"] += 1
+    # Per-user tracking
+    if user_id:
+        try:
+            from token_tracker import track
+            track(user_id, prompt_tokens, completion_tokens)
+        except Exception:
+            pass
 
 
 def _get_provider() -> str:
@@ -69,7 +76,8 @@ def _get_gemini_model():
     return _gemini_model
 
 
-def _call_gemini(messages: list, temperature: float, max_tokens: int) -> str:
+def _call_gemini(messages: list, temperature: float, max_tokens: int,
+                 user_id: str = "") -> str:
     system_text = ""
     contents = []
     for msg in messages:
@@ -92,7 +100,8 @@ def _call_gemini(messages: list, temperature: float, max_tokens: int) -> str:
     if resp.usage_metadata:
         _track_usage(
             resp.usage_metadata.prompt_token_count or 0,
-            resp.usage_metadata.candidates_token_count or 0
+            resp.usage_metadata.candidates_token_count or 0,
+            user_id,
         )
     return resp.text.strip()
 
@@ -116,19 +125,34 @@ def _get_groq_model():
     return os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 
-def _call_groq(messages: list, temperature: float, max_tokens: int) -> str:
+def _groq_reasoning_kwargs(max_tokens: int) -> dict:
+    """Reasoning models on Groq (openai/gpt-oss-*) spend hidden "reasoning" tokens that count against
+    max_tokens.  With the small caps used by the intent classifier (100) and other short calls, the model
+    used up the whole cap thinking and returned an EMPTY answer (finish_reason=length) -> "Expecting value:
+    line 1 column 1" in the intent classifier and empty SQL.  Fix (2026-11-07): low reasoning effort and a
+    minimum output cap.  Override with GROQ_REASONING_EFFORT / GROQ_MIN_MAX_TOKENS in .env."""
+    if "gpt-oss" not in _get_groq_model().lower():
+        return {"max_tokens": max_tokens}
+    return {
+        "max_tokens": max(max_tokens, int(os.getenv("GROQ_MIN_MAX_TOKENS", "1024"))),
+        "reasoning_effort": os.getenv("GROQ_REASONING_EFFORT", "low"),
+    }
+
+
+def _call_groq(messages: list, temperature: float, max_tokens: int,
+               user_id: str = "") -> str:
     try:
         resp = _get_groq_client().chat.completions.create(
             model=_get_groq_model(),
             messages=messages,
             temperature=temperature,
-            max_tokens=max_tokens,
             timeout=25.0,
+            **_groq_reasoning_kwargs(max_tokens),
         )
         if resp.usage:
-            _track_usage(resp.usage.prompt_tokens, resp.usage.completion_tokens)
+            _track_usage(resp.usage.prompt_tokens, resp.usage.completion_tokens, user_id)
         return resp.choices[0].message.content.strip()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         err = str(e)
         # Groq returns 413 for both "payload too large" AND "context too long", and
         # both error bodies contain "rate_limit" — so we cannot exclude rate_limit here.
@@ -157,27 +181,28 @@ def _call_groq(messages: list, temperature: float, max_tokens: int) -> str:
                 model=_get_groq_model(),
                 messages=retry_msgs,
                 temperature=temperature,
-                max_tokens=retry_max,
                 timeout=25.0,
+                **_groq_reasoning_kwargs(retry_max),
             )
             if resp.usage:
                 _track_usage(resp.usage.prompt_tokens, resp.usage.completion_tokens)
             return resp.choices[0].message.content.strip()
-        raise
+        raise  # re-raise non-size errors
 
 
 # ── Unified call ────────────────────────────────────────────────────
 
-def _call_llm(messages: list, temperature: float, max_tokens: int) -> str:
+def _call_llm(messages: list, temperature: float, max_tokens: int,
+              user_id: str = "") -> str:
     p = _get_provider()
     providers = ["groq", "gemini"] if p == "groq" else ["gemini", "groq"]
-    last_err = None
+    last_err: Exception | None = None
     for prov in providers:
         try:
             if prov == "gemini":
-                return _call_gemini(messages, temperature, max_tokens)
+                return _call_gemini(messages, temperature, max_tokens, user_id)
             if prov == "groq":
-                return _call_groq(messages, temperature, max_tokens)
+                return _call_groq(messages, temperature, max_tokens, user_id)
         except Exception as e:
             err = str(e).lower()
             if "429" in str(e) or "rate_limit" in err or "resourceexhausted" in err:
@@ -185,7 +210,9 @@ def _call_llm(messages: list, temperature: float, max_tokens: int) -> str:
                 last_err = e
                 continue
             raise
-    raise last_err
+    if last_err is not None:
+        raise last_err
+    raise RuntimeError("[LLM] No provider available")
 
 
 def _trim_history(history: list, budget: int) -> list:
@@ -209,7 +236,7 @@ def _trim_history(history: list, budget: int) -> list:
 
 def generate_sql(schema_context: str, question: str, company_code: str,
                  fiscal_year: str, history: list = None,
-                 extra_context: str = "") -> str:
+                 extra_context: str = "", user_id: str = "") -> str:
 
     system_prompt = f"""أنت خبير Oracle SQL لنظام ERP اسمه JustClick.
 مهمتك: تحويل سؤال المستخدم إلى Oracle SQL صحيح.
@@ -298,7 +325,7 @@ Use ONLY the schema comments provided above. Do not assume any column values.
     # max_tokens=2000: llama-3.3-70b-versatile has a 128k-token context window,
     # so the old 8B-era cap of 800 is no longer needed.  Complex Oracle SQL with
     # multiple JOINs can reach 600-800 tokens; 2000 gives a safe margin.
-    result = _call_llm(messages, temperature=0, max_tokens=2000)
+    result = _call_llm(messages, temperature=0, max_tokens=2000, user_id=user_id)
 
     return _strip_tenant_filters(result)
 
@@ -315,7 +342,7 @@ def _strip_tenant_filters(sql: str) -> str:
 
 def format_answer(question: str, data: list[dict], sql: str,
                   history: list = None, truncated: bool = False,
-                  extra_context: str = "") -> str:
+                  extra_context: str = "", user_id: str = "") -> str:
 
     # CHANGE 4: detect the question's language ONCE and apply it to EVERY response,
     # not just the empty-result message.
@@ -439,4 +466,4 @@ def format_answer(question: str, data: list[dict], sql: str,
         "content": f"السؤال: {question}\n\nالبيانات:\n{data_str}{trunc_note}"
     })
 
-    return _call_llm(messages, temperature=0.25, max_tokens=1500)
+    return _call_llm(messages, temperature=0.25, max_tokens=1500, user_id=user_id)

@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 from routers import chat, widget, upload, learning as learning_router, proactive as proactive_router
 from routers import actions as actions_router, exports as exports_router
 from routers import stream as stream_router
+from routers import eval as eval_router
 from schema_loader import init_schema_context
 from cache import get_all_stats as get_cache_stats, invalidate_all as invalidate_cache, cleanup_all_expired
 
@@ -313,6 +314,7 @@ app.include_router(learning_router.router)
 app.include_router(proactive_router.router)
 app.include_router(actions_router.router)
 app.include_router(exports_router.router)
+app.include_router(eval_router.router)
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 

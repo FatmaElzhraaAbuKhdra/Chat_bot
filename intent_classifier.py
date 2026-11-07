@@ -9,6 +9,7 @@ Plus:
   - Dashboard vs data detection
   - Entity-based domain overrides
 """
+import os
 import re
 import json
 import logging
@@ -153,7 +154,11 @@ ENTITY_PATTERNS = {
     # P1: explicit "today" signal (whole word — must NOT match اليومية/journal).
     # Templates that filter by SYSDATE require this entity, so a time-less query
     # falls through to the all-time default instead of a silent today filter.
-    "time_today":    r"(?:^|\s)(اليوم|النهارده|today)(?:\s|$|؟|\?)",
+    "time_today":       r"(?:^|\s)(اليوم|النهارده|today)(?:\s|$|؟|\?)",
+    "time_this_month":  r"(?:^|\s)(الشهر\s*(?:الحالي|الجاري|ده|دا)|هذا\s*الشهر|this\s*month)(?:\s|$|؟|\?)",
+    "time_this_year":   r"(?:^|\s)((?:السنة|العام)\s*(?:الحالي[ةه]?|الجارية?|دي?|دا)|هذ[اه]\s*(?:العام|السنة)|this\s*year)(?:\s|$|؟|\?)",
+    "time_last_month":  r"(?:^|\s)(الشهر\s*(?:الماضي|اللي\s*فات|السابق)|last\s*month)(?:\s|$|؟|\?)",
+    "time_last_year":   r"(?:^|\s)((?:السنة|العام)\s*(?:الماضي[ةه]?|اللي\s*فات|السابق[ةه]?)|last\s*year)(?:\s|$|؟|\?)",
     "top_n":         r"(?:ل)?(?:أكثر|اكثر|أعلى|اعلى|أعلي|اعلي|أقل|اقل|top|bottom)\s*(\d+)",
     "year":          r"(?:سنة|عام|year)\s*(\d{4})",
     "month":         r"(?:شهر|month)\s*(\d{1,2})",
@@ -492,6 +497,8 @@ def _llm_classify(question: str, history: list = None) -> dict:
     Uses low max_tokens (100) for speed.
     Includes recent history for contextual understanding.
     """
+    if os.getenv("EVAL_NO_LLM"):
+        return None
     try:
         from llm_client import _call_llm
         messages = [

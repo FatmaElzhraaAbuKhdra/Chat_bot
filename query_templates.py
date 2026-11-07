@@ -281,6 +281,82 @@ SELECT COUNT(*) AS invoice_count,
 ))
 
 _register(QueryTemplate(
+    name="sales_summary_this_month",
+    description="إجمالي مبيعات الشهر الحالي / This month's sales total",
+    domain="invoicing",
+    sub_intent="sales_summary",
+    sql="""
+SELECT COUNT(*) AS invoice_count,
+       NVL(SUM(FINALTOTAL), 0) AS total_sales,
+       NVL(SUM(TAX), 0) AS total_tax,
+       TRUNC(SYSDATE, 'MM') AS month_start
+  FROM MAIN_INV
+ WHERE INVTYPE = {{flag:INVTYPE:بيع}}
+   AND RETURN_FLAG = {{flag:RETURN_FLAG:فاتورة عادية}}
+   AND TRUNC(INVDATE, 'MM') = TRUNC(SYSDATE, 'MM')
+""",
+    required_params=["time_this_month"],
+    result_type="scalar",
+))
+
+_register(QueryTemplate(
+    name="sales_summary_last_month",
+    description="إجمالي مبيعات الشهر الماضي / Last month's sales total",
+    domain="invoicing",
+    sub_intent="sales_summary",
+    sql="""
+SELECT COUNT(*) AS invoice_count,
+       NVL(SUM(FINALTOTAL), 0) AS total_sales,
+       NVL(SUM(TAX), 0) AS total_tax,
+       ADD_MONTHS(TRUNC(SYSDATE, 'MM'), -1) AS month_start
+  FROM MAIN_INV
+ WHERE INVTYPE = {{flag:INVTYPE:بيع}}
+   AND RETURN_FLAG = {{flag:RETURN_FLAG:فاتورة عادية}}
+   AND TRUNC(INVDATE, 'MM') = ADD_MONTHS(TRUNC(SYSDATE, 'MM'), -1)
+""",
+    required_params=["time_last_month"],
+    result_type="scalar",
+))
+
+_register(QueryTemplate(
+    name="sales_summary_this_year",
+    description="إجمالي مبيعات هذه السنة / This year's sales total",
+    domain="invoicing",
+    sub_intent="sales_summary",
+    sql="""
+SELECT COUNT(*) AS invoice_count,
+       NVL(SUM(FINALTOTAL), 0) AS total_sales,
+       NVL(SUM(TAX), 0) AS total_tax,
+       EXTRACT(YEAR FROM SYSDATE) AS sales_year
+  FROM MAIN_INV
+ WHERE INVTYPE = {{flag:INVTYPE:بيع}}
+   AND RETURN_FLAG = {{flag:RETURN_FLAG:فاتورة عادية}}
+   AND EXTRACT(YEAR FROM INVDATE) = EXTRACT(YEAR FROM SYSDATE)
+""",
+    required_params=["time_this_year"],
+    result_type="scalar",
+))
+
+_register(QueryTemplate(
+    name="sales_summary_last_year",
+    description="إجمالي مبيعات السنة الماضية / Last year's sales total",
+    domain="invoicing",
+    sub_intent="sales_summary",
+    sql="""
+SELECT COUNT(*) AS invoice_count,
+       NVL(SUM(FINALTOTAL), 0) AS total_sales,
+       NVL(SUM(TAX), 0) AS total_tax,
+       EXTRACT(YEAR FROM SYSDATE) - 1 AS sales_year
+  FROM MAIN_INV
+ WHERE INVTYPE = {{flag:INVTYPE:بيع}}
+   AND RETURN_FLAG = {{flag:RETURN_FLAG:فاتورة عادية}}
+   AND EXTRACT(YEAR FROM INVDATE) = EXTRACT(YEAR FROM SYSDATE) - 1
+""",
+    required_params=["time_last_year"],
+    result_type="scalar",
+))
+
+_register(QueryTemplate(
     name="sales_summary_period",
     description="إجمالي مبيعات فترة / Sales summary for period",
     domain="invoicing",
@@ -334,6 +410,82 @@ SELECT COUNT(*) AS invoice_count,
    AND TRUNC(INVDATE) = TRUNC(SYSDATE)
 """,
     required_params=["time_today"],   # P1: only when user explicitly says "today"
+    result_type="scalar",
+))
+
+_register(QueryTemplate(
+    name="purchase_summary_this_month",
+    description="إجمالي مشتريات الشهر الحالي / This month's purchase total",
+    domain="invoicing",
+    sub_intent="purchase_summary",
+    sql="""
+SELECT COUNT(*) AS invoice_count,
+       NVL(SUM(FINALTOTAL), 0) AS total_purchases,
+       NVL(SUM(TAX), 0) AS total_tax,
+       TRUNC(SYSDATE, 'MM') AS month_start
+  FROM MAIN_INV
+ WHERE INVTYPE = {{flag:INVTYPE:شراء}}
+   AND RETURN_FLAG = {{flag:RETURN_FLAG:فاتورة عادية}}
+   AND TRUNC(INVDATE, 'MM') = TRUNC(SYSDATE, 'MM')
+""",
+    required_params=["time_this_month"],
+    result_type="scalar",
+))
+
+_register(QueryTemplate(
+    name="purchase_summary_last_month",
+    description="إجمالي مشتريات الشهر الماضي / Last month's purchase total",
+    domain="invoicing",
+    sub_intent="purchase_summary",
+    sql="""
+SELECT COUNT(*) AS invoice_count,
+       NVL(SUM(FINALTOTAL), 0) AS total_purchases,
+       NVL(SUM(TAX), 0) AS total_tax,
+       ADD_MONTHS(TRUNC(SYSDATE, 'MM'), -1) AS month_start
+  FROM MAIN_INV
+ WHERE INVTYPE = {{flag:INVTYPE:شراء}}
+   AND RETURN_FLAG = {{flag:RETURN_FLAG:فاتورة عادية}}
+   AND TRUNC(INVDATE, 'MM') = ADD_MONTHS(TRUNC(SYSDATE, 'MM'), -1)
+""",
+    required_params=["time_last_month"],
+    result_type="scalar",
+))
+
+_register(QueryTemplate(
+    name="purchase_summary_this_year",
+    description="إجمالي مشتريات هذه السنة / This year's purchase total",
+    domain="invoicing",
+    sub_intent="purchase_summary",
+    sql="""
+SELECT COUNT(*) AS invoice_count,
+       NVL(SUM(FINALTOTAL), 0) AS total_purchases,
+       NVL(SUM(TAX), 0) AS total_tax,
+       EXTRACT(YEAR FROM SYSDATE) AS purchase_year
+  FROM MAIN_INV
+ WHERE INVTYPE = {{flag:INVTYPE:شراء}}
+   AND RETURN_FLAG = {{flag:RETURN_FLAG:فاتورة عادية}}
+   AND EXTRACT(YEAR FROM INVDATE) = EXTRACT(YEAR FROM SYSDATE)
+""",
+    required_params=["time_this_year"],
+    result_type="scalar",
+))
+
+_register(QueryTemplate(
+    name="purchase_summary_last_year",
+    description="إجمالي مشتريات السنة الماضية / Last year's purchase total",
+    domain="invoicing",
+    sub_intent="purchase_summary",
+    sql="""
+SELECT COUNT(*) AS invoice_count,
+       NVL(SUM(FINALTOTAL), 0) AS total_purchases,
+       NVL(SUM(TAX), 0) AS total_tax,
+       EXTRACT(YEAR FROM SYSDATE) - 1 AS purchase_year
+  FROM MAIN_INV
+ WHERE INVTYPE = {{flag:INVTYPE:شراء}}
+   AND RETURN_FLAG = {{flag:RETURN_FLAG:فاتورة عادية}}
+   AND EXTRACT(YEAR FROM INVDATE) = EXTRACT(YEAR FROM SYSDATE) - 1
+""",
+    required_params=["time_last_year"],
     result_type="scalar",
 ))
 

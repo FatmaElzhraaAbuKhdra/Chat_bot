@@ -43,6 +43,65 @@
       --ease-spring:   cubic-bezier(0.34, 1.56, 0.64, 1);
     }
 
+    /* ── Dark Mode ──────────────────────────────────────────────── */
+    [data-theme="dark"] {
+      --bg:            oklch(0.12 0.008 250);
+      --surface:       oklch(0.16 0.008 250);
+      --surface2:      oklch(0.20 0.010 250);
+      --border:        oklch(0.28 0.012 250);
+      --border-strong: oklch(0.35 0.014 250);
+      --accent:        oklch(0.62 0.18 260);
+      --accent-soft:   oklch(0.62 0.18 260 / 0.12);
+      --accent-hover:  oklch(0.68 0.16 260);
+      --accent-glow:   oklch(0.62 0.18 260 / 0.20);
+      --text:          oklch(0.92 0.005 250);
+      --text-mid:      oklch(0.70 0.006 250);
+      --text-dim:      oklch(0.50 0.005 250);
+      --green:         oklch(0.68 0.14 155);
+      --green-soft:    oklch(0.68 0.14 155 / 0.12);
+      --red:           oklch(0.65 0.17 25);
+      --red-soft:      oklch(0.65 0.17 25 / 0.10);
+      --amber:         oklch(0.75 0.13 70);
+      --amber-soft:    oklch(0.75 0.13 70 / 0.12);
+      --purple:        oklch(0.62 0.14 310);
+      --purple-soft:   oklch(0.62 0.14 310 / 0.12);
+      --teal:          oklch(0.64 0.11 195);
+      --teal-soft:     oklch(0.64 0.11 195 / 0.12);
+      --shadow-sm:     0 1px 3px oklch(0 0 0 / 0.20);
+      --shadow:        0 4px 16px oklch(0 0 0 / 0.30);
+      --shadow-lg:     0 8px 32px oklch(0 0 0 / 0.40);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg:            oklch(0.12 0.008 250);
+        --surface:       oklch(0.16 0.008 250);
+        --surface2:      oklch(0.20 0.010 250);
+        --border:        oklch(0.28 0.012 250);
+        --border-strong: oklch(0.35 0.014 250);
+        --accent:        oklch(0.62 0.18 260);
+        --accent-soft:   oklch(0.62 0.18 260 / 0.12);
+        --accent-hover:  oklch(0.68 0.16 260);
+        --accent-glow:   oklch(0.62 0.18 260 / 0.20);
+        --text:          oklch(0.92 0.005 250);
+        --text-mid:      oklch(0.70 0.006 250);
+        --text-dim:      oklch(0.50 0.005 250);
+        --green:         oklch(0.68 0.14 155);
+        --green-soft:    oklch(0.68 0.14 155 / 0.12);
+        --red:           oklch(0.65 0.17 25);
+        --red-soft:      oklch(0.65 0.17 25 / 0.10);
+        --amber:         oklch(0.75 0.13 70);
+        --amber-soft:    oklch(0.75 0.13 70 / 0.12);
+        --purple:        oklch(0.62 0.14 310);
+        --purple-soft:   oklch(0.62 0.14 310 / 0.12);
+        --teal:          oklch(0.64 0.11 195);
+        --teal-soft:     oklch(0.64 0.11 195 / 0.12);
+        --shadow-sm:     0 1px 3px oklch(0 0 0 / 0.20);
+        --shadow:        0 4px 16px oklch(0 0 0 / 0.30);
+        --shadow-lg:     0 8px 32px oklch(0 0 0 / 0.40);
+      }
+    }
+
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after {
         animation-duration: 0.01ms !important;
@@ -1845,6 +1904,361 @@
       direction: ltr;
     }
     .md-analysis-header { color: var(--teal); }
+
+    /* ── Token Chip & Panel ─────────────────────────────────────── */
+    .token-chip { min-width: 90px; }
+    .token-bar-wrap { width: 48px; height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; }
+    .token-bar-fill { height: 100%; background: var(--accent); border-radius: 3px; transition: width .4s; }
+
+    /* Panel */
+    .token-panel {
+      position: fixed; top: 52px; right: 12px; z-index: 300;
+      background: var(--surface); border: 1px solid var(--border-strong);
+      border-radius: 16px; width: 276px; overflow: hidden;
+      box-shadow: 0 12px 40px rgba(0,0,0,.22), 0 2px 8px rgba(0,0,0,.1);
+      display: none;
+      animation: tpSlideIn .18s cubic-bezier(.22,1,.36,1);
+    }
+    @keyframes tpSlideIn {
+      from { opacity: 0; transform: translateY(-8px) scale(.97); }
+      to   { opacity: 1; transform: translateY(0)   scale(1);    }
+    }
+    .token-panel.open { display: block; }
+
+    /* Accent bar at top — color changes with usage */
+    .tp-accent-bar { height: 3px; width: 100%; background: var(--tp-accent, var(--accent)); transition: background .5s; }
+
+    /* Top row */
+    .tp-topbar {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 12px 14px 0; font-size: 11px; font-weight: 700;
+      letter-spacing: .05em; text-transform: uppercase; color: var(--text-dim);
+    }
+    .tp-close {
+      background: none; border: none; cursor: pointer; color: var(--text-dim);
+      font-size: 14px; line-height: 1; padding: 2px 4px; border-radius: 4px;
+      transition: color .15s, background .15s;
+    }
+    .tp-close:hover { color: var(--text); background: var(--border); }
+
+    /* Circular gauge */
+    .tp-gauge-wrap {
+      position: relative; width: 110px; height: 110px;
+      margin: 14px auto 10px;
+    }
+    .tp-arc-svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+    .tp-arc-bg  { fill: none; stroke: var(--border); stroke-width: 8; }
+    .tp-arc-fill {
+      fill: none; stroke: var(--tp-accent, var(--accent)); stroke-width: 8;
+      stroke-linecap: round;
+      stroke-dasharray: 251.33; stroke-dashoffset: 0;
+      transition: stroke-dashoffset .6s cubic-bezier(.4,0,.2,1), stroke .5s;
+    }
+    .tp-gauge-center {
+      position: absolute; inset: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 1px;
+    }
+    .tp-gauge-num {
+      font-size: 20px; font-weight: 700; color: var(--text);
+      font-variant-numeric: tabular-nums; line-height: 1;
+    }
+    .tp-gauge-lbl { font-size: 10px; color: var(--text-dim); letter-spacing: .04em; }
+
+    /* Three stat tiles */
+    .tp-stats {
+      display: grid; grid-template-columns: 1fr 1px 1fr 1px 1fr;
+      margin: 0 14px 14px; gap: 0;
+      background: var(--bg-subtle, color-mix(in oklch, var(--surface) 60%, var(--bg)));
+      border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+    }
+    .tp-stat {
+      display: flex; flex-direction: column; align-items: center;
+      padding: 10px 6px; gap: 3px;
+    }
+    .tp-stat-div { background: var(--border); }
+    .tp-stat-val {
+      font-size: 14px; font-weight: 700; color: var(--text);
+      font-variant-numeric: tabular-nums; line-height: 1;
+    }
+    .tp-stat-lbl { font-size: 10px; color: var(--text-dim); }
+
+    /* Footer */
+    .tp-footer {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 9px 14px 12px; border-top: 1px solid var(--border);
+    }
+    .tp-role-badge {
+      font-size: 11px; font-weight: 600; padding: 3px 8px;
+      border-radius: 20px; border: 1px solid var(--tp-accent, var(--accent));
+      color: var(--tp-accent, var(--accent));
+      background: color-mix(in oklch, var(--tp-accent, var(--accent)) 12%, transparent);
+    }
+    .tp-reset { font-size: 10px; color: var(--text-dim); }
+
+    /* hidden compat elements */
+    .tp-bar-bg, .tp-pct-hidden { display: none !important; }
+
+    /* ── Agent IQ Panel ─────────────────────────────────────────── */
+    .iq-chip { cursor: pointer; gap: 6px; }
+    .iq-chip:hover { border-color: var(--iq-accent, var(--accent)); color: var(--iq-accent, var(--accent)); background: color-mix(in oklch, var(--iq-accent, var(--accent)) 12%, transparent); }
+    .iq-score-pill { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 10px; background: color-mix(in oklch, var(--iq-accent, var(--accent)) 18%, transparent); color: var(--iq-accent, var(--accent)); }
+
+    .iq-panel {
+      display: none;
+      position: fixed;
+      top: 56px; right: 12px;
+      width: 272px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: 0 8px 32px rgba(0,0,0,.18);
+      z-index: 400;
+      overflow: hidden;
+    }
+    .iq-panel.open { display: block; }
+    .iq-accent-bar { height: 3px; width: 100%; background: var(--iq-accent, var(--accent)); transition: background .5s; }
+    .iq-topbar { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px 8px; }
+    .iq-topbar span { font-size: 12px; font-weight: 700; color: var(--text); }
+    .iq-close { background: none; border: none; cursor: pointer; color: var(--text-dim); font-size: 14px; padding: 2px 6px; border-radius: 6px; }
+    .iq-close:hover { color: var(--text); background: var(--border); }
+
+    .iq-gauge-wrap { position: relative; width: 100px; height: 100px; margin: 4px auto 0; }
+    .iq-arc-svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+    .iq-arc-bg   { fill: none; stroke: var(--border); stroke-width: 8; }
+    .iq-arc-fill {
+      fill: none; stroke: var(--iq-accent, var(--accent)); stroke-width: 8;
+      stroke-linecap: round;
+      stroke-dasharray: 251.33;
+      stroke-dashoffset: 251.33;
+      transition: stroke-dashoffset .8s cubic-bezier(.4,0,.2,1), stroke .5s;
+    }
+    .iq-gauge-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+    .iq-gauge-num { font-size: 22px; font-weight: 800; color: var(--text); line-height: 1; }
+    .iq-gauge-lbl { font-size: 10px; color: var(--text-dim); letter-spacing: .04em; }
+
+    .iq-domains { padding: 10px 14px 4px; display: flex; flex-direction: column; gap: 5px; }
+    .iq-domain-row { display: flex; align-items: center; gap: 7px; }
+    .iq-domain-name { font-size: 10px; color: var(--text-mid); min-width: 72px; text-align: right; }
+    .iq-domain-bar-bg { flex: 1; height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; }
+    .iq-domain-bar-fill { height: 100%; border-radius: 3px; background: var(--iq-accent, var(--accent)); transition: width .6s; }
+    .iq-domain-counts { font-size: 9px; color: var(--text-dim); min-width: 36px; text-align: left; }
+
+    .iq-footer { padding: 8px 14px 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .iq-run-btn { flex: 1; padding: 6px 10px; font-size: 11px; font-weight: 600; border-radius: 8px; border: 1px solid var(--iq-accent, var(--accent)); color: var(--iq-accent, var(--accent)); background: color-mix(in oklch, var(--iq-accent, var(--accent)) 10%, transparent); cursor: pointer; transition: all .2s; }
+    .iq-run-btn:hover { background: color-mix(in oklch, var(--iq-accent, var(--accent)) 20%, transparent); }
+    .iq-run-btn:disabled { opacity: .5; cursor: wait; }
+    .iq-last-run { font-size: 9.5px; color: var(--text-dim); text-align: right; }
+
+    /* ── Reasoning Steps ─────────────────────────────────────────── */
+    .reasoning-details { margin-top: 10px; border-top: 1px dashed var(--border); padding-top: 8px; }
+    .reasoning-details summary { font-size: 11px; color: var(--text-dim); cursor: pointer; user-select: none; }
+    .reasoning-details summary:hover { color: var(--accent); }
+    .reasoning-list { margin: 6px 0 0 12px; padding: 0; list-style: decimal; display: flex; flex-direction: column; gap: 3px; }
+    .reasoning-list li { font-size: 11px; color: var(--text-dim); }
+    .rs-step { font-weight: 600; color: var(--text); margin-left: 4px; }
+    .rs-detail { color: var(--text-dim); font-family: monospace; font-size: 10px; }
+    .rs-ms { color: var(--border-strong); font-size: 10px; margin-right: 4px; }
+
+    /* ── Dark Mode Toggle ────────────────────────────────────────── */
+    .dark-toggle {
+      width: 32px; height: 32px;
+      border: 1px solid var(--border-strong);
+      border-radius: 8px;
+      background: var(--surface2);
+      color: var(--text-mid);
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+      flex-shrink: 0;
+    }
+    .dark-toggle:hover { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+    .dark-toggle svg { width: 15px; height: 15px; }
+    .dark-toggle .icon-moon { display: none; }
+    .dark-toggle .icon-sun  { display: block; }
+    [data-theme="dark"] .dark-toggle .icon-moon { display: block; }
+    [data-theme="dark"] .dark-toggle .icon-sun  { display: none; }
+
+    /* ── Voice Input Button ──────────────────────────────────────── */
+    .voice-btn {
+      width: 38px; height: 38px;
+      border: none;
+      border-radius: 9px;
+      background: transparent;
+      color: var(--text-dim);
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: background 0.15s, color 0.15s;
+      flex-shrink: 0;
+    }
+    .voice-btn:hover { background: var(--accent-soft); color: var(--accent); }
+    .voice-btn.recording { background: var(--red-soft); color: var(--red); animation: pulse-mic 1.2s ease-in-out infinite; }
+    .voice-btn svg { width: 18px; height: 18px; }
+    @keyframes pulse-mic {
+      0%, 100% { transform: scale(1); }
+      50%       { transform: scale(1.12); }
+    }
+
+    /* ── Autocomplete Dropdown ──────────────────────────────────── */
+    .autocomplete-dropdown {
+      position: absolute;
+      bottom: 100%;
+      right: 0; left: 0;
+      background: var(--surface);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-lg);
+      max-height: 220px;
+      overflow-y: auto;
+      z-index: 100;
+      margin-bottom: 4px;
+      display: none;
+    }
+    .autocomplete-dropdown.open { display: block; }
+    .autocomplete-item {
+      padding: 9px 14px;
+      cursor: pointer;
+      font-size: 13.5px;
+      color: var(--text);
+      display: flex; align-items: center; gap: 8px;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.1s;
+    }
+    .autocomplete-item:last-child { border-bottom: none; }
+    .autocomplete-item:hover, .autocomplete-item.selected { background: var(--accent-soft); color: var(--accent); }
+    .autocomplete-item .ac-icon { color: var(--text-dim); font-size: 12px; flex-shrink: 0; }
+    .autocomplete-item .ac-text { flex: 1; }
+    .autocomplete-item .ac-category { font-size: 11px; color: var(--text-dim); margin-right: auto; }
+
+    /* ── Chat History Sidebar ────────────────────────────────────── */
+    .history-overlay {
+      position: fixed; inset: 0;
+      background: oklch(0 0 0 / 0.35);
+      z-index: 200;
+      display: none;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    .history-overlay.open { display: block; opacity: 1; }
+    .history-panel {
+      position: fixed;
+      top: 0; left: 0;
+      width: 320px; height: 100dvh;
+      background: var(--surface);
+      border-right: 1px solid var(--border-strong);
+      z-index: 201;
+      display: flex; flex-direction: column;
+      transform: translateX(-100%);
+      transition: transform 0.25s var(--ease-out);
+      box-shadow: var(--shadow-lg);
+    }
+    .history-panel.open { transform: translateX(0); }
+    .history-header {
+      display: flex; align-items: center; gap: 10px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .history-header h3 { flex: 1; font-size: 14px; font-weight: 600; color: var(--text); }
+    .history-close {
+      width: 28px; height: 28px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px;
+      transition: background 0.1s;
+    }
+    .history-close:hover { background: var(--surface2); color: var(--text); }
+    .history-list { flex: 1; overflow-y: auto; padding: 8px; }
+    .history-session {
+      padding: 10px 12px;
+      border-radius: var(--radius);
+      cursor: pointer;
+      margin-bottom: 4px;
+      border: 1px solid transparent;
+      transition: background 0.1s, border-color 0.1s;
+    }
+    .history-session:hover { background: var(--surface2); border-color: var(--border); }
+    .history-session.active { background: var(--accent-soft); border-color: var(--accent); }
+    .hs-title { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .hs-meta { font-size: 11px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
+    .hs-count { background: var(--surface2); border-radius: 20px; padding: 1px 7px; }
+    .history-empty { text-align: center; padding: 32px 16px; color: var(--text-dim); font-size: 13px; }
+    .history-empty svg { width: 36px; height: 36px; margin-bottom: 8px; display: block; margin-inline: auto; }
+    .history-new-btn {
+      display: flex; align-items: center; gap: 8px;
+      margin: 8px;
+      padding: 9px 14px;
+      border: 1px dashed var(--border-strong);
+      border-radius: var(--radius);
+      background: none;
+      color: var(--text-mid);
+      cursor: pointer;
+      font-size: 13px;
+      font-family: var(--font);
+      transition: background 0.1s, border-color 0.1s, color 0.1s;
+    }
+    .history-new-btn:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+    .history-btn {
+      width: 32px; height: 32px;
+      border: 1px solid var(--border-strong);
+      border-radius: 8px;
+      background: var(--surface2);
+      color: var(--text-mid);
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+      flex-shrink: 0;
+    }
+    .history-btn:hover { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+    .history-btn svg { width: 14px; height: 14px; }
+
+    /* ── Smart Suggestion Chips in Empty State ───────────────────── */
+    .suggestions-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 8px;
+      margin-top: 6px;
+      max-width: 620px;
+    }
+    .suggestion-card {
+      background: var(--surface);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-lg);
+      padding: 12px 14px;
+      cursor: pointer;
+      text-align: right;
+      transition: background 0.15s, border-color 0.15s, transform 0.15s;
+      display: flex; align-items: flex-start; gap: 10px;
+    }
+    .suggestion-card:hover { background: var(--accent-soft); border-color: var(--accent); transform: translateY(-1px); }
+    .suggestion-card .sc-icon {
+      width: 30px; height: 30px;
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px;
+      flex-shrink: 0;
+    }
+    .suggestion-card .sc-text { flex: 1; }
+    .suggestion-card .sc-title { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 2px; }
+    .suggestion-card .sc-sub { font-size: 11px; color: var(--text-dim); }
+
+    /* ── Keyboard Shortcut Badge ─────────────────────────────────── */
+    .kbd-badge {
+      display: inline-flex; align-items: center; gap: 3px;
+      font-size: 10.5px;
+      color: var(--text-dim);
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: var(--mono);
+    }
+
+    /* ── Input wrapper needs position relative for autocomplete ──── */
+    .input-row { position: relative; }
   </style>
 </head>
 <body>
@@ -1888,6 +2302,24 @@
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 105.64-11.36L1 10"/></svg>
           <span>محادثة جديدة</span>
         </button>
+        <button class="history-btn" id="history-btn" onclick="toggleHistoryPanel()" title="سجل المحادثات">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h12M4 18h8"/></svg>
+        </button>
+        <button class="dark-toggle" id="dark-toggle" onclick="toggleDarkMode()" title="تبديل الوضع">
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+        </button>
+        <!-- Agent IQ chip — admin only -->
+        <div class="header-chip iq-chip" id="iq-chip" title="ذكاء الوكيل — دقة الإجابات" onclick="toggleIQPanel()" style="display:none; cursor:pointer;">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a9 9 0 0 1 9 9c0 3.03-1.53 5.82-4 7.5V21H7v-2.5C4.53 16.82 3 14.03 3 11a9 9 0 0 1 9-9z"/><line x1="9" y1="21" x2="15" y2="21"/></svg>
+          <span>IQ</span>
+          <span class="iq-score-pill" id="iq-chip-score">—</span>
+        </div>
+        <div class="header-chip token-chip" id="token-chip" title="الحصة اليومية من التوكن" onclick="toggleTokenPanel()" style="display:none; cursor:pointer; gap:6px;">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+          <span id="token-label">—</span>
+          <div class="token-bar-wrap"><div class="token-bar-fill" id="token-bar"></div></div>
+        </div>
         <div class="header-chip">
           <span class="status-dot" id="status-dot"></span>
           <span id="status-label">متصل</span>
@@ -1895,35 +2327,164 @@
       </div>
     </header>
 
+    <!-- Token Panel -->
+    <div class="token-panel" id="token-panel">
+      <div class="tp-accent-bar" id="tp-accent-bar"></div>
+      <div class="tp-topbar">
+        <span>حصة التوكن اليومية</span>
+        <button class="tp-close" onclick="toggleTokenPanel()">✕</button>
+      </div>
+
+      <!-- Circular gauge -->
+      <div class="tp-gauge-wrap">
+        <svg class="tp-arc-svg" viewBox="0 0 100 100">
+          <circle class="tp-arc-bg"   cx="50" cy="50" r="40"/>
+          <circle class="tp-arc-fill" cx="50" cy="50" r="40" id="tp-arc"/>
+        </svg>
+        <div class="tp-gauge-center">
+          <span class="tp-gauge-num" id="tp-remaining">—</span>
+          <span class="tp-gauge-lbl">متبقي</span>
+        </div>
+      </div>
+
+      <!-- Three stat tiles -->
+      <div class="tp-stats">
+        <div class="tp-stat">
+          <span class="tp-stat-val" id="tp-used">—</span>
+          <span class="tp-stat-lbl">مستخدم</span>
+        </div>
+        <div class="tp-stat-div"></div>
+        <div class="tp-stat">
+          <span class="tp-stat-val" id="tp-budget">—</span>
+          <span class="tp-stat-lbl">الحصة</span>
+        </div>
+        <div class="tp-stat-div"></div>
+        <div class="tp-stat">
+          <span class="tp-stat-val" id="tp-calls">—</span>
+          <span class="tp-stat-lbl">أسئلة</span>
+        </div>
+      </div>
+
+      <!-- Footer: role badge + reset note -->
+      <div class="tp-footer">
+        <div class="tp-role-badge"><span id="tp-role">—</span></div>
+        <span class="tp-reset">🕛 منتصف الليل</span>
+      </div>
+
+      <!-- hidden compat: JS still writes these -->
+      <div class="tp-bar-bg"><div class="tp-bar-fill" id="tp-bar"></div></div>
+      <span id="tp-pct" class="tp-pct-hidden">0%</span>
+    </div>
+
+    <!-- Agent IQ Panel -->
+    <div class="iq-panel" id="iq-panel">
+      <div class="iq-accent-bar" id="iq-accent-bar"></div>
+      <div class="iq-topbar">
+        <span>🧠 ذكاء الوكيل</span>
+        <button class="iq-close" onclick="toggleIQPanel()">✕</button>
+      </div>
+
+      <!-- Circular gauge -->
+      <div class="iq-gauge-wrap">
+        <svg class="iq-arc-svg" viewBox="0 0 100 100">
+          <circle class="iq-arc-bg"   cx="50" cy="50" r="40"/>
+          <circle class="iq-arc-fill" cx="50" cy="50" r="40" id="iq-arc"/>
+        </svg>
+        <div class="iq-gauge-center">
+          <span class="iq-gauge-num" id="iq-score-num">—</span>
+          <span class="iq-gauge-lbl">دقة</span>
+        </div>
+      </div>
+
+      <!-- Domain breakdown -->
+      <div class="iq-domains" id="iq-domains"></div>
+
+      <!-- Footer -->
+      <div class="iq-footer">
+        <button class="iq-run-btn" id="iq-run-btn" onclick="runIQEval()">▶ تشغيل الاختبار</button>
+        <span class="iq-last-run" id="iq-last-run">لم يُشغَّل بعد</span>
+      </div>
+    </div>
+
     <main class="chat-area" id="chat-area">
       <div class="empty-state" id="empty-state">
         <div class="copilot-avatar">
           <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
         </div>
-        <h2 class="empty-title">المستشار التنفيذي الذكي</h2>
-        <p class="empty-sub">اسأل عن بيانات شركتك بالعربي أو الإنجليزي. أحلل الأرقام وأقدم لك رؤى تنفيذية وتوصيات عملية.</p>
-        <div class="suggestions">
-          <button class="suggestion" onclick="askQuestion('لوحة المبيعات')">لوحة المبيعات</button>
-          <button class="suggestion" onclick="askQuestion('إجمالي المبيعات اليوم')">إجمالي المبيعات اليوم</button>
-          <button class="suggestion" onclick="askQuestion('أعلى 5 عملاء في المبيعات')">أعلى 5 عملاء</button>
-          <button class="suggestion" onclick="askQuestion('الإيرادات والمصروفات خلال آخر 6 شهور')">الإيرادات والمصروفات</button>
-          <button class="suggestion" onclick="askQuestion('رصيد حساب 1101')">رصيد حساب</button>
-          <button class="suggestion" onclick="askQuestion('لوحة الموظفين')">لوحة الموظفين</button>
+        <h2 class="empty-title" id="empty-greeting">مرحباً! كيف أساعدك؟</h2>
+        <p class="empty-sub">اسأل عن بيانات شركتك بالعربي أو الإنجليزي — المبيعات، المشتريات، الموظفين، الحسابات، المخزون.</p>
+        <div class="suggestions-grid" id="empty-suggestions">
+          <button class="suggestion-card" onclick="askQuestion('لوحة المبيعات')">
+            <div class="sc-icon" style="background:var(--green-soft)">📊</div>
+            <div class="sc-text"><div class="sc-title">لوحة المبيعات</div><div class="sc-sub">ملخص شامل وتحليل</div></div>
+          </button>
+          <button class="suggestion-card" onclick="askQuestion('إجمالي المبيعات هذا الشهر')">
+            <div class="sc-icon" style="background:var(--accent-soft)">📅</div>
+            <div class="sc-text"><div class="sc-title">مبيعات الشهر</div><div class="sc-sub">إجمالي الشهر الحالي</div></div>
+          </button>
+          <button class="suggestion-card" onclick="askQuestion('أعلى 5 عملاء في المبيعات')">
+            <div class="sc-icon" style="background:var(--purple-soft)">👥</div>
+            <div class="sc-text"><div class="sc-title">أفضل العملاء</div><div class="sc-sub">أعلى 5 بالمبيعات</div></div>
+          </button>
+          <button class="suggestion-card" onclick="askQuestion('الإيرادات والمصروفات خلال آخر 6 شهور')">
+            <div class="sc-icon" style="background:var(--teal-soft)">💹</div>
+            <div class="sc-text"><div class="sc-title">الإيرادات والمصروفات</div><div class="sc-sub">آخر 6 شهور</div></div>
+          </button>
+          <button class="suggestion-card" onclick="askQuestion('إجمالي المشتريات هذا الشهر')">
+            <div class="sc-icon" style="background:var(--amber-soft)">🛒</div>
+            <div class="sc-text"><div class="sc-title">مشتريات الشهر</div><div class="sc-sub">إجمالي مشتريات حالية</div></div>
+          </button>
+          <button class="suggestion-card" onclick="askQuestion('لوحة الموظفين')">
+            <div class="sc-icon" style="background:var(--red-soft)">👨‍💼</div>
+            <div class="sc-text"><div class="sc-title">لوحة الموظفين</div><div class="sc-sub">إحصاءات HR</div></div>
+          </button>
+          <button class="suggestion-card" onclick="askQuestion('المواد الأقل مخزوناً')">
+            <div class="sc-icon" style="background:var(--amber-soft)">📦</div>
+            <div class="sc-text"><div class="sc-title">المخزون المنخفض</div><div class="sc-sub">مواد تحتاج تجديد</div></div>
+          </button>
+          <button class="suggestion-card" onclick="askQuestion('أرصدة البنوك والصناديق')">
+            <div class="sc-icon" style="background:var(--green-soft)">🏦</div>
+            <div class="sc-text"><div class="sc-title">أرصدة البنوك</div><div class="sc-sub">الخزينة والحسابات</div></div>
+          </button>
         </div>
       </div>
     </main>
 
     <footer class="input-area">
-      <div class="input-row">
-        <textarea id="question-input" placeholder="اسأل عن المبيعات، العملاء، المخزون، الحسابات..." rows="1"
-          onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+      <div class="input-row" id="input-row">
+        <div class="autocomplete-dropdown" id="autocomplete-dropdown"></div>
+        <textarea id="question-input" placeholder="اسأل عن المبيعات، العملاء، المخزون، الحسابات... (Ctrl+K للقائمة السريعة)" rows="1"
+          onkeydown="handleKey(event)" oninput="autoResize(this); updateAutocomplete(this.value)"></textarea>
+        <button class="voice-btn" id="voice-btn" onclick="toggleVoice()" title="إدخال صوتي">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8"/></svg>
+        </button>
         <button class="send-btn" id="send-btn" onclick="sendMessage()">
           <svg viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
         </button>
       </div>
-      <div class="input-hint">Enter للإرسال &middot; Shift+Enter لسطر جديد</div>
+      <div class="input-hint">Enter للإرسال · Shift+Enter لسطر جديد · <span class="kbd-badge">Ctrl+K</span> قائمة سريعة · <span class="kbd-badge">Ctrl+L</span> محادثة جديدة</div>
     </footer>
 
+  </div>
+
+  <!-- History Sidebar -->
+  <div class="history-overlay" id="history-overlay" onclick="toggleHistoryPanel()"></div>
+  <div class="history-panel" id="history-panel">
+    <div class="history-header">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--accent)"><path d="M4 6h16M4 12h12M4 18h8"/></svg>
+      <h3>سجل المحادثات</h3>
+      <button class="history-close" onclick="toggleHistoryPanel()">✕</button>
+    </div>
+    <button class="history-new-btn" onclick="clearMemory(); toggleHistoryPanel()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      محادثة جديدة
+    </button>
+    <div class="history-list" id="history-list">
+      <div class="history-empty">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+        لا توجد محادثات سابقة
+      </div>
+    </div>
   </div>
 
   <div class="toast" id="toast"></div>
@@ -1967,6 +2528,7 @@
   const _urlKey = new URLSearchParams(window.location.search).get('api_key');
   const API_KEY = _urlKey || localStorage.getItem('justclick_api_key') || '';
   if (_urlKey) localStorage.setItem('justclick_api_key', _urlKey);
+  window._userApiKey = API_KEY;
 
   function apiHeaders() {
     const h = { 'Content-Type': 'application/json' };
@@ -2359,6 +2921,7 @@
       const decoder = new TextDecoder();
       let buffer = '';
       let eventType = '';
+      let streamError = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -2395,12 +2958,16 @@
                   meta = { ...meta, ...data };
                   break;
                 case 'done':
-                  // Finalize
                   stageEl.style.display = 'none';
                   break;
                 case 'error':
+                  streamError = true;
+                  stageEl.style.display = 'none';
                   contentEl.style.display = '';
-                  contentEl.innerHTML = '<span class="error-msg">' + escHtml(data.message) + '</span>';
+                  contentEl.innerHTML = '<div class="error-msg" style="padding:10px 14px;border-radius:8px;background:rgba(220,50,50,0.12);border:1px solid rgba(220,50,50,0.3);color:var(--error,#e05555);">'
+                    + (data.code === 'token_budget_exceeded' ? '🚫 ' : '⚠️ ')
+                    + escHtml(data.message) + '</div>';
+                  scrollBottom();
                   break;
               }
             } catch (e) { /* skip malformed JSON */ }
@@ -2409,8 +2976,8 @@
         }
       }
 
-      // After stream completes: final re-render ensures complete markdown structure
-      contentEl.innerHTML = renderMarkdown(fullText);
+      // After stream completes: re-render only if no error (error HTML must not be overwritten)
+      if (!streamError) contentEl.innerHTML = renderMarkdown(fullText);
 
       // Render post-stream UI elements (chips, chart, SQL toggle)
       try {
@@ -2440,6 +3007,11 @@
       } catch (postErr) {
         console.error('[SSE] post-stream render error:', postErr);
       }
+      // Token info + reasoning steps
+      if (meta.token_info)     _applyTokenInfo(meta.token_info);
+      if (meta.reasoning_steps && meta.reasoning_steps.length > 0)
+        _renderReasoningSteps(meta.reasoning_steps, contentEl.parentElement);
+
       conversationHistory.push({ role: 'user', content: question });
       conversationHistory.push({ role: 'assistant', content: fullText });
 
@@ -2477,6 +3049,7 @@
             contentEl.parentElement.appendChild(fbWrap);
             requestAnimationFrame(() => renderChatChart(fbCcId, fallbackData.chart_data));
           }
+          if (fallbackData.token_info) _applyTokenInfo(fallbackData.token_info);
           conversationHistory.push({ role: 'user', content: question });
           conversationHistory.push({ role: 'assistant', content: fullText });
         } else {
@@ -3409,15 +3982,572 @@
   }
 
   // ══════════════════════════════════════════════════════════════
+  // TOKEN BUDGET
+  // ══════════════════════════════════════════════════════════════
+  let _tokenPanelOpen = false;
+
+  function updateTokenChip(info) {
+    if (!info) return;
+    const chip = document.getElementById('token-chip');
+    const label = document.getElementById('token-label');
+    const bar   = document.getElementById('token-bar');
+    if (!chip || !label) return;
+
+    chip.style.display = 'flex';
+
+    if (info.unlimited) {
+      label.textContent = '∞ غير محدود';
+      bar.style.width = '0%';
+      // Also fill panel
+      _fillTokenPanel(info);
+      return;
+    }
+
+    const pct = Math.min(info.pct_used || 0, 100);
+    const remaining = info.remaining >= 0 ? info.remaining : 0;
+    label.textContent = _fmtNum(remaining);
+    bar.style.width = pct + '%';
+
+    // Color the mini bar
+    const barColor = pct >= 80 ? 'var(--danger,oklch(0.6 0.2 25))'
+                   : pct >= 50 ? 'var(--warning,oklch(0.7 0.15 80))'
+                   :             'var(--accent)';
+    bar.style.background = barColor;
+
+    _fillTokenPanel(info);
+  }
+
+  function _fillTokenPanel(info) {
+    const fmt = n => (n != null && n >= 0) ? _fmtNum(n) : '∞';
+    const setEl = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+
+    const roleLabels = { admin:'مدير النظام', manager:'مدير', accountant:'محاسب',
+                         sales:'مبيعات', warehouse:'مخزن', hr:'موارد بشرية', viewer:'مشاهد' };
+    setEl('tp-role',      roleLabels[info.role] || info.role || '—');
+    setEl('tp-used',      fmt(info.used_today));
+    setEl('tp-budget',    info.unlimited ? '∞' : fmt(info.budget));
+    setEl('tp-remaining', info.unlimited ? '∞' : fmt(info.remaining >= 0 ? info.remaining : 0));
+    setEl('tp-calls',     String(info.calls_today || 0));
+    setEl('tp-pct',       (info.pct_used || 0).toFixed(1) + '%');
+
+    // Determine accent color by usage level
+    const pct = Math.min(info.pct_used || 0, 100);
+    const accentColor = pct >= 80 ? 'oklch(0.6 0.22 25)'   // red
+                      : pct >= 50 ? 'oklch(0.72 0.16 75)'  // amber
+                      :             'oklch(0.62 0.18 165)'; // teal-green
+
+    // Apply accent to panel CSS variable
+    const panel = document.getElementById('token-panel');
+    if (panel) panel.style.setProperty('--tp-accent', accentColor);
+
+    // Animate SVG arc (circumference = 2π×40 ≈ 251.33)
+    const arc = document.getElementById('tp-arc');
+    if (arc) {
+      const C = 251.33;
+      arc.style.strokeDashoffset = info.unlimited ? '0' : String(C * pct / 100);
+      arc.style.stroke = accentColor;
+    }
+
+    // Accent bar color
+    const bar = document.getElementById('tp-accent-bar');
+    if (bar) bar.style.background = accentColor;
+
+    // Compat: flat bar (hidden but JS still updates for chip)
+    const flatBar = document.getElementById('tp-bar');
+    if (flatBar) {
+      flatBar.style.width = pct + '%';
+      flatBar.className = 'tp-bar-fill' + (pct >= 80 ? ' high' : pct >= 50 ? ' mid' : ' low');
+    }
+  }
+
+  function _fmtNum(n) {
+    return n != null ? Number(n).toLocaleString('ar-EG') : '—';
+  }
+
+  function toggleTokenPanel() {
+    _tokenPanelOpen = !_tokenPanelOpen;
+    document.getElementById('token-panel').classList.toggle('open', _tokenPanelOpen);
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // AGENT IQ
+  // ══════════════════════════════════════════════════════════════
+  let _iqPanelOpen = false;
+
+  const _IQ_DOMAIN_LABELS = {
+    invoicing:  'الفواتير',
+    customers:  'العملاء',
+    inventory:  'المخزون',
+    accounting: 'الحسابات',
+    hr:         'الموارد',
+    llm_path:   'مسار LLM',
+  };
+
+  function toggleIQPanel() {
+    _iqPanelOpen = !_iqPanelOpen;
+    document.getElementById('iq-panel').classList.toggle('open', _iqPanelOpen);
+    if (_iqPanelOpen) fetchIQStatus();
+  }
+
+  async function fetchIQStatus() {
+    try {
+      const r = await fetch('/admin/eval/status', { headers: { 'X-Api-Key': window._userApiKey || '' } });
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d && d.score != null) _fillIQPanel(d);
+    } catch (_) {}
+  }
+
+  async function runIQEval() {
+    const btn = document.getElementById('iq-run-btn');
+    const lastRun = document.getElementById('iq-last-run');
+    btn.disabled = true;
+    btn.textContent = '⏳ جاري الاختبار...';
+    lastRun.textContent = 'يرجى الانتظار (~5 ث)…';
+    try {
+      const r = await fetch('/admin/eval/run', {
+        method: 'POST',
+        headers: { 'X-Api-Key': window._userApiKey || '' },
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        showToast('⚠️ ' + (err.detail || 'فشل الاختبار'));
+        return;
+      }
+      const d = await r.json();
+      _fillIQPanel(d);
+      showToast('✅ اختبار IQ مكتمل — ' + d.score.toFixed(1) + '%');
+    } catch (e) {
+      showToast('⚠️ خطأ في الاتصال');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '▶ تشغيل الاختبار';
+    }
+  }
+
+  function _fillIQPanel(d) {
+    const score = +(d.score || 0);
+
+    // Accent color: green ≥90, amber 75-89, red <75
+    const accent = score >= 90 ? 'oklch(0.62 0.18 165)'
+                 : score >= 75 ? 'oklch(0.72 0.16 75)'
+                 :               'oklch(0.6 0.22 25)';
+
+    // Apply to panel + chip
+    const panel = document.getElementById('iq-panel');
+    const chip  = document.getElementById('iq-chip');
+    if (panel) panel.style.setProperty('--iq-accent', accent);
+    if (chip)  chip.style.setProperty('--iq-accent', accent);
+
+    // Accent bar
+    const bar = document.getElementById('iq-accent-bar');
+    if (bar) bar.style.background = accent;
+
+    // Gauge arc (C = 2π×40 ≈ 251.33)
+    const arc = document.getElementById('iq-arc');
+    if (arc) {
+      const C = 251.33;
+      arc.style.strokeDashoffset = String(C - C * score / 100);
+      arc.style.stroke = accent;
+    }
+
+    // Score numbers
+    const numEl = document.getElementById('iq-score-num');
+    if (numEl) numEl.textContent = score.toFixed(0) + '%';
+
+    // Header chip
+    const chipScore = document.getElementById('iq-chip-score');
+    if (chipScore) chipScore.textContent = score.toFixed(0) + '%';
+    if (chip) chip.style.display = 'flex';
+
+    // Domain bars
+    const domainsEl = document.getElementById('iq-domains');
+    if (domainsEl && d.domains) {
+      domainsEl.innerHTML = '';
+      for (const [name, counts] of Object.entries(d.domains)) {
+        const total = (counts.pass || 0) + (counts.fail || 0);
+        const pct = total ? Math.round((counts.pass / total) * 100) : 0;
+        const label = _IQ_DOMAIN_LABELS[name] || name;
+        domainsEl.innerHTML += `
+          <div class="iq-domain-row">
+            <span class="iq-domain-name">${label}</span>
+            <div class="iq-domain-bar-bg">
+              <div class="iq-domain-bar-fill" style="width:${pct}%; background:${counts.fail > 0 ? 'oklch(0.6 0.22 25)' : accent}"></div>
+            </div>
+            <span class="iq-domain-counts">${counts.pass}✓${counts.fail > 0 ? ' ' + counts.fail + '✗' : ''}${counts.skip > 0 ? ' ' + counts.skip + '·' : ''}</span>
+          </div>`;
+      }
+    }
+
+    // Last run
+    const lastRunEl = document.getElementById('iq-last-run');
+    if (lastRunEl && d.run_at) {
+      const dt = new Date(d.run_at);
+      const hhmm = dt.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+      lastRunEl.textContent = `آخر تشغيل: ${hhmm}  •  ${d.elapsed_s}ث`;
+    }
+
+    // Also persist key for reuse
+    if (d.pass != null) {
+      const passLine = document.getElementById('iq-pass-line');
+      // (optional extended stats — no element defined yet, ignore)
+    }
+  }
+
+  // Auto-load IQ status once if admin
+  async function _maybeLoadIQ() {
+    try {
+      const r = await fetch('/admin/eval/status', { headers: { 'X-Api-Key': window._userApiKey || '' } });
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d && d.score != null) {
+        _fillIQPanel(d);
+      } else {
+        // Show chip with "—" to let admin know feature exists
+        const chip = document.getElementById('iq-chip');
+        if (chip) chip.style.display = 'flex';
+      }
+    } catch (_) {}
+  }
+
+  // Called after each chat response
+  function _applyTokenInfo(info) {
+    if (info) updateTokenChip(info);
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // REASONING STEPS
+  // ══════════════════════════════════════════════════════════════
+  function _renderReasoningSteps(steps, container) {
+    if (!steps || steps.length === 0) return;
+    const details = document.createElement('details');
+    details.className = 'reasoning-details';
+    details.open = true;
+    const summary = document.createElement('summary');
+    summary.textContent = `🧠 خطوات التفكير (${steps.length})`;
+    details.appendChild(summary);
+    const ol = document.createElement('ol');
+    ol.className = 'reasoning-list';
+    steps.forEach(s => {
+      const li = document.createElement('li');
+      li.innerHTML = `<span class="rs-step">${escHtml(s.step)}</span>`
+        + (s.detail ? ` <span class="rs-detail">${escHtml(s.detail)}</span>` : '')
+        + ` <span class="rs-ms">${s.ms}ms</span>`;
+      ol.appendChild(li);
+    });
+    details.appendChild(ol);
+    container.appendChild(details);
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // DARK MODE
+  // ══════════════════════════════════════════════════════════════
+  function toggleDarkMode() {
+    const root = document.documentElement;
+    const isDark = root.getAttribute('data-theme') === 'dark';
+    const next = isDark ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    try { localStorage.setItem('jc_theme', next); } catch {}
+  }
+
+  function applyStoredTheme() {
+    try {
+      const t = localStorage.getItem('jc_theme');
+      if (t) document.documentElement.setAttribute('data-theme', t);
+    } catch {}
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // KEYBOARD SHORTCUTS
+  // ══════════════════════════════════════════════════════════════
+  document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.key === 'k') { e.preventDefault(); focusInput(); }
+    if (e.ctrlKey && e.key === 'l') { e.preventDefault(); clearMemory(); }
+    if (e.key === 'Escape') {
+      closeAutocomplete();
+      if (historyPanelOpen) toggleHistoryPanel();
+    }
+    if (e.key === 'ArrowDown' && document.getElementById('autocomplete-dropdown').classList.contains('open')) {
+      e.preventDefault(); moveAutocompleteSelection(1);
+    }
+    if (e.key === 'ArrowUp' && document.getElementById('autocomplete-dropdown').classList.contains('open')) {
+      e.preventDefault(); moveAutocompleteSelection(-1);
+    }
+    if (e.key === 'Enter' && autocompleteSelectedIdx >= 0 && document.getElementById('autocomplete-dropdown').classList.contains('open')) {
+      e.preventDefault(); selectAutocompleteItem(autocompleteSelectedIdx);
+    }
+  });
+
+  function focusInput() {
+    const inp = document.getElementById('question-input');
+    inp.focus(); inp.select();
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // VOICE INPUT (Web Speech API)
+  // ══════════════════════════════════════════════════════════════
+  let voiceRecognition = null;
+  let isRecording = false;
+
+  function toggleVoice() {
+    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+      showToast('متصفحك لا يدعم الإدخال الصوتي');
+      return;
+    }
+    if (isRecording) {
+      voiceRecognition && voiceRecognition.stop();
+      return;
+    }
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    voiceRecognition = new SpeechRecognition();
+    voiceRecognition.lang = 'ar-SA';
+    voiceRecognition.interimResults = true;
+    voiceRecognition.maxAlternatives = 1;
+    voiceRecognition.continuous = false;
+
+    const btn = document.getElementById('voice-btn');
+    const inp = document.getElementById('question-input');
+
+    voiceRecognition.onstart = () => {
+      isRecording = true;
+      btn.classList.add('recording');
+      showToast('🎤 جاري الاستماع...');
+    };
+    voiceRecognition.onresult = (e) => {
+      const transcript = Array.from(e.results).map(r => r[0].transcript).join('');
+      inp.value = transcript;
+      autoResize(inp);
+      updateAutocomplete(transcript);
+    };
+    voiceRecognition.onend = () => {
+      isRecording = false;
+      btn.classList.remove('recording');
+      if (inp.value.trim()) sendMessage();
+    };
+    voiceRecognition.onerror = () => {
+      isRecording = false;
+      btn.classList.remove('recording');
+      showToast('تعذر التعرف على الصوت، حاول مجددًا');
+    };
+    voiceRecognition.start();
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // AUTOCOMPLETE
+  // ══════════════════════════════════════════════════════════════
+  const _AC_SUGGESTIONS = [
+    // مبيعات
+    { text: 'إجمالي المبيعات', category: 'مبيعات' },
+    { text: 'إجمالي المبيعات اليوم', category: 'مبيعات' },
+    { text: 'إجمالي المبيعات هذا الشهر', category: 'مبيعات' },
+    { text: 'إجمالي المبيعات هذه السنة', category: 'مبيعات' },
+    { text: 'إجمالي المبيعات الشهر الماضي', category: 'مبيعات' },
+    { text: 'لوحة المبيعات', category: 'مبيعات' },
+    { text: 'أعلى 5 عملاء في المبيعات', category: 'مبيعات' },
+    { text: 'أعلى 10 أصناف مبيعاً', category: 'مبيعات' },
+    { text: 'عدد فواتير المبيعات', category: 'مبيعات' },
+    // مشتريات
+    { text: 'إجمالي المشتريات', category: 'مشتريات' },
+    { text: 'إجمالي المشتريات هذا الشهر', category: 'مشتريات' },
+    { text: 'إجمالي المشتريات هذه السنة', category: 'مشتريات' },
+    { text: 'أكثر الموردين مشترياً', category: 'مشتريات' },
+    { text: 'عدد فواتير المشتريات', category: 'مشتريات' },
+    // مخزون
+    { text: 'المواد الأقل مخزوناً', category: 'مخزون' },
+    { text: 'حركات المخزون', category: 'مخزون' },
+    { text: 'رصيد المخزون', category: 'مخزون' },
+    // موظفين
+    { text: 'عدد الموظفين', category: 'موظفين' },
+    { text: 'لوحة الموظفين', category: 'موظفين' },
+    { text: 'كشف الرواتب', category: 'موظفين' },
+    // حسابات
+    { text: 'أرصدة البنوك', category: 'حسابات' },
+    { text: 'أرصدة البنوك والصناديق', category: 'حسابات' },
+    { text: 'رصيد الصندوق', category: 'حسابات' },
+    { text: 'الإيرادات والمصروفات', category: 'حسابات' },
+    { text: 'الإيرادات والمصروفات خلال آخر 6 شهور', category: 'حسابات' },
+    { text: 'ميزانية الشركة', category: 'حسابات' },
+    // عملاء
+    { text: 'قائمة العملاء', category: 'عملاء' },
+    { text: 'عدد العملاء', category: 'عملاء' },
+    { text: 'أعلى عميل مبيعاً', category: 'عملاء' },
+  ];
+
+  let autocompleteSelectedIdx = -1;
+  let _acItems = [];
+
+  function updateAutocomplete(val) {
+    const dropdown = document.getElementById('autocomplete-dropdown');
+    const q = (val || '').trim();
+    if (q.length < 2) { closeAutocomplete(); return; }
+
+    _acItems = _AC_SUGGESTIONS.filter(s =>
+      s.text.includes(q) || s.text.replace(/\s+/g, '').includes(q.replace(/\s+/g, ''))
+    ).slice(0, 7);
+
+    if (_acItems.length === 0) { closeAutocomplete(); return; }
+
+    dropdown.innerHTML = _acItems.map((s, i) =>
+      `<div class="autocomplete-item" data-idx="${i}" onclick="selectAutocompleteItem(${i})">
+        <span class="ac-icon">🔍</span>
+        <span class="ac-text">${escHtml(s.text)}</span>
+        <span class="ac-category">${escHtml(s.category)}</span>
+      </div>`
+    ).join('');
+    dropdown.classList.add('open');
+    autocompleteSelectedIdx = -1;
+  }
+
+  function closeAutocomplete() {
+    const dropdown = document.getElementById('autocomplete-dropdown');
+    dropdown.classList.remove('open');
+    autocompleteSelectedIdx = -1;
+    _acItems = [];
+  }
+
+  function moveAutocompleteSelection(dir) {
+    const items = document.querySelectorAll('.autocomplete-item');
+    items.forEach(i => i.classList.remove('selected'));
+    autocompleteSelectedIdx = Math.max(-1, Math.min(_acItems.length - 1, autocompleteSelectedIdx + dir));
+    if (autocompleteSelectedIdx >= 0) {
+      items[autocompleteSelectedIdx] && items[autocompleteSelectedIdx].classList.add('selected');
+    }
+  }
+
+  function selectAutocompleteItem(idx) {
+    const item = _acItems[idx];
+    if (!item) return;
+    const inp = document.getElementById('question-input');
+    inp.value = item.text;
+    autoResize(inp);
+    closeAutocomplete();
+    inp.focus();
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // CHAT HISTORY (localStorage)
+  // ══════════════════════════════════════════════════════════════
+  let _currentSessionId = 'session_' + Date.now();
+  let _currentSessionMessages = [];
+  let historyPanelOpen = false;
+
+  function saveCurrentMessage(role, text) {
+    _currentSessionMessages.push({ role, text: text.slice(0, 200), ts: Date.now() });
+    _persistSession();
+  }
+
+  function _persistSession() {
+    if (_currentSessionMessages.length === 0) return;
+    try {
+      const sessions = _loadAllSessions();
+      const title = _currentSessionMessages.find(m => m.role === 'user')?.text || 'محادثة جديدة';
+      sessions[_currentSessionId] = {
+        id: _currentSessionId,
+        title: title.slice(0, 50),
+        messages: _currentSessionMessages.slice(-20),
+        ts: Date.now(),
+        count: _currentSessionMessages.filter(m => m.role === 'user').length
+      };
+      const ordered = Object.values(sessions).sort((a, b) => b.ts - a.ts).slice(0, 30);
+      const map = {};
+      ordered.forEach(s => { map[s.id] = s; });
+      localStorage.setItem('jc_sessions', JSON.stringify(map));
+    } catch {}
+  }
+
+  function _loadAllSessions() {
+    try { return JSON.parse(localStorage.getItem('jc_sessions') || '{}'); } catch { return {}; }
+  }
+
+  function toggleHistoryPanel() {
+    historyPanelOpen = !historyPanelOpen;
+    document.getElementById('history-panel').classList.toggle('open', historyPanelOpen);
+    document.getElementById('history-overlay').classList.toggle('open', historyPanelOpen);
+    if (historyPanelOpen) renderHistoryList();
+  }
+
+  function renderHistoryList() {
+    const list = document.getElementById('history-list');
+    const sessions = Object.values(_loadAllSessions()).sort((a, b) => b.ts - a.ts);
+    if (sessions.length === 0) {
+      list.innerHTML = '<div class="history-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>لا توجد محادثات سابقة</div>';
+      return;
+    }
+    list.innerHTML = sessions.map(s => {
+      const date = new Date(s.ts);
+      const dateStr = date.toLocaleDateString('ar-SA', { month: 'short', day: 'numeric' });
+      const isActive = s.id === _currentSessionId;
+      return `<div class="history-session${isActive ? ' active' : ''}" onclick="restoreSession('${escAttr(s.id)}')">
+        <div class="hs-title">${escHtml(s.title)}</div>
+        <div class="hs-meta">
+          <span>${dateStr}</span>
+          <span class="hs-count">${s.count} سؤال</span>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  function restoreSession(sessionId) {
+    const sessions = _loadAllSessions();
+    const session = sessions[sessionId];
+    if (!session) return;
+    // Just switch context — we can't truly restore DOM messages (no re-render),
+    // but we switch session ID so new messages track correctly
+    _currentSessionId = sessionId;
+    _currentSessionMessages = session.messages || [];
+    toggleHistoryPanel();
+    showToast('تم استعادة سياق المحادثة');
+  }
+
+  // ── Hook into existing sendMessage to save messages ──
+  const _origSendMsg = sendMessage;
+  sendMessage = async function() {
+    const inp = document.getElementById('question-input');
+    const q = inp.value.trim();
+    if (q) saveCurrentMessage('user', q);
+    closeAutocomplete();
+    return _origSendMsg.apply(this, arguments);
+  };
+
+  // ── Dynamic greeting ──────────────────────────────────────────
+  function setDynamicGreeting() {
+    const h = new Date().getHours();
+    let greeting = 'مرحباً! كيف أساعدك؟';
+    if (h >= 5 && h < 12)      greeting = 'صباح الخير! كيف أساعدك اليوم؟';
+    else if (h >= 12 && h < 17) greeting = 'مساء الخير! كيف أساعدك؟';
+    else if (h >= 17 && h < 21) greeting = 'مساء النور! كيف أساعدك؟';
+    else                         greeting = 'مساء الخير! كيف أساعدك الليلة؟';
+    const el = document.getElementById('empty-greeting');
+    if (el) el.textContent = greeting;
+  }
+
+  // ══════════════════════════════════════════════════════════════
   // INIT
   // ══════════════════════════════════════════════════════════════
   (function init() {
+    applyStoredTheme();
+    setDynamicGreeting();
     checkHealth();
     setInterval(checkHealth, 30000);
-    // Proactive alert polling
     pollAlertSummary();
     setInterval(pollAlertSummary, 60000);
     document.getElementById('question-input').focus();
+
+    // Load IQ status (admin auto-detect via master key)
+    _maybeLoadIQ();
+
+    // Close autocomplete on outside click
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('#input-row')) closeAutocomplete();
+      if (!e.target.closest('#token-panel') && !e.target.closest('#token-chip') && _tokenPanelOpen) {
+        _tokenPanelOpen = false;
+        document.getElementById('token-panel').classList.remove('open');
+      }
+      if (!e.target.closest('#iq-panel') && !e.target.closest('#iq-chip') && _iqPanelOpen) {
+        _iqPanelOpen = false;
+        document.getElementById('iq-panel').classList.remove('open');
+      }
+    });
   })();
 </script>
 </body>

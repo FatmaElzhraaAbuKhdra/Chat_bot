@@ -37,6 +37,8 @@ class UserRole:
     max_rows: int = 500
     masked_columns: list[str] = field(default_factory=list)
     description: str = ""
+    # Daily token budget (prompt + completion).  0 = unlimited.
+    daily_token_budget: int = 0
 
 
 # ── Role Definitions ─────────────────────────────────────────────
@@ -49,6 +51,7 @@ ROLES: dict[str, UserRole] = {
         can_export=True,
         can_execute_actions=True,
         max_rows=500,
+        daily_token_budget=0,          # unlimited
         description="Full system access",
     ),
     "manager": UserRole(
@@ -59,6 +62,7 @@ ROLES: dict[str, UserRole] = {
         can_export=True,
         can_execute_actions=True,
         max_rows=500,
+        daily_token_budget=50_000,
         description="Management access — all domains, reports enabled",
     ),
     "accountant": UserRole(
@@ -70,6 +74,7 @@ ROLES: dict[str, UserRole] = {
         can_execute_actions=False,
         max_rows=500,
         masked_columns=["EMP_SALARY", "BASIC_SALARY", "NET_SALARY"],
+        daily_token_budget=30_000,
         description="Accounting & invoicing access",
     ),
     "sales": UserRole(
@@ -81,6 +86,7 @@ ROLES: dict[str, UserRole] = {
         can_execute_actions=False,
         max_rows=200,
         masked_columns=["EMP_SALARY", "BASIC_SALARY", "NET_SALARY", "COST_PRICE"],
+        daily_token_budget=20_000,
         description="Sales team — invoicing, customers, inventory",
     ),
     "warehouse": UserRole(
@@ -92,6 +98,7 @@ ROLES: dict[str, UserRole] = {
         can_execute_actions=False,
         max_rows=200,
         masked_columns=["FINALTOTAL", "INVTOTAL", "COST_PRICE", "EMP_SALARY"],
+        daily_token_budget=10_000,
         description="Inventory access only",
     ),
     "hr": UserRole(
@@ -102,6 +109,7 @@ ROLES: dict[str, UserRole] = {
         can_export=True,
         can_execute_actions=False,
         max_rows=200,
+        daily_token_budget=10_000,
         description="HR domain — employees, salaries, attendance",
     ),
     "viewer": UserRole(
@@ -113,6 +121,7 @@ ROLES: dict[str, UserRole] = {
         can_execute_actions=False,
         max_rows=50,
         masked_columns=["FINALTOTAL", "INVTOTAL", "COST_PRICE", "EMP_SALARY", "BASIC_SALARY"],
+        daily_token_budget=5_000,
         description="Read-only limited access",
     ),
 }

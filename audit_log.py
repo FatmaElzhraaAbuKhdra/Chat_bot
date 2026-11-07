@@ -3,7 +3,7 @@ audit_log.py — Enterprise Audit Log
 Structured logging of all AI interactions for compliance, debugging,
 and continuous improvement. Stores prompts, SQL, responses, and metadata.
 
-Storage: learning/store.py backend (Oracle/SQLite)
+Storage: SQLite only (data/learning.db) — never creates Oracle tables.
 Retention: configurable (default 90 days)
 """
 import json
@@ -98,11 +98,10 @@ def get_stats() -> dict:
 
 
 def _flush_to_db():
-    """Persist buffer to database (best-effort)."""
+    """Persist buffer to SQLite (best-effort, never touches Oracle)."""
     global _initialized
     try:
-        from learning.store import get_conn, is_oracle
-        # Ensure table exists
+        from learning.store import get_knowledge_conn
         if not _initialized:
             _ensure_table()
             _initialized = True
@@ -111,95 +110,53 @@ def _flush_to_db():
         if not entries:
             return
 
-        with get_conn() as conn:
-            if is_oracle():
-                for e in entries[-50:]:  # flush last 50
-                    conn.execute("""
-                        INSERT INTO AI_AUDIT_LOG
-                            (TRACE_ID, USER_ID, QUESTION, INTENT_CATEGORY,
-                             INTENT_SUB, METHOD, TEMPLATE_USED, SQL_GENERATED,
-                             ROW_COUNT, ANSWER_PREVIEW, EXECUTION_TIME_MS,
-                             CACHE_HIT, ERROR_MSG, CREATED_AT)
-                        VALUES (:1,:2,:3,:4,:5,:6,:7,:8,:9,:10,:11,:12,:13,SYSTIMESTAMP)
-                    """, (
-                        e["trace_id"], e["user_id"], e["question"],
-                        e["intent_category"], e["intent_sub"], e["method"],
-                        e["template_used"], e["sql_generated"], e["row_count"],
-                        e["answer_preview"], e["execution_time_ms"],
-                        1 if e["cache_hit"] else 0, e["error"],
-                    ))
-            else:
-                for e in entries[-50:]:
-                    conn.execute("""
-                        INSERT INTO audit_log
-                            (trace_id, user_id, question, intent_category,
-                             intent_sub, method, template_used, sql_generated,
-                             row_count, answer_preview, execution_time_ms,
-                             cache_hit, error_msg)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-                    """, (
-                        e["trace_id"], e["user_id"], e["question"],
-                        e["intent_category"], e["intent_sub"], e["method"],
-                        e["template_used"], e["sql_generated"], e["row_count"],
-                        e["answer_preview"], e["execution_time_ms"],
-                        1 if e["cache_hit"] else 0, e["error"],
-                    ))
+        with get_knowledge_conn() as conn:
+            for e in entries[-50:]:
+                conn.execute("""
+                    INSERT INTO audit_log
+                        (trace_id, user_id, question, intent_category,
+                         intent_sub, method, template_used, sql_generated,
+                         row_count, answer_preview, execution_time_ms,
+                         cache_hit, error_msg)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """, (
+                    e["trace_id"], e["user_id"], e["question"],
+                    e["intent_category"], e["intent_sub"], e["method"],
+                    e["template_used"], e["sql_generated"], e["row_count"],
+                    e["answer_preview"], e["execution_time_ms"],
+                    1 if e["cache_hit"] else 0, e["error"],
+                ))
     except Exception as ex:
         log.debug(f"[AUDIT] flush failed: {ex}")
 
 
 def _ensure_table():
-    """Create audit table if needed."""
+    """Create audit_log table in SQLite if needed (never touches Oracle)."""
     try:
-        from learning.store import get_conn, is_oracle
-        with get_conn() as conn:
-            if is_oracle():
-                conn.execute("""
-                    BEGIN
-                        EXECUTE IMMEDIATE '
-                            CREATE TABLE AI_AUDIT_LOG (
-                                ID NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-                                TRACE_ID VARCHAR2(24),
-                                USER_ID VARCHAR2(100),
-                                QUESTION NVARCHAR2(500),
-                                INTENT_CATEGORY VARCHAR2(50),
-                                INTENT_SUB VARCHAR2(100),
-                                METHOD VARCHAR2(50),
-                                TEMPLATE_USED VARCHAR2(100),
-                                SQL_GENERATED CLOB,
-                                ROW_COUNT NUMBER,
-                                ANSWER_PREVIEW NVARCHAR2(200),
-                                EXECUTION_TIME_MS NUMBER,
-                                CACHE_HIT NUMBER(1) DEFAULT 0,
-                                ERROR_MSG VARCHAR2(500),
-                                CREATED_AT TIMESTAMP DEFAULT SYSTIMESTAMP
-                            )';
-                    EXCEPTION WHEN OTHERS THEN NULL;
-                    END;
-                """)
-            else:
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS audit_log (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        trace_id TEXT,
-                        user_id TEXT,
-                        question TEXT,
-                        intent_category TEXT,
-                        intent_sub TEXT,
-                        method TEXT,
-                        template_used TEXT,
-                        sql_generated TEXT,
-                        row_count INTEGER,
-                        answer_preview TEXT,
-                        execution_time_ms INTEGER,
-                        cache_hit INTEGER DEFAULT 0,
-                        error_msg TEXT,
-                        created_at TEXT DEFAULT (datetime('now'))
-                    )
-                """)
-                conn.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_audit_user
-                    ON audit_log(user_id, created_at)
-                """)
+        from learning.store import get_knowledge_conn
+        with get_knowledge_conn() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    trace_id TEXT,
+                    user_id TEXT,
+                    question TEXT,
+                    intent_category TEXT,
+                    intent_sub TEXT,
+                    method TEXT,
+                    template_used TEXT,
+                    sql_generated TEXT,
+                    row_count INTEGER,
+                    answer_preview TEXT,
+                    execution_time_ms INTEGER,
+                    cache_hit INTEGER DEFAULT 0,
+                    error_msg TEXT,
+                    created_at TEXT DEFAULT (datetime('now'))
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_audit_user
+                ON audit_log(user_id, created_at)
+            """)
     except Exception:
         pass

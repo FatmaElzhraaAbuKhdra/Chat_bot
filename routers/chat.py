@@ -56,6 +56,16 @@ class ChatRequest(BaseModel):
         return v
 
 
+class TokenInfo(BaseModel):
+    used_today:  int = 0
+    budget:      int = 0
+    remaining:   int = -1
+    pct_used:    float = 0.0
+    calls_today: int = 0
+    unlimited:   bool = True
+    role:        str = ""
+
+
 class ChatResponse(BaseModel):
     answer: str
     sql_generated: str
@@ -65,16 +75,18 @@ class ChatResponse(BaseModel):
     execution_time_ms: int = 0
     chart_data: Optional[dict] = None
     widgets: Optional[list] = None
-    suggestions: Optional[list] = None   # copilot follow-up suggestions
-    insights: Optional[list] = None      # copilot business insights
-    proactive_alerts: Optional[list] = None   # unacknowledged proactive alerts
-    health_scores: Optional[dict] = None      # ERP health score snapshot
-    # ERP Operator fields
-    action_card: Optional[dict] = None         # Action confirmation/result card
-    action_id: Optional[str] = None            # Pending action ID for confirmation flow
-    navigation_links: Optional[list] = None    # APEX deep links
-    export_available: Optional[dict] = None    # Export metadata when data is exportable
-    report_data: Optional[dict] = None         # Executive report structured data
+    suggestions: Optional[list] = None
+    insights: Optional[list] = None
+    proactive_alerts: Optional[list] = None
+    health_scores: Optional[dict] = None
+    action_card: Optional[dict] = None
+    action_id: Optional[str] = None
+    navigation_links: Optional[list] = None
+    export_available: Optional[dict] = None
+    report_data: Optional[dict] = None
+    # ── New fields ──────────────────────────────────────────────────
+    token_info: Optional[TokenInfo] = None       # per-user token budget
+    reasoning_steps: Optional[list] = None       # pipeline thinking steps
 
 
 @router.post("/", response_model=ChatResponse)
@@ -106,6 +118,28 @@ async def chat(req: ChatRequest, request: Request):
             effective_user_id = req.user_id
 
         history = [{"role": m.role, "content": m.content} for m in req.history]
+
+        # ── Token budget check ─────────────────────────────────────
+        perms_pre = _rbac.get_user_permissions(effective_user_id)
+        budget = perms_pre.daily_token_budget
+        _token_allowed = True
+        try:
+            from token_tracker import check_budget, get_usage_summary
+            _token_allowed, _used, _remaining = check_budget(effective_user_id, budget)
+        except Exception:
+            pass
+
+        if not _token_allowed:
+            from token_tracker import get_usage_summary
+            _summary = get_usage_summary(effective_user_id, budget)
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"تجاوزت الحد اليومي المسموح ({budget:,} توكن). "
+                    f"استخدمت اليوم: {_summary['used_today']:,} توكن. "
+                    "يُعاد تفعيل الحصة عند منتصف الليل."
+                ),
+            )
 
         result = await process_question(
             question=req.question,
@@ -158,6 +192,23 @@ async def chat(req: ChatRequest, request: Request):
         except Exception:
             pass
 
+        # ── Token info for UI ──────────────────────────────────────
+        token_info = None
+        try:
+            from token_tracker import get_usage_summary
+            _summary = get_usage_summary(effective_user_id, budget)
+            token_info = TokenInfo(
+                used_today  = _summary["used_today"],
+                budget      = _summary["budget"],
+                remaining   = _summary["remaining"],
+                pct_used    = _summary["pct_used"],
+                calls_today = _summary["calls_today"],
+                unlimited   = _summary["unlimited"],
+                role        = perms_pre.role,
+            )
+        except Exception:
+            pass
+
         return ChatResponse(
             answer=result.answer,
             sql_generated=sql_for_response,
@@ -170,12 +221,13 @@ async def chat(req: ChatRequest, request: Request):
             suggestions=result.suggestions or None,
             insights=result.insights or None,
             proactive_alerts=proactive_alerts,
-            # ERP Operator fields
             action_card=result.action_card,
             action_id=result.action_id,
             navigation_links=result.navigation_links,
             export_available=export_for_response,
             report_data=result.report_data,
+            token_info=token_info,
+            reasoning_steps=getattr(result, "reasoning_steps", None),
         )
     except Exception as e:
         logging.error(f"[CHAT] Error: {e}\n{traceback.format_exc()}")
@@ -198,6 +250,19 @@ async def chat(req: ChatRequest, request: Request):
 @router.get("/usage")
 async def usage():
     return get_usage()
+
+
+@router.get("/token-budget/{user_id}")
+async def get_token_budget(user_id: str):
+    """Return daily token budget and usage for a user."""
+    try:
+        from token_tracker import get_usage_summary
+        perms = _rbac.get_user_permissions(user_id)
+        summary = get_usage_summary(user_id, perms.daily_token_budget)
+        summary["role"] = perms.role
+        return summary
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/provider")

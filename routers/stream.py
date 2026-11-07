@@ -62,6 +62,26 @@ async def chat_stream(req: StreamRequest):
         trace = new_trace(req.user_id, req.question)
 
         try:
+            # ── Token budget pre-check ─────────────────────────────────
+            import rbac as _rbac
+            _perms_pre = _rbac.get_user_permissions(req.user_id)
+            _budget = _perms_pre.daily_token_budget
+            try:
+                from token_tracker import check_budget
+                _ok, _used, _rem = check_budget(req.user_id, _budget)
+                if not _ok:
+                    yield _sse_event("error", {
+                        "message": (
+                            f"تجاوزت الحد اليومي المسموح ({_budget:,} توكن). "
+                            f"استخدمت اليوم: {_used:,} توكن. "
+                            "يُعاد تفعيل الحصة عند منتصف الليل."
+                        ),
+                        "code": "token_budget_exceeded",
+                    })
+                    return
+            except ImportError:
+                pass
+
             # Stage 1: Understanding
             stage = trace.stage("understanding")
             stage.start()
@@ -159,7 +179,19 @@ async def chat_stream(req: StreamRequest):
             if result.chart_data:
                 yield _sse_event("chart", result.chart_data)
 
-            # Send metadata (suggestions, insights, etc.)
+            # ── Token budget check + tracking ─────────────────────
+            import rbac as _rbac
+            perms = _rbac.get_user_permissions(req.user_id)
+            budget = perms.daily_token_budget
+            token_info_dict = None
+            try:
+                from token_tracker import get_usage_summary
+                token_info_dict = get_usage_summary(req.user_id, budget)
+                token_info_dict["role"] = perms.role
+            except Exception:
+                pass
+
+            # Send metadata (suggestions, insights, reasoning, token)
             meta = {
                 "method": result.method,
                 "template_used": result.template_used,
@@ -168,6 +200,7 @@ async def chat_stream(req: StreamRequest):
                 "suggestions": result.suggestions or [],
                 "insights": result.insights or [],
                 "trace_id": trace.trace_id,
+                "sql": result.sql or "",
             }
             if result.action_card:
                 meta["action_card"] = result.action_card
@@ -177,6 +210,10 @@ async def chat_stream(req: StreamRequest):
                 meta["export_available"] = result.export_available
             if result.widgets:
                 meta["widgets"] = result.widgets
+            if result.reasoning_steps:
+                meta["reasoning_steps"] = result.reasoning_steps
+            if token_info_dict:
+                meta["token_info"] = token_info_dict
 
             yield _sse_event("meta", meta)
 

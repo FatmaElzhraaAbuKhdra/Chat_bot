@@ -317,7 +317,9 @@ def _template_matches_meaning(template, entities: dict, question: str) -> tuple[
 
     # 1. Time scope — template must not impose a date filter the user didn't ask for
     if "SYSDATE" in sql_u:
-        wants_time = ("time_today" in entities) or any(w in q for w in _GATE_TIME_WORDS)
+        _time_entities = {"time_today", "time_this_month", "time_this_year",
+                          "time_last_month", "time_last_year"}
+        wants_time = bool(_time_entities & set(entities)) or any(w in q for w in _GATE_TIME_WORDS)
         if not wants_time:
             return False, "template imposes a date filter the question didn't request"
 
@@ -424,6 +426,8 @@ class PipelineResult:
     navigation_links: Optional[list] = None   # APEX page links
     export_available: Optional[dict] = None   # Export metadata
     report_data: Optional[dict] = None        # Executive report data
+    # Reasoning transparency
+    reasoning_steps: list = field(default_factory=list)  # [{step, detail, ms}]
 
 
 # ── Greeting responses ────────────────────────────────────────────
@@ -596,6 +600,11 @@ async def process_question(
     Main entry point. Routes question through the intelligence pipeline.
     """
     start = time.time()
+    _steps: list[dict] = []
+
+    def _step(name: str, detail: str = ""):
+        _steps.append({"step": name, "detail": detail, "ms": int((time.time() - start) * 1000)})
+
     question = question.strip()
     if not question:
         return PipelineResult(answer="يرجى كتابة سؤال.", method="error")
@@ -610,6 +619,8 @@ async def process_question(
             method="error",
             safety_warnings=["prompt_injection_detected"],
         )
+
+    _step("استلام السؤال", question[:80])
 
     # ── RBAC: Domain access check (after intent detection, applied later) ──
     # Pre-load user permissions for row-limit and export enforcement
@@ -839,6 +850,9 @@ async def process_question(
     intent = classify_intent(question, session_history)
     log.info(f"[PIPELINE] intent={intent.category} domain={intent.domain} "
              f"sub={intent.sub_intent} entities_keys={list(intent.entities.keys())}")
+    _step("تصنيف النية",
+          f"category={intent.category} sub={intent.sub_intent} "
+          f"domain={intent.domain} conf={intent.confidence:.0%}")
 
     # ── Step 2.5: Enhance intent via Learning Engine ──
     if intent.confidence < 0.90 and intent.category not in ("greeting", "help"):
@@ -893,6 +907,7 @@ async def process_question(
         )
 
     elif intent.category == "help":
+        _step("توجيه", "help")
         result = PipelineResult(
             answer=_HELP_RESPONSE,
             intent=intent,
@@ -901,6 +916,7 @@ async def process_question(
         )
 
     elif _wants_dashboard(question):
+        _step("توجيه", "dashboard")
         log.debug(f"[PIPELINE] Dashboard matched for: {question}")
         result = await _handle_dashboard(question, session_history)
         if not result:
@@ -916,6 +932,7 @@ async def process_question(
             )
 
     else:
+        _step("توجيه", "data_query")
         log.debug(f"[PIPELINE] Data query path for: {question}")
         result = await _handle_data_query(
             question=question,
@@ -933,6 +950,8 @@ async def process_question(
     )
 
     result.execution_time_ms = int((time.time() - start) * 1000)
+    _step("اكتمال", f"method={result.method} rows={result.row_count}")
+    result.reasoning_steps = _steps
 
     # ── Export availability flag ──
     # If export was detected earlier but data came from a query, flag it
@@ -1055,6 +1074,7 @@ async def _handle_data_query(
                     pass
 
             if template:
+                log.info(f"[PIPELINE] executing template={template.name}")
                 result = await _execute_template(
                     template=template,
                     entities=intent.entities,
@@ -1196,6 +1216,7 @@ async def _execute_template(
             sql=sql,
             history=history,
             truncated=truncated,
+            user_id=user_id,
         )
 
         if truncated:
@@ -1361,6 +1382,7 @@ async def _execute_llm_controlled(
             fiscal_year="",
             history=history,
             extra_context=extra_context,
+            user_id=user_id,
         )
 
 
@@ -1401,7 +1423,8 @@ async def _execute_llm_controlled(
                 company_code="",
                 fiscal_year="",
                 history=history,
-                extra_context=extra_context,  # entity hint persists to auto-fix (e.g. LIKE constraint)
+                extra_context=extra_context,
+                user_id=user_id,
             )
             safety = validate_sql(sql_raw)
             if safety.is_safe:
@@ -1432,6 +1455,7 @@ async def _execute_llm_controlled(
             sql=sql,
             history=history,
             truncated=truncated,
+            user_id=user_id,
         )
 
         if truncated:
@@ -1703,15 +1727,15 @@ def _comment_context_for_sql(sql: str) -> str:
         return ""
 
 
-def _safe_format_answer(question, data, sql, history=None, truncated=False):
+def _safe_format_answer(question, data, sql, history=None, truncated=False, user_id=""):
     """Format with executive AI copilot style. Falls back to local on error."""
     if not data:
         return _smart_empty_response(question)
     # Use LLM executive formatting for reasonable data sizes
     if len(data) <= 50:
         try:
-            extra = _comment_context_for_sql(sql)   # RC5: comment-grounded narrative
-            return format_answer(question, data, sql, history, truncated, extra)
+            extra = _comment_context_for_sql(sql)
+            return format_answer(question, data, sql, history, truncated, extra, user_id)
         except Exception as e:
             log.info(f"[PIPELINE] LLM format fallback to local: {e}")
     # Fallback: enhanced local formatting

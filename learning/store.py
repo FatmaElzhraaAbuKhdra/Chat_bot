@@ -230,53 +230,11 @@ def _get_sqlite_path() -> Path:
 # ═══════════════════════════════════════════════════════════════════
 
 def init_learning_db() -> None:
-    """Initialize learning database.
-
-    Primary backend (Oracle or SQLite) is auto-detected.
-    SQLite is ALWAYS initialized regardless of backend because the knowledge
-    base (erp_knowledge) uses SQLite-only storage — no Oracle tables are created.
-    """
+    """Initialize learning database (SQLite only for all learning data)."""
     global _BACKEND
     _BACKEND = _detect_backend()
-
-    if _BACKEND == "oracle":
-        _init_oracle()
-    # Always init SQLite — knowledge persistence is SQLite-only even on Oracle
     _init_sqlite()
-
-    log.info(f"[STORE] Backend: {_BACKEND} (knowledge: SQLite always)")
-
-
-def _init_oracle():
-    """Create AI_ tables in Oracle if they don't exist."""
-    created = 0
-    with get_conn() as conn:
-        # Check existing tables
-        existing_rows = conn.execute(
-            "SELECT table_name FROM user_tables WHERE table_name LIKE :p",
-            {"p": f"{_PFX}%"}
-        ).fetchall()
-        existing = {r["table_name"] for r in existing_rows}
-
-        for table_name, ddl in _ORACLE_TABLES.items():
-            if table_name not in existing:
-                try:
-                    conn.execute(ddl)
-                    created += 1
-                    log.info(f"[STORE] Created Oracle table {table_name}")
-                except Exception as e:
-                    log.warning(f"[STORE] Failed to create {table_name}: {e}")
-
-        # Create indexes (ignore if exists)
-        for idx_sql in _ORACLE_INDEXES:
-            try:
-                conn.execute(idx_sql)
-            except Exception:
-                pass  # already exists
-
-    if existing:
-        log.debug(f"[STORE] Oracle: {len(existing)} legacy AI_ tables still in DB (unused)")
-    log.info(f"[STORE] Oracle init: {created} new tables")
+    log.info(f"[STORE] Backend: {_BACKEND} (all learning data: SQLite)")
 
 
 def _init_sqlite():
