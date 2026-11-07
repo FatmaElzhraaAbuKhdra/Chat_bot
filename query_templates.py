@@ -687,6 +687,26 @@ SELECT CUSTID,
 ))
 
 
+_register(QueryTemplate(
+    name="autoprep_gaps",
+    description="أيام بدون قيد وسيط / Days with no auto-prepared journal entries",
+    domain="accounting",
+    sub_intent="autoprep_gaps",
+    sql="""
+SELECT SOURCE_KEY,
+       SOURCE_NAME,
+       DAY_DATE,
+       DOCS,
+       TRIED_RESULT
+  FROM V_AUTOPREP_GAPS
+ ORDER BY DAY_DATE DESC
+ FETCH FIRST 100 ROWS ONLY
+""",
+    required_params=[],
+    result_type="table",
+))
+
+
 # ══════════════════════════════════════════════════════════════════
 _register(QueryTemplate(
     name="credit_limit",

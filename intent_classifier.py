@@ -137,6 +137,9 @@ SUB_INTENT_PATTERNS = {
     "customer_info":      r"(بيانات?\s*(العميل|عميل)|معلومات?\s*(العميل|عميل)|تفاصيل?\s*(العميل|عميل)|customer\s*info)",
     "supplier_list":      r"(قائمة\s*الموردين|موردين\s*(نشط|فعال)|list\s*supplier|كل\s*الموردين)",
 
+    # Accounting — autoprep gaps
+    "autoprep_gaps":      r"(أيام?\s*(بدون|من\s*(غير|دون))\s*(قيد|قيود)\s*(وسيط[ةه]?)|فجوات?\s*(ال)?(قيود|قيد)\s*(الوسيط[ةه]?)?|V_AUTOPREP_GAPS|أيام?\s*(ما\s*فيش|مفيش|لم\s*يُعد|بدون)\s*(قيد|قيود))",
+
     # HR
     "employee_count":     r"(عدد\s*الموظفين|كم\s*موظف|employee\s*count)",
     "employee_list":      r"(قائمة\s*الموظفين|الموظفين\s*(النشط|الفعال)|كل\s*الموظفين)",

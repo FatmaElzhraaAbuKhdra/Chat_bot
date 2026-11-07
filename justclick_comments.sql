@@ -3680,6 +3680,12 @@ COMMENT ON TABLE V_PAGE_ACCESS_IMPACT IS 'أثر تفعيل صلاحيات ال�
 COMMENT ON TABLE V_TRANSFER_STATUS IS 'تحويلات المخازن: مستلم / في الطريق / استلام جزئي (نوع حركة 5) / view v_transfer_status. ⚠ لاستعلام غير المستلم استخدم: WHERE STATE != ''تم الاستلام'' — لا تفلتر بقيمة STATE محددة لأن غير المستلم يشمل أكثر من حالة';
 COMMENT ON TABLE V_TRANSFER_IN_TRANSIT IS 'المنتظر بين كل فرعين وأقدمه / view v_transfer_in_transit';
 COMMENT ON TABLE V_AUTOPOST_PENDING IS 'قيود وسيطة لسه ما اترحلتش للأستاذ وحالتها (جاهز/غير متزن/حساب غير موجود/فترة مقفولة) / view v_autopost_pending';
+COMMENT ON TABLE V_AUTOPREP_GAPS IS 'أيام بدون قيد وسيط: كل يوم فيه مستندات من مصدر معين (مبيعات/مشتريات/مخازن) لم يُعدّ له قيد وسيط. استخدمها لسؤال "أيام من غير قيد وسيط" — ⚠ مفيش عمود STATE هنا، الـview بتعرض الفجوات مباشرة / view v_autoprep_gaps';
+COMMENT ON COLUMN V_AUTOPREP_GAPS.SOURCE_KEY IS 'كود المصدر (SOURCE_KEY) - نص قصير: SAL=مبيعات، PUR=مشتريات، STOCK=مخازن';
+COMMENT ON COLUMN V_AUTOPREP_GAPS.SOURCE_NAME IS 'اسم المصدر (SOURCE_NAME) - نص';
+COMMENT ON COLUMN V_AUTOPREP_GAPS.DAY_DATE IS 'اليوم الذي بدون قيد وسيط (DAY_DATE) - تاريخ';
+COMMENT ON COLUMN V_AUTOPREP_GAPS.DOCS IS 'عدد المستندات الموجودة في ذلك اليوم (DOCS) - رقم';
+COMMENT ON COLUMN V_AUTOPREP_GAPS.TRIED_RESULT IS 'نتيجة آخر محاولة تجهيز (TRIED_RESULT) - نص (8 حرف)';
 COMMENT ON TABLE V_CONS_UNMAPPED IS 'حسابات شركات غير مربوطة بحسابات المجموعة / view v_cons_unmapped';
 COMMENT ON TABLE V_CONS_TRIAL IS 'ميزان المراجعة الموحد بعد الاستبعاد / view v_cons_trial';
 COMMENT ON TABLE V_CONS_CHECK IS 'اتزان ميزان كل شركة / view v_cons_check';
