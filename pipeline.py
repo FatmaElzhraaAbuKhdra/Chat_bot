@@ -435,6 +435,24 @@ _GREETING_RESPONSES = [COPILOT_GREETING]
 
 _HELP_RESPONSE = COPILOT_HELP
 
+_OUT_OF_SCOPE_MSG = (
+    "أنا متخصص في بيانات نظام JustClick ERP. "
+    "اسأليني عن المبيعات، المشتريات، الحسابات، المخازن، المرتبات والضرائب."
+)
+_OUT_OF_SCOPE_MSG_EN = (
+    "I specialize in JustClick ERP data. "
+    "Ask me about sales, purchases, accounts, inventory, payroll, or taxes."
+)
+
+def _is_llm_refusal(text: str) -> bool:
+    """True when the LLM returned a refusal sentence instead of SQL."""
+    if re.search(r'\b(SELECT|WITH|FROM|WHERE|UPDATE|DELETE|INSERT)\b', text, re.IGNORECASE):
+        return False
+    arabic = sum(1 for c in text if '؀' <= c <= 'ۿ')
+    non_space = sum(1 for c in text if not c.isspace())
+    return non_space > 0 and arabic / non_space > 0.25
+
+
 # ── Intent-to-label mapping for Phase 7 predictions ─────────────
 _INTENT_LABELS = {
     "sales_today": "مبيعات اليوم",
@@ -1094,8 +1112,7 @@ async def _handle_data_query(
                     _foreign = _foreign_comment_nouns(question)
                     if _foreign:
                         is_arabic = any('؀' <= c <= 'ۿ' for c in question)
-                        msg = ("لم أجد تعريفاً لهذا في تعليقات قاعدة البيانات" if is_arabic
-                               else "Term not found in database comments.")
+                        msg = _OUT_OF_SCOPE_MSG if is_arabic else _OUT_OF_SCOPE_MSG_EN
                         log.info(f"[PIPELINE] template {template.name} matched but question "
                                  f"has foreign comment-noun(s) {_foreign} -> not-found")
                         return PipelineResult(answer=msg, method="error", intent=intent)
@@ -1123,8 +1140,7 @@ async def _handle_data_query(
             and not _question_has_comment_word(question) \
             and not _intent_is_erp:
         is_arabic = any('؀' <= c <= 'ۿ' for c in question)
-        msg = ("لم أجد تعريفاً لهذا في تعليقات قاعدة البيانات" if is_arabic
-               else "Term not found in database comments.")
+        msg = _OUT_OF_SCOPE_MSG if is_arabic else _OUT_OF_SCOPE_MSG_EN
         log.info("[PIPELINE] no comment-vocabulary match -> not-found message (no LLM)")
         return PipelineResult(answer=msg, method="error", intent=intent)
 
@@ -1391,6 +1407,15 @@ async def _execute_llm_controlled(
         if not safety.is_safe:
             log.info(f"[PIPELINE] LLM SQL blocked: {safety.blocked_reason}")
             log_query(user_id, question, sql_raw, safety, success=False)
+            is_arabic = any('؀' <= c <= 'ۿ' for c in question)
+            if _is_llm_refusal(sql_raw):
+                # LLM returned a scope-refusal sentence, not a DML/injection attempt
+                return PipelineResult(
+                    answer=_OUT_OF_SCOPE_MSG if is_arabic else _OUT_OF_SCOPE_MSG_EN,
+                    sql="",
+                    method="error",
+                    safety_warnings=[safety.blocked_reason],
+                )
             return PipelineResult(
                 answer="عذراً، لا يمكن تنفيذ هذا الاستعلام لأسباب أمنية.",
                 sql=sql_raw,
